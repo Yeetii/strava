@@ -1,0 +1,178 @@
+openapi: '3.0.3'
+info:
+  title: Strava API
+  version: '1.0'
+servers:
+  - url: https://api.server.test/v1
+paths:
+  /{userId}/addUser:
+    post:
+      description: ''
+      tags: 
+        - addUser
+      parameters: [{name: 'userId', in: 'path', schema: {type: string}, required: true}]
+      requestBody:
+        content:
+          application/json:
+            schema: {
+              $ref: '#/components/schemas/addUser'
+              }
+      responses:
+        '200':
+          description: OK
+
+  /initWebhook:
+    post:
+      tags:
+        - webhook
+      responses:
+        '200':
+          description: OK
+
+  /webhook:
+    post:
+      tags:
+        - webhook
+      responses:
+        '200':
+          description: OK
+
+  /{userId}/summitedPeaks:
+    get:
+      tags:
+        - peaksHunters
+      parameters:
+        - {name: 'userId', in: 'path', schema: {type: string}, required: true}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: "array"
+                items: 
+                  $ref: '#/components/schemas/summitedPeak'
+
+  /{userId}/activitesWithSummits:
+    get:
+      tags:
+        - peaksHunters
+      parameters:
+        - {name: 'userId', in: 'path', schema: {type: string}, required: true}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: "array"
+                items: 
+                  $ref: '#/components/schemas/activityWithSummit'
+
+  /{userId}/skiDays:
+    get:
+      tags:
+        - aggregates
+      parameters:
+        - { name: 'userId', in: 'path', schema: {type: string}, required: true }
+        - { name: 'fromDate', in: 'query', schema: {type: string}, required: false, description: 'Filter from date' }
+        - { name: 'toDate', in: 'query', schema: {type: string}, required: false, description: 'Filter to date' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {
+                $ref: "#/components/schemas/skiDays"
+              }
+
+  /{userId}/streaks:
+    get:
+      tags:
+        - aggregates
+      parameters:
+        - { name: 'userId', in: 'path', schema: {type: string}, required: true }
+        - { name: 'fromDate', in: 'query', schema: {type: string}, required: false, description: 'Filter from date' }
+        - { name: 'toDate', in: 'query', schema: {type: string}, required: false, description: 'Filter to date' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {
+                $ref: "#/components/schemas/streaks"
+              }
+
+components:
+  schemas:
+    addUser:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+
+    summitedPeak:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        elevation:
+          type: number
+        location:
+          type: string
+        noOfSummits:
+          type: integer
+
+    activityWithSummit:
+      type: object
+      properties:
+        activityId:
+          type: integer
+        name:
+          type: string
+        
+
+    skiDays:
+      type: object
+      properties:
+        alpineSkiDays:
+          type: integer
+        backcountrySkiDays:
+          type: integer
+        nordicSkiDays:
+          type: integer
+        snowboardDays:
+          type: integer
+        backcountrySkiElevationGain:
+          type: number
+        alpineSkiVerticalDrop:
+          type: number
+        totalSkiDays:
+          type: integer
+
+    streaks:
+      type: object
+      properties:
+        currentActivityStreak:
+          type: integer
+        longestActivityStreak:
+          type: integer
+        currentActivityStreakStartDate:
+          type: string
+        longestActivityStreakStartDate:
+          type: string
+        longestActivityStreakEndDate:
+          type: string
+        currentRunningStreak:
+          type: integer
+        longestRunningStreak:
+          type: integer
+        currentRunningStreakStartDate:
+          type: string
+        longestRunningStreakStartDate:
+          type: string
+        longestRunningStreakEndDate:
+          type: string
+        
