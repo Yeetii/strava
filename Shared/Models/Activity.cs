@@ -12,6 +12,7 @@ public class PeakInfo{
 public class Activity
 {
     public string Id {get; set;}
+    public string UserId {get; set;}
     public string Name {get; set;}
     public string Description {get; set;}
     public float? Distance {get; set;}
@@ -33,4 +34,12 @@ public class Activity
     public string Polyline {get; set;}
     public string SummaryPolyline {get; set;}
     public List<PeakInfo> Peaks {get; set;}
+}
+
+public static class SportTypes
+{
+    public static readonly string ALPINE_SKIING = "AlpineSki";
+    public static readonly string BACKCOUNTRY_SKIING = "BackcountrySki";
+    public static readonly string NORDIC_SKIING = "NordicSki";
+    public static readonly string SNOWBOARDING = "Snowboard";
 }

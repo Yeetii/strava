@@ -16,6 +16,7 @@ public static class ActivityMapper
     public static Activity MapSummaryActivity(SummaryActivity activity) {
         return new Activity(){
         Id = activity.Id.ToString(),
+        UserId = activity.Athlete.Id.ToString(),
         Name = activity.Name,
         Description = "",
         Distance = activity.Distance,
