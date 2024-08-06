@@ -1,7 +1,9 @@
 using System.Text.Json.Serialization;
+using Azure.Core;
 using Backend.StravaClient;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using Shared.Models;
 
 namespace Backend
 {
@@ -26,9 +28,9 @@ namespace Backend
         [JsonPropertyName("page")]
         public int? Page { get; set;}
         [JsonPropertyName("before")]
-        public int? Before { get; set; }
+        public DateTime? Before { get; set; }
         [JsonPropertyName("after")]
-        public int? After { get; set; }
+        public DateTime? After { get; set; }
 
     }
 
@@ -42,21 +44,36 @@ namespace Backend
         }
 
         [Function(nameof(StravaActivityFetcher))]
-        public async Task Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob,
-        [CosmosDBInput(
-            databaseName: "%CosmosDb%",
-            containerName: "%UsersContainer%",
-            Connection  = "CosmosDBConnection",
-            Id = "{userId}",
-            PartitionKey = "{userId}")] User user)
+        public async Task<Outputs> Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob)
         {
-            // Get access token from userId
+            var httpClient = new HttpClient();
+            var tokenFunc = new Uri($"http://localhost:7072/api/{fetchJob.UserId}/accessToken");
+            var accessTokenResponse = await httpClient.GetAsync(tokenFunc);
+            var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
+            
+            var page = fetchJob.Page ?? 1;
 
             // Fetch activity from access token and activity id
-            var activites = await ActivitiesAPI.GetStravaModel(user.AccessToken);
-            _logger.LogInformation("", activites.Count());
+            var (activites, hasMorePages) = await ActivitiesAPI.GetStravaModel(accessToken, page, fetchJob.Before, fetchJob.After);
 
-            // Save activity to cosmos
+            var outputs = new Outputs();
+
+            if (hasMorePages)
+            {
+                fetchJob.Page = ++page;
+                outputs.NextPageJob = fetchJob;
+            }
+            _logger.LogInformation("Dessaaa {counts}", activites.Count());
+            outputs.WriteToActivities = activites.Select(ActivityMapper.MapSummaryActivity);
+            return outputs;
+        }
+
+        public class Outputs
+        {
+            [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
+            public object WriteToActivities { get; set;}
+            [ServiceBusOutput("activityFetchJobs", Connection = "ServicebusConnection")]
+            public ActivityFetchJob? NextPageJob { get; set; }
         }
     }
 }
