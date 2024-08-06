@@ -1,5 +1,5 @@
 using System.Net;
-using API.Models;
+using Shared.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;

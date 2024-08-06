@@ -1,9 +1,7 @@
 using System.Configuration;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
-using API.Models;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Azure.Cosmos;
+using Shared.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
@@ -38,16 +36,24 @@ namespace Dashboard.RefreshStravaToken
             containerName: "%UsersContainer%",
             Connection  = "CosmosDBConnection",
             Id = "{userId}",
-            PartitionKey = "{userId}")] API.Models.User user,
+            PartitionKey = "{userId}")] User user,
             ILogger log)
         {
-            // TODO: Move function to backend, should include logic to check expiration on already stored access token
-            // Should only have to call function with a user id and a fresh token should then be returned, without spamming strava
+            if (user.AccessToken != null && user.TokenExpiresAt > new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds())
+            {
+                var tokenStillWorksResponse = req.CreateResponse(System.Net.HttpStatusCode.OK);
+                tokenStillWorksResponse.WriteString(user.AccessToken);
+                return new ReturnType{Result = tokenStillWorksResponse};
+            }
 
             var RefreshToken = user.RefreshToken;
 
             if (RefreshToken == null)
-             return new ReturnType{Result = Results.NotFound($"Refresh token not found for user {userId}")};
+            {
+                var notFoundResult = req.CreateResponse(System.Net.HttpStatusCode.NotFound);
+                notFoundResult.WriteString($"Refresh token not found for user {userId}");
+                return new ReturnType{Result = notFoundResult};
+            }
 
             var postBodyValues = new Dictionary<string, string>
             {
@@ -64,15 +70,18 @@ namespace Dashboard.RefreshStravaToken
             user.AccessToken = tokenResponse.AccessToken;
             user.TokenExpiresAt = tokenResponse.ExpiresAt;
 
-            return new ReturnType{Result = Results.Ok(tokenResponse.AccessToken), WriteToUser = user};
+            var result = req.CreateResponse(System.Net.HttpStatusCode.OK);
+            result.WriteString(tokenResponse.AccessToken);
+
+            return new ReturnType{Result = result, WriteToUser = user};
         }
 
         public class ReturnType
         {
             [HttpResult]
-            public required IResult Result { get; set;}
+            public required HttpResponseData Result { get; set;}
             [CosmosDBOutput("%CosmosDb%", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
-            public API.Models.User? WriteToUser { get; set;}
+            public User? WriteToUser { get; set;}
         }
     }
 }

@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "./Backend"
+		},
+		{
+			"path": "Shared"
 		}
 	],
 	"settings": {

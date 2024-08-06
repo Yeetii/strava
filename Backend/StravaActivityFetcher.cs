@@ -1,7 +1,5 @@
-using System;
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.Messaging.ServiceBus;
+using Backend.StravaClient;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 
@@ -23,10 +21,15 @@ namespace Backend
 
     public class ActivityFetchJob
     {
-        [JsonPropertyName("activityId")]
-        public string? ActivityId { get; set; }
         [JsonPropertyName("userId")]
         public string? UserId { get; set; }
+        [JsonPropertyName("page")]
+        public int? Page { get; set;}
+        [JsonPropertyName("before")]
+        public int? Before { get; set; }
+        [JsonPropertyName("after")]
+        public int? After { get; set; }
+
     }
 
     public class StravaActivityFetcher
@@ -39,7 +42,7 @@ namespace Backend
         }
 
         [Function(nameof(StravaActivityFetcher))]
-        public void Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob,
+        public async Task Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob,
         [CosmosDBInput(
             databaseName: "%CosmosDb%",
             containerName: "%UsersContainer%",
@@ -50,6 +53,8 @@ namespace Backend
             // Get access token from userId
 
             // Fetch activity from access token and activity id
+            var activites = await ActivitiesAPI.GetStravaModel(user.AccessToken);
+            _logger.LogInformation("", activites.Count());
 
             // Save activity to cosmos
         }
