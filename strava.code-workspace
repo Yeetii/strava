@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "./API"
+		},
+		{
+			"path": "./Backend"
+		}
+	],
+	"settings": {
+		"debug.internalConsoleOptions": "neverOpen"
+	},
+	"launch": {
+        "configurations": [],
+        "compounds": [
+            {
+                "name": "Attach to both apps",
+                "configurations": [
+                    "Attach to API",
+                    "Attach to Backend"
+                ]
+            }
+        ]
+    }
+}

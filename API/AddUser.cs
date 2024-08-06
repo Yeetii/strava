@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json.Serialization;
 using API.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Functions.Worker;
