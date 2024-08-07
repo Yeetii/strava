@@ -47,18 +47,18 @@ namespace API
         public static SkiDays CalculateSkiDays(IEnumerable<Activity> activities)
         {
             var alpineSkiDays = activities.Where(activity => activity.SportType == SportTypes.ALPINE_SKIING)
-                .Select(activity => activity.StartDate?.Date).Distinct();
+                .Select(activity => activity.StartDate.Date).Distinct();
             var backcountrySkiDays = activities.Where(activity => activity.SportType == SportTypes.BACKCOUNTRY_SKIING)
-                .Select(activity => activity.StartDate?.Date).Distinct();
+                .Select(activity => activity.StartDate.Date).Distinct();
             var nordicSkiDays = activities.Where(activity => activity.SportType == SportTypes.NORDIC_SKIING)
-                .Select(activity => activity.StartDate?.Date).Distinct();
+                .Select(activity => activity.StartDate.Date).Distinct();
             var snowboardingDays = activities.Where(activity => activity.SportType == SportTypes.SNOWBOARDING)
-                .Select(activity => activity.StartDate?.Date).Distinct();
+                .Select(activity => activity.StartDate.Date).Distinct();
 
             var skiSports = new List<string>{SportTypes.ALPINE_SKIING, SportTypes.BACKCOUNTRY_SKIING, SportTypes.NORDIC_SKIING, SportTypes.SNOWBOARDING};
 
             var totalSkiDays = activities.Where(activity => skiSports.Contains(activity.SportType))
-                .Select(activity => activity.StartDate?.Date).Distinct();
+                .Select(activity => activity.StartDate.Date).Distinct();
 
             var backcountrySkiElevationGain = activities.Where(activity => activity.SportType == SportTypes.BACKCOUNTRY_SKIING)
                 .Sum(activity => (double)activity.TotalElevationGain);
