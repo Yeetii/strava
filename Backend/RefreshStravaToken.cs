@@ -1,14 +1,13 @@
 using System.Configuration;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
-using Shared.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 
-namespace Dashboard.RefreshStravaToken
+namespace Backend
 {
 
     public class TokenResponse {

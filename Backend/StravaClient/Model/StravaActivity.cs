@@ -3,7 +3,7 @@ namespace Backend.StravaClient.Model;
 using System.Text.Json.Serialization;
 
 public record SummaryAthlete(
-    [property: JsonPropertyName("id")] int? Id,
+    [property: JsonPropertyName("id")] int Id,
     [property: JsonPropertyName("resource_state")] int? ResourceState
 );
 
@@ -25,7 +25,7 @@ public record SummaryActivity(
     [property: JsonPropertyName("sport_type")] string SportType,
     [property: JsonPropertyName("id")] long Id,
     [property: JsonPropertyName("start_date")] DateTime StartDate,
-    [property: JsonPropertyName("start_date_local")] DateTime? StartDateLocal,
+    [property: JsonPropertyName("start_date_local")] DateTime StartDateLocal,
     [property: JsonPropertyName("timezone")] string Timezone,
     [property: JsonPropertyName("utc_offset")] double? UtcOffset,
     [property: JsonPropertyName("location_city")] object LocationCity,
@@ -44,8 +44,8 @@ public record SummaryActivity(
     [property: JsonPropertyName("visibility")] string Visibility,
     [property: JsonPropertyName("flagged")] bool? Flagged,
     [property: JsonPropertyName("gear_id")] string GearId,
-    [property: JsonPropertyName("start_latlng")] IReadOnlyList<float?> StartLatlng,
-    [property: JsonPropertyName("end_latlng")] IReadOnlyList<float?> EndLatlng,
+    [property: JsonPropertyName("start_latlng")] IReadOnlyList<float>? StartLatlng,
+    [property: JsonPropertyName("end_latlng")] IReadOnlyList<float>? EndLatlng,
     [property: JsonPropertyName("average_speed")] float? AverageSpeed,
     [property: JsonPropertyName("max_speed")] float? MaxSpeed,
     [property: JsonPropertyName("average_temp")] int? AverageTemp,

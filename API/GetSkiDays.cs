@@ -13,7 +13,7 @@ namespace API
 {
     public class GetSkiDays(ILoggerFactory loggerFactory)
     {
-        private readonly ILogger _logger = loggerFactory.CreateLogger<SkiDays>();
+        private readonly ILogger _logger = loggerFactory.CreateLogger<GetSkiDays>();
 
         [OpenApiOperation(tags: ["Aggregates"])]
         [OpenApiParameter(name: "userId", In = ParameterLocation.Path)]

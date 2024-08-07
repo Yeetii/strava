@@ -53,12 +53,13 @@ paths:
                 items: 
                   $ref: '#/components/schemas/summitedPeak'
 
-  /{userId}/activitesWithSummits:
+  /{userId}/peak/{peakId}:
     get:
       tags:
         - peaksHunters
       parameters:
         - {name: 'userId', in: 'path', schema: {type: string}, required: true}
+        - {name: 'peakId', in: 'path', schema: {type: string}, required: true}
       responses:
         '200':
           description: OK
@@ -67,7 +68,7 @@ paths:
               schema:
                 type: "array"
                 items: 
-                  $ref: '#/components/schemas/activityWithSummit'
+                  $ref: '#/components/schemas/activity'
 
   /{userId}/skiDays:
     get:
@@ -125,15 +126,6 @@ components:
         noOfSummits:
           type: integer
 
-    activityWithSummit:
-      type: object
-      properties:
-        activityId:
-          type: integer
-        name:
-          type: string
-        
-
     skiDays:
       type: object
       properties:
@@ -176,3 +168,129 @@ components:
         longestRunningStreakEndDate:
           type: string
         
+    peakInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "123"
+        name:
+          type: string
+          example: "Peak Name"
+      required:
+        - id
+        - name
+
+    activity:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "activity123"
+        userId:
+          type: string
+          example: "user456"
+        name:
+          type: string
+          example: "Activity Name"
+        description:
+          type: string
+          nullable: true
+          example: "This is an activity."
+        distance:
+          type: number
+          format: float
+          nullable: true
+          example: 10.5
+        movingTime:
+          type: number
+          format: float
+          nullable: true
+          example: 3600
+        elapsedTime:
+          type: number
+          format: float
+          nullable: true
+          example: 4000
+        calories:
+          type: number
+          format: float
+          nullable: true
+          example: 500
+        totalElevationGain:
+          type: number
+          format: float
+          nullable: true
+          example: 200
+        elevHigh:
+          type: number
+          format: float
+          nullable: true
+          example: 1500
+        elevLow:
+          type: number
+          format: float
+          nullable: true
+          example: 800
+        sportType:
+          type: string
+          example: "Running"
+        startDate:
+          type: string
+          format: date-time
+          example: "2024-08-07T12:00:00Z"
+        startDateLocal:
+          type: string
+          format: date-time
+          example: "2024-08-07T12:00:00Z"
+        timezone:
+          type: string
+          nullable: true
+          example: "UTC"
+        startLatLng:
+          type: array
+          items:
+            type: number
+            format: float
+          nullable: true
+          example: [34.0522, -118.2437]
+        endLatLng:
+          type: array
+          items:
+            type: number
+            format: float
+          nullable: true
+          example: [34.0522, -118.2437]
+        athleteCount:
+          type: integer
+          nullable: true
+          example: 1
+        averageSpeed:
+          type: number
+          format: float
+          nullable: true
+          example: 5.0
+        maxSpeed:
+          type: number
+          format: float
+          nullable: true
+          example: 10.0
+        polyline:
+          type: string
+          nullable: true
+          example: "Encoded polyline"
+        summaryPolyline:
+          type: string
+          nullable: true
+          example: "Encoded summary polyline"
+        peaks:
+          type: array
+          items:
+            $ref: '#/components/schemas/peakInfo'
+      required:
+        - id
+        - userId
+        - name
+        - sportType
+        - startDate
+        - startDateLocal

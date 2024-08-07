@@ -1,9 +1,7 @@
 using System.Text.Json.Serialization;
-using Azure.Core;
 using Backend.StravaClient;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
-using Shared.Models;
 
 namespace Backend
 {
