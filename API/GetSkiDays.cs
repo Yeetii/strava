@@ -6,7 +6,6 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.Mvc;
-using API;
 using Shared.Models;
 
 namespace API
@@ -28,7 +27,7 @@ namespace API
             containerName: "%ActivitiesContainer%",
             Connection  = "CosmosDBConnection",
             SqlQuery = "SELECT * FROM c where c.userId = {userId}"
-            )] IEnumerable<Shared.Models.Activity> activities)
+            )] IEnumerable<Activity> activities)
         {
             var before = req.Query["before"];
             var after = req.Query["after"];
@@ -40,7 +39,7 @@ namespace API
                 activities = activities.Where(b => b.StartDate > DateTime.Parse(after));
 
             var skiDays = CalculateSkiDays(activities);
-            return new OkObjectResult(skiDays);
+            return new JsonResult(skiDays);
             
         }
 

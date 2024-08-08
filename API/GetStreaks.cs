@@ -54,7 +54,7 @@ public class GetStreaks(ILoggerFactory loggerFactory)
             activities = activities.Where(b => b.StartDate > DateTime.Parse(after));
 
         var streaks = StreakCalculator.CalculateStreaks(activities);
-        return new OkObjectResult(streaks);
+        return new JsonResult(streaks);
         
     }
 }

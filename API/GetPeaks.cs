@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
@@ -31,9 +32,9 @@ namespace API
             }
 
             if (!(string.IsNullOrEmpty(lat) || string.IsNullOrEmpty(lon))){
-                return new OkObjectResult(await GeoSpatialFetch<Peak>(lat, lon, radius));
+                return new JsonResult(await GeoSpatialFetch<Peak>(lat, lon, radius));
             } else {
-                return new OkObjectResult(await FetchWholeCollection<Peak>());
+                return new JsonResult(await FetchWholeCollection<Peak>());
             }
         }
 
