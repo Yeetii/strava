@@ -46,7 +46,7 @@ namespace Backend
         static readonly HttpClient client = new();
         [Function("FetchPeaks")]
         [CosmosDBOutput("%OsmDb%", "%PeaksContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
-        public static async Task<IEnumerable<Peak>> Run(
+        public static async Task<IEnumerable<StoredFeature>> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
         {
             const string body = @"[out:json][timeout:25];" + "\n" +
@@ -60,13 +60,23 @@ namespace Backend
             string rawPeaks = await response.Content.ReadAsStringAsync();
             RootPeaks myDeserializedClass = JsonSerializer.Deserialize<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
             var peaks = myDeserializedClass.Elements.Select(x => 
-                new Peak{
-                    Id = x.Id.ToString(), 
-                    Elevation = x.Tags.Elevation, 
-                    Name = x.Tags.Name, 
-                    NameSapmi = x.Tags.NameSapmi, 
-                    NameAlt = x.Tags.NameAlt, 
-                    Location= new Point([x.Lon, x.Lat])
+                {
+
+                    var propertiesDirty = new Dictionary<string, string?>(){
+                        {"elevation", x.Tags.Elevation},
+                        {"name", x.Tags.Name},
+                        {"nameSapmi", x.Tags.NameSapmi},
+                        {"nameAlt", x.Tags.NameAlt},
+
+                    };
+
+                    var properties = propertiesDirty.Where(x => x.Value != null).ToDictionary();
+
+                    return new StoredFeature{
+                    Id = x.Id.ToString(),
+                    Properties = properties,
+                    Geometry= new Geometry([x.Lon, x.Lat])
+                    };
                 });
 
             return peaks;
