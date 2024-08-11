@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
+using System.Text.Json.Nodes;
 
 namespace Backend
 {
@@ -50,7 +51,7 @@ namespace Backend
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
         {
             const string body = @"[out:json][timeout:25];" + "\n" +
-            @"            node[""natural""=""peak""](61.91827102335593,10.88216959652901,64.5578812115091,18.87472330746651);" + "\n" +
+            @"            node[""natural""=""peak""](61.554109444927185,11.88719122576684,65.13687800930502,16.833283564091325);" + "\n" +
             @"            out body;" + "\n" +
             @"            >;" + "\n" +
             @"            out skel qt;";
@@ -62,11 +63,12 @@ namespace Backend
             var peaks = myDeserializedClass.Elements.Select(x => 
                 {
 
-                    var propertiesDirty = new Dictionary<string, string?>(){
+                    var propertiesDirty = new Dictionary<string, object?>(){
                         {"elevation", x.Tags.Elevation},
                         {"name", x.Tags.Name},
                         {"nameSapmi", x.Tags.NameSapmi},
                         {"nameAlt", x.Tags.NameAlt},
+                        {"groups", new Dictionary<string, bool>()}
 
                     };
 

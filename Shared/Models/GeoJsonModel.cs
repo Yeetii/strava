@@ -5,20 +5,21 @@ namespace Shared.Models
         public required IEnumerable<Feature> Features { get; set; }
     }
     public class Feature {
+        public required string Id {get; set;}
         public string Type { get; set; } = "Feature";
-        public Dictionary<string, string> Properties { get; set; } = [];
+        public Dictionary<string, object> Properties { get; set; } = [];
         public required Geometry Geometry {get; set;}
     }
 
     public class StoredFeature {
         public required string Id {get; set;}
-        public Dictionary<string, string> Properties { get; set; } = [];
+        public Dictionary<string, object> Properties { get; set; } = [];
         public required Geometry Geometry {get; set;}
 
         public Feature ToFeature(){
-            var properties = new Dictionary<string, string>{{"id", Id}}.Concat(Properties).ToDictionary();
             return new Feature{
-                Properties = properties,
+                Id = Id,
+                Properties = Properties,
                 Geometry = Geometry
             };
         }
