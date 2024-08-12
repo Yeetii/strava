@@ -32,21 +32,16 @@ namespace Backend
 
     }
 
-    public class StravaActivityFetcher
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> logger, HttpClient httpClient)
     {
-        private readonly ILogger<StravaActivityFetcher> _logger;
-
-        public StravaActivityFetcher(ILogger<StravaActivityFetcher> logger)
-        {
-            _logger = logger;
-        }
+        private readonly ILogger<StravaActivityFetcher> _logger = logger;
+        private readonly HttpClient _httpClient = httpClient;
 
         [Function(nameof(StravaActivityFetcher))]
         public async Task<Outputs> Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob)
         {
-            var httpClient = new HttpClient();
             var tokenFunc = new Uri($"http://localhost:7072/api/{fetchJob.UserId}/accessToken");
-            var accessTokenResponse = await httpClient.GetAsync(tokenFunc);
+            var accessTokenResponse = await _httpClient.GetAsync(tokenFunc);
             var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
             
             var page = fetchJob.Page ?? 1;

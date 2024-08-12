@@ -3,6 +3,8 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Shared.Models;
+using Shared.Services;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
@@ -14,16 +16,48 @@ var host = new HostBuilder()
             options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         });
         services.AddSingleton(new SocketsHttpHandler());
+        services.AddHttpClient(
+            "apiClient",
+            client =>
+            {
+                client.BaseAddress = new Uri("http://localhost:7072/api/");
+            });
         services.AddSingleton(serviceProvider =>
         {
             SocketsHttpHandler socketsHttpHandler = serviceProvider.GetRequiredService<SocketsHttpHandler>();
             CosmosClientOptions cosmosClientOptions = new()
             {
-                HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false)
+                HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
+                SerializerOptions = new CosmosSerializationOptions{PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase}
             };
 
             string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
             return new CosmosClient(cosmosDbConnectionString, cosmosClientOptions);
+        });
+
+        services.AddSingleton(ServiceProvider => 
+        {
+            var databaseName = configuration.GetValue<string>("OsmDb") ?? throw new Exception("No database name found");
+            var containerName = configuration.GetValue<string>("PeaksContainer") ?? throw new Exception("No peaks container name found");
+            var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmos.GetContainer(databaseName, containerName);
+            return new CollectionClient<StoredFeature>(container);
+        });
+        services.AddSingleton(ServiceProvider => 
+        {
+            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
+            var containerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new Exception("No peaks container name found");
+            var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmos.GetContainer(databaseName, containerName);
+            return new CollectionClient<Activity>(container);
+        });
+        services.AddSingleton(ServiceProvider => 
+        {
+            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
+            var containerName = configuration.GetValue<string>("SummitedPeaksContainer") ?? throw new Exception("No summited peaks container name found");
+            var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmos.GetContainer(databaseName, containerName);
+            return new CollectionClient<SummitedPeak>(container);
         });
     })
     .Build();
