@@ -2,6 +2,12 @@
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
 name: Build and deploy dotnet core project to Azure Function App - strava-tools-backend
+permissions:
+  actions: write       # Necessary to cancel workflow executions
+  checks: write        # Necessary to write reports
+  pull-requests: write # Necessary to comment on PRs
+  contents: read
+  packages: write
 
 on:
   push:
