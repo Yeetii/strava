@@ -7,9 +7,9 @@ on:
   push:
     branches:
       - main
-    paths:
-    - '!API/**'
-    - '!API.Tests/**'
+    paths-ignore:
+    - 'API/**'
+    - 'API.Tests/**'
 
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'Backend' # set this to the path to your web app project, defaults to the repository root
