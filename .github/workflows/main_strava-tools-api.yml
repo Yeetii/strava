@@ -1,13 +1,15 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy dotnet core project to Azure Function App - strava-tools-api
+name: Build and deploy API
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
+    paths:
+    - '!Backend/**'
+    - '!Backend.Tests/**'
 
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'API' # set this to the path to your web app project, defaults to the repository root
