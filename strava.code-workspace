@@ -8,6 +8,15 @@
 		},
 		{
 			"path": "Shared"
+		},
+		{
+			"path": "Shared.Tests"
+		},
+		{
+			"path": "API.Tests"
+		},
+		{
+			"path": "Backend.Tests"
 		}
 	],
 	"settings": {
