@@ -5,6 +5,8 @@ using Microsoft.Azure.Functions.Worker.Extensions.OpenApi.Extensions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Shared.Models;
+using Shared.Services;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWebApplication()
@@ -32,6 +34,14 @@ var host = new HostBuilder()
 
             string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
             return new CosmosClient(cosmosDbConnectionString, cosmosClientOptions);
+        });
+        services.AddSingleton(ServiceProvider => 
+        {
+            var databaseName = configuration.GetValue<string>("OsmDb") ?? throw new Exception("No database name found");
+            var containerName = configuration.GetValue<string>("PeaksContainer") ?? throw new Exception("No peaks container name found");
+            var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmos.GetContainer(databaseName, containerName);
+            return new CollectionClient<StoredFeature>(container);
         });
     })
     .ConfigureOpenApi()
