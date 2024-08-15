@@ -16,11 +16,10 @@ namespace API
         [OpenApiParameter(name: "lat", In = ParameterLocation.Query, Type = typeof(double), Required = true)]
         [OpenApiParameter(name: "lon", In = ParameterLocation.Query, Type = typeof(double), Required = true)]
         [OpenApiParameter(name: "radius", In = ParameterLocation.Query, Type = typeof(double))]
-        [OpenApiSecurity("function_key", SecuritySchemeType.ApiKey, Name = "code", In = OpenApiSecurityLocationType.Query)]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection), 
             Description = "A GeoJson FeatureCollection with peaks")]
         [Function("GetPeaks")]
-        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "peaks")] HttpRequestData req)
+        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks")] HttpRequestData req)
         {
             var latSuccess = double.TryParse(req.Query["lat"], out double lat);
             var lonSuccess = double.TryParse(req.Query["lon"], out double lon);

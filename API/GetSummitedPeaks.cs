@@ -12,12 +12,11 @@ namespace API
     public class GetSummitedPeaks()
     {
         [OpenApiOperation(tags: ["Peaks"])]
-        [OpenApiSecurity("function_key", SecuritySchemeType.ApiKey, Name = "code", In = OpenApiSecurityLocationType.Query)]
         [OpenApiParameter(name: "userId", In = ParameterLocation.Path)]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<SummitedPeak>), 
             Description = "Peaks that the user has summited")]
         [Function("GetSummitedPeaks")]
-        public static IActionResult Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "{userId}/summitedPeaks")] HttpRequestData req, string userId,
+        public static IActionResult Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{userId}/summitedPeaks")] HttpRequestData req, string userId,
             [CosmosDBInput(
             databaseName: "%CosmosDb%",
             containerName: "%SummitedPeaksContainer%",
