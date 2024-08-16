@@ -8,5 +8,12 @@
             },
             "enableLiveMetricsFilters": true
         }
+    },
+    "extensions": {
+        "http": {
+        "customHeaders": {
+            "Access-Control-Expose-Headers": "session"
+        }
+        }
     }
 }
