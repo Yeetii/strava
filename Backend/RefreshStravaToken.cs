@@ -1,22 +1,14 @@
 using System.Configuration;
 using System.Net.Http.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Shared.Services.StravaClient.Model;
 
 
 namespace Backend
 {
-
-    public class TokenResponse {
-        [JsonPropertyName("access_token")]
-        public string? AccessToken {get; set;}
-        [JsonPropertyName("expires_at")]
-        public long ExpiresAt {get; set;}
-    }
-
     public class RefreshStravaToken
     {
         private static readonly HttpClient client = new();
@@ -62,7 +54,8 @@ namespace Backend
                 { "grant_type", "refresh_token" }
             };
 
-            var content = new FormUrlEncodedContent(postBodyValues);   
+            var content = new FormUrlEncodedContent(postBodyValues);
+            // TODO: Use AuthenticationAPI
             var response = await client.PostAsync("https://www.strava.com/api/v3/oauth/token", content);
             var tokenResponse = await response.Content.ReadFromJsonAsync<TokenResponse>();
 

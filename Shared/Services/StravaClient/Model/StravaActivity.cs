@@ -1,4 +1,4 @@
-namespace Backend.StravaClient.Model;
+namespace Shared.Services.StravaClient.Model;
 
 using System.Text.Json.Serialization;
 

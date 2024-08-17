@@ -7,9 +7,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.StravaClient;
 
 var host = new HostBuilder()
-    .ConfigureFunctionsWebApplication()
+    .ConfigureFunctionsWorkerDefaults()
     .ConfigureAppConfiguration((hostingContext, config) => 
     {
         config.AddEnvironmentVariables();
@@ -22,8 +23,8 @@ var host = new HostBuilder()
             options.PropertyNameCaseInsensitive = true;
             options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         });
-        services.AddHttpClient();
         services.AddSingleton(new SocketsHttpHandler());
+        services.AddHttpClient();
         services.AddSingleton(serviceProvider =>
         {
             SocketsHttpHandler socketsHttpHandler = serviceProvider.GetRequiredService<SocketsHttpHandler>();
@@ -59,6 +60,10 @@ var host = new HostBuilder()
             var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
             var container = cosmos.GetContainer(databaseName, containerName);
             return new CollectionClient<Shared.Models.User>(container);
+        });
+        services.AddScoped(ServiceProvider => {
+            var httpClient = ServiceProvider.GetRequiredService<HttpClient>();
+            return new AuthenticationApi(httpClient, configuration);
         });
     })
     .ConfigureOpenApi()

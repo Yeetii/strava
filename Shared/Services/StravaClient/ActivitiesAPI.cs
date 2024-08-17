@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Backend.StravaClient.Model;
+using Shared.Services.StravaClient.Model;
 
-namespace Backend.StravaClient;
+namespace Shared.Services.StravaClient;
 
 public static class ActivitiesAPI
 {
@@ -9,7 +9,7 @@ public static class ActivitiesAPI
     public async static Task<(IEnumerable<SummaryActivity>? activites, bool hasMorePages)> GetStravaModel(string token, int page = 1, DateTime? before = null, DateTime? after = null)
     {
         var client = new HttpClient();
-            
+
         var requestUri = $"https://www.strava.com/api/v3/athlete/activities?per_page={ActivitesPerPage}&page={page}";
 
         if (after.HasValue)

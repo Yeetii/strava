@@ -1,9 +1,7 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
@@ -19,7 +17,7 @@ namespace API
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection), 
             Description = "A GeoJson FeatureCollection with peaks")]
         [Function("GetPeaks")]
-        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks")] HttpRequestData req)
+        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks")] HttpRequestData req)
         {
             var latSuccess = double.TryParse(req.Query["lat"], out double lat);
             var lonSuccess = double.TryParse(req.Query["lon"], out double lon);
@@ -39,7 +37,10 @@ namespace API
                 Features = peaks.Select(x => x.ToFeature())
             };
 
-            return new JsonResult(featureCollection);
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            // var json = JsonSerializer.Serialize(featureCollection);
+            await response.WriteAsJsonAsync(featureCollection);
+            return response;
         }
     }
 }
