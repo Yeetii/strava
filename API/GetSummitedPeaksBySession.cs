@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -22,16 +21,22 @@ namespace API
 
             Thread.Sleep(1500);
 
-            if (sessionId == default)
-                return req.CreateResponse(HttpStatusCode.Unauthorized);
-            var user = (await _usersCollection.QueryCollection($"SELECT * from c WHERE c.sessionId = '{sessionId}'")).FirstOrDefault();
-            if (user == default || user.SessionExpires < DateTime.Now)
-                return req.CreateResponse(HttpStatusCode.Unauthorized);
-
-            var peaks = await _summitedPeakCollection.QueryCollection($"SELECT * FROM c where c.userId = '{user.Id}'");
-            var response = req.CreateResponse(HttpStatusCode.OK);
+            var response = req.CreateResponse();
             // Probably won't need this in production if I move the API to the same domain as the frontend
             response.Headers.Add("Access-Control-Allow-Credentials", "true");
+
+            if (sessionId == default){
+                response.StatusCode = HttpStatusCode.Unauthorized;
+                return response;
+            }
+            var user = (await _usersCollection.QueryCollection($"SELECT * from c WHERE c.sessionId = '{sessionId}'")).FirstOrDefault();
+            if (user == default || user.SessionExpires < DateTime.Now){
+                response.StatusCode = HttpStatusCode.Unauthorized;
+                return response;
+            }
+
+            var peaks = await _summitedPeakCollection.QueryCollection($"SELECT * FROM c where c.userId = '{user.Id}'");
+            response.StatusCode = HttpStatusCode.OK;
             await response.WriteAsJsonAsync(peaks);
             return response;
         }
