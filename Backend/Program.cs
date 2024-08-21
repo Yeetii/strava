@@ -1,3 +1,4 @@
+using System.Configuration;
 using System.Text.Json;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
@@ -20,7 +21,7 @@ var host = new HostBuilder()
             "apiClient",
             client =>
             {
-                client.BaseAddress = new Uri("http://localhost:7072/api/");
+                client.BaseAddress = new Uri(configuration.GetValue<string>("ApiUrl") ?? throw new ConfigurationErrorsException("No API Url found in config"));
             });
         services.AddSingleton(serviceProvider =>
         {

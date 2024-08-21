@@ -1,52 +1,23 @@
-using System.Text.Json.Serialization;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using Shared.Models;
 using Shared.Services.StravaClient;
 
 namespace Backend
 {
-    public class User
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory)
     {
-        [JsonPropertyName("id")]
-        public required string Id { get; set; }
-        [JsonPropertyName("userName")]
-        public string? UserName { get; set; }
-        [JsonPropertyName("refreshToken")]
-        public string? RefreshToken { get; set; }
-        [JsonPropertyName("accessToken")]
-        public string? AccessToken { get; set; }
-        [JsonPropertyName("tokenExpiresAt")]
-        public long TokenExpiresAt { get; set; }
-    }
-
-    public class ActivityFetchJob
-    {
-        [JsonPropertyName("userId")]
-        public string? UserId { get; set; }
-        [JsonPropertyName("page")]
-        public int? Page { get; set;}
-        [JsonPropertyName("before")]
-        public DateTime? Before { get; set; }
-        [JsonPropertyName("after")]
-        public DateTime? After { get; set; }
-
-    }
-
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> logger, HttpClient httpClient)
-    {
-        private readonly ILogger<StravaActivityFetcher> _logger = logger;
-        private readonly HttpClient _httpClient = httpClient;
+        readonly HttpClient _apiClient = httpClientFactory.CreateClient("apiClient");
 
         [Function(nameof(StravaActivityFetcher))]
         public async Task<Outputs> Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob)
         {
             var tokenFunc = new Uri($"http://localhost:7072/api/{fetchJob.UserId}/accessToken");
-            var accessTokenResponse = await _httpClient.GetAsync(tokenFunc);
+            var accessTokenResponse = await _apiClient.GetAsync(tokenFunc);
             var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
             
             var page = fetchJob.Page ?? 1;
 
-            // Fetch activity from access token and activity id
             var (activites, hasMorePages) = await ActivitiesAPI.GetStravaModel(accessToken, page, fetchJob.Before, fetchJob.After);
 
             var outputs = new Outputs();
@@ -56,7 +27,7 @@ namespace Backend
                 fetchJob.Page = ++page;
                 outputs.NextPageJob = fetchJob;
             }
-            _logger.LogInformation("Dessaaa {counts}", activites.Count());
+            _logger.LogInformation("Fetched {amount} activities", activites?.Count() ?? 0);
             outputs.WriteToActivities = activites.Select(ActivityMapper.MapSummaryActivity);
             return outputs;
         }
