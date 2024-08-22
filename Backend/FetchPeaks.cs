@@ -3,7 +3,7 @@ using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
-using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
 
 namespace Backend
 {
@@ -41,17 +41,17 @@ namespace Backend
         public string? NameAlt { get; set; }
     }
 
-    public static class FetchPeaks
+    public class FetchPeaks(ILogger<FetchPeaks> _logger)
     {
         private const string overpassUri = "https://overpass-api.de/api/interpreter";
         static readonly HttpClient client = new();
         [Function("FetchPeaks")]
         [CosmosDBOutput("%OsmDb%", "%PeaksContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
-        public static async Task<IEnumerable<StoredFeature>> Run(
-            [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
+        public async Task<IEnumerable<StoredFeature>> Run(
+            [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = "fetchPeaks/{bbox}")] HttpRequestData req, string bbox)
         {
-            const string body = @"[out:json][timeout:25];" + "\n" +
-            @"            node[""natural""=""peak""](61.554109444927185,11.88719122576684,65.13687800930502,16.833283564091325);" + "\n" +
+            string body = @"[out:json][timeout:300];" + "\n" +
+            $@"            node[""natural""=""peak""]({bbox});" + "\n" +
             @"            out body;" + "\n" +
             @"            >;" + "\n" +
             @"            out skel qt;";
@@ -60,6 +60,7 @@ namespace Backend
             var response = await client.PostAsync(overpassUri, byteContent);
             string rawPeaks = await response.Content.ReadAsStringAsync();
             RootPeaks myDeserializedClass = JsonSerializer.Deserialize<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
+            _logger.LogInformation("Fetched {AmnPeaks} peaks", myDeserializedClass.Elements.Count);
             var peaks = myDeserializedClass.Elements.Select(x => 
                 {
 
