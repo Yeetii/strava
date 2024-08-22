@@ -2,20 +2,9 @@ namespace Shared.Services.StravaClient.Model;
 
 using System.Text.Json.Serialization;
 
-public record SummaryAthlete(
-    [property: JsonPropertyName("id")] int Id,
-    [property: JsonPropertyName("resource_state")] int? ResourceState
-);
-
-public record Map(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("summary_polyline")] string SummaryPolyline,
-    [property: JsonPropertyName("resource_state")] int? ResourceState
-);
-
 public record SummaryActivity(
     [property: JsonPropertyName("resource_state")] int? ResourceState,
-    [property: JsonPropertyName("athlete")] SummaryAthlete Athlete,
+    [property: JsonPropertyName("athlete")] Metadata Athlete,
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("distance")] float? Distance,
     [property: JsonPropertyName("moving_time")] int? MovingTime,

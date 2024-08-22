@@ -5,39 +5,30 @@ using Shared.Services.StravaClient;
 
 namespace Backend
 {
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory)
+    public class ActivityFetchJob{
+        public required string UserId {get; set;}
+        public required string ActivityId {get; set;}
+    }
+
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi)
     {
         readonly HttpClient _apiClient = httpClientFactory.CreateClient("apiClient");
-
+        [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
         [Function(nameof(StravaActivityFetcher))]
-        public async Task<Outputs> Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob)
+        public async Task<Activity?> Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob)
         {
-            var tokenFunc = new Uri($"http://localhost:7072/api/{fetchJob.UserId}/accessToken");
-            var accessTokenResponse = await _apiClient.GetAsync(tokenFunc);
+            Thread.Sleep(1000);
+            var accessTokenResponse = await _apiClient.GetAsync($"{fetchJob.UserId}/accessToken");
             var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
             
-            var page = fetchJob.Page ?? 1;
-
-            var (activites, hasMorePages) = await ActivitiesAPI.GetStravaModel(accessToken, page, fetchJob.Before, fetchJob.After);
-
-            var outputs = new Outputs();
-
-            if (hasMorePages)
-            {
-                fetchJob.Page = ++page;
-                outputs.NextPageJob = fetchJob;
-            }
-            _logger.LogInformation("Fetched {amount} activities", activites?.Count() ?? 0);
-            outputs.WriteToActivities = activites.Select(ActivityMapper.MapSummaryActivity);
-            return outputs;
+            var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
+            return ActivityMapper.MapDetailedActivity(activity);
         }
 
         public class Outputs
         {
             [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public object WriteToActivities { get; set;}
-            [ServiceBusOutput("activityFetchJobs", Connection = "ServicebusConnection")]
-            public ActivityFetchJob? NextPageJob { get; set; }
         }
     }
 }

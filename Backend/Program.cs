@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.StravaClient;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
@@ -23,6 +24,17 @@ var host = new HostBuilder()
             {
                 client.BaseAddress = new Uri(configuration.GetValue<string>("ApiUrl") ?? throw new ConfigurationErrorsException("No API Url found in config"));
             });
+        services.AddHttpClient(
+            "stravaClient",
+            client =>
+            {
+                client.BaseAddress = new Uri("https://www.strava.com/api/v3/");
+            });
+        services.AddSingleton(serviceProvider => {
+            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+            var stravaClient = httpClientFactory.CreateClient("stravaClient");
+            return new ActivitiesApi(stravaClient);
+        });
         services.AddSingleton(serviceProvider =>
         {
             SocketsHttpHandler socketsHttpHandler = serviceProvider.GetRequiredService<SocketsHttpHandler>();
@@ -59,6 +71,11 @@ var host = new HostBuilder()
             var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
             var container = cosmos.GetContainer(databaseName, containerName);
             return new CollectionClient<SummitedPeak>(container);
+        });
+        services.AddScoped(serviceProvider => {
+            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+            var httpClient = httpClientFactory.CreateClient();
+            return new AuthenticationApi(httpClient, configuration);
         });
     })
     .Build();

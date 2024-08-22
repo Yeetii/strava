@@ -1,24 +1,13 @@
-using System.Configuration;
-using System.Net.Http.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 using Shared.Models;
-using Shared.Services.StravaClient.Model;
+using Shared.Services.StravaClient;
 
 
 namespace Backend
 {
-    public class RefreshStravaToken
+    public class RefreshStravaToken(AuthenticationApi _authApi)
     {
-        private static readonly HttpClient client = new();
-        private readonly string ClientSecret; 
-
-        public RefreshStravaToken(IConfiguration configuration)
-        {
-            ClientSecret = configuration.GetValue<string>("StravaClientSecret") ?? throw new ConfigurationErrorsException("No strava client secret found");
-        }
 
         [Function("RefreshStravaToken")]
         public async Task<ReturnType> Run(
@@ -28,43 +17,30 @@ namespace Backend
             containerName: "%UsersContainer%",
             Connection  = "CosmosDBConnection",
             Id = "{userId}",
-            PartitionKey = "{userId}")] User user,
-            ILogger log)
+            PartitionKey = "{userId}")] User user)
         {
             if (user.AccessToken != null && user.TokenExpiresAt > new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds())
             {
                 var tokenStillWorksResponse = req.CreateResponse(System.Net.HttpStatusCode.OK);
-                tokenStillWorksResponse.WriteString(user.AccessToken);
+                await tokenStillWorksResponse.WriteStringAsync(user.AccessToken);
                 return new ReturnType{Result = tokenStillWorksResponse};
             }
 
-            var RefreshToken = user.RefreshToken;
+            var refreshToken = user.RefreshToken;
 
-            if (RefreshToken == null)
+            if (refreshToken == null)
             {
                 var notFoundResult = req.CreateResponse(System.Net.HttpStatusCode.NotFound);
-                notFoundResult.WriteString($"Refresh token not found for user {userId}");
+                await notFoundResult.WriteStringAsync($"Refresh token not found for user {userId}");
                 return new ReturnType{Result = notFoundResult};
             }
-
-            var postBodyValues = new Dictionary<string, string>
-            {
-                { "client_id", "26280" },
-                { "client_secret", ClientSecret },
-                { "refresh_token", RefreshToken },
-                { "grant_type", "refresh_token" }
-            };
-
-            var content = new FormUrlEncodedContent(postBodyValues);
-            // TODO: Use AuthenticationAPI
-            var response = await client.PostAsync("https://www.strava.com/api/v3/oauth/token", content);
-            var tokenResponse = await response.Content.ReadFromJsonAsync<TokenResponse>();
+            var tokenResponse = await _authApi.RefreshToken(refreshToken);
 
             user.AccessToken = tokenResponse.AccessToken;
             user.TokenExpiresAt = tokenResponse.ExpiresAt;
 
             var result = req.CreateResponse(System.Net.HttpStatusCode.OK);
-            result.WriteString(tokenResponse.AccessToken);
+            await result.WriteStringAsync(tokenResponse.AccessToken);
 
             return new ReturnType{Result = result, WriteToUser = user};
         }

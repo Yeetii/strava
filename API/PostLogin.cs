@@ -54,7 +54,7 @@ namespace API
             var userExist = await _usersCollection.GetByIdMaybe(userId, new Microsoft.Azure.Cosmos.PartitionKey(userId));
 
             if (userExist != null){
-                var fetchJob = new ActivityFetchJob{UserId = userId};
+                var fetchJob = new ActivitiesFetchJob{UserId = userId};
                 outputs.ActivityFetchJob = fetchJob;
             }
 
@@ -75,7 +75,7 @@ namespace API
             [CosmosDBOutput("%CosmosDb%", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public User? User { get; set;}
             [ServiceBusOutput("activityFetchJobs", Connection = "ServicebusConnection")]
-            public ActivityFetchJob? ActivityFetchJob { get; set; }
+            public ActivitiesFetchJob? ActivityFetchJob { get; set; }
         }
     }
 }

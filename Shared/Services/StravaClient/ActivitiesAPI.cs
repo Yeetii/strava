@@ -3,14 +3,13 @@ using Shared.Services.StravaClient.Model;
 
 namespace Shared.Services.StravaClient;
 
-public static class ActivitiesAPI
+public class ActivitiesApi(HttpClient _stravaClient)
 {
     private static readonly int ActivitesPerPage = 200;
-    public async static Task<(IEnumerable<SummaryActivity>? activites, bool hasMorePages)> GetStravaModel(string token, int page = 1, DateTime? before = null, DateTime? after = null)
+    public async Task<(IEnumerable<SummaryActivity>? activites, bool hasMorePages)> GetActivitiesByAthlete(string token, int page = 1, DateTime? before = null, DateTime? after = null)
     {
-        var client = new HttpClient();
 
-        var requestUri = $"https://www.strava.com/api/v3/athlete/activities?per_page={ActivitesPerPage}&page={page}";
+        var requestUri = $"athlete/activities?per_page={ActivitesPerPage}&page={page}";
 
         if (after.HasValue)
         {
@@ -27,14 +26,14 @@ public static class ActivitiesAPI
         var request = new HttpRequestMessage
         {
             Method = HttpMethod.Get,
-            RequestUri = new Uri(requestUri),
+            RequestUri = new Uri(_stravaClient.BaseAddress + requestUri),
             Headers =
                 {
                     { "Authorization", $"Bearer {token}" },
                 },
         };
 
-        using var response = await client.SendAsync(request);
+        using var response = await _stravaClient.SendAsync(request);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync();
         var activities = JsonSerializer.Deserialize<List<SummaryActivity>>(body);
@@ -42,5 +41,25 @@ public static class ActivitiesAPI
         bool hasMorePages = activities?.Count == ActivitesPerPage;
 
         return (activities, hasMorePages);
+    }
+
+    public async Task<DetailedActivity?> GetActivity(string token, string activityId){
+        var requestUri = $"activities/{activityId}";
+        var request = new HttpRequestMessage
+        {
+            Method = HttpMethod.Get,
+            RequestUri = new Uri(_stravaClient.BaseAddress + requestUri),
+            Headers =
+                {
+                    { "Authorization", $"Bearer {token}" },
+                },
+        };
+        using var response = await _stravaClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync();
+
+        var activity = JsonSerializer.Deserialize<DetailedActivity>(body);
+
+        return activity;
     }
 }

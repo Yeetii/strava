@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 
 namespace Shared.Models;
-public class ActivityFetchJob
+public class ActivitiesFetchJob
 {
     [JsonPropertyName("userId")]
     public required string UserId { get; set; }
