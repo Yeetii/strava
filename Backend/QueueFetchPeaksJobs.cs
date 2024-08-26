@@ -1,0 +1,40 @@
+using Microsoft.Azure.Functions.Worker;
+
+namespace Backend
+{
+    public static class QueueFetchPeaksJobs
+    {
+        [ServiceBusOutput("peaksfetchjobs", Connection = "ServicebusConnection")]
+        [Function("QueueFetchPeaksJobs")]
+        public static IEnumerable<PeaksFetchJob> Run([TimerTrigger("3 0 * * MON")] TimerInfo myTimer)
+        {
+            const float latMinMax = 90;
+            const float lonMinMax = 180;
+
+            const float latIncrement = latMinMax * 2 / 10;
+            const float lonIncrement = lonMinMax * 2 / 10;
+            float lat1 = -latMinMax;
+            float lat2 = lat1 + latIncrement;
+
+            while (lat2 <= latMinMax){
+                float lon1 = -lonMinMax;
+                float lon2 = lon1 + lonIncrement;
+                while (lon2 <= lonMinMax){
+                    yield return new PeaksFetchJob{Lat1 = lat1, Lat2 = lat2, Lon1 = lon1, Lon2 = lon2};
+                    lon1 = lon2;
+                    lon2 += lonIncrement;
+                }
+                lat1 = lat2;
+                lat2 += latIncrement;
+            }
+        }
+    }
+
+    public class PeaksFetchJob
+    {
+        public float Lat1 {get; set;}
+        public float Lon1 {get; set;}
+        public float Lat2 {get; set;}
+        public float Lon2 {get; set;}
+    }
+}
