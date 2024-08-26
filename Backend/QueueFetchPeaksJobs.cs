@@ -6,13 +6,13 @@ namespace Backend
     {
         [ServiceBusOutput("peaksfetchjobs", Connection = "ServicebusConnection")]
         [Function("QueueFetchPeaksJobs")]
-        public static IEnumerable<PeaksFetchJob> Run([TimerTrigger("3 0 * * MON")] TimerInfo myTimer)
+        public static IEnumerable<PeaksFetchJob> Run([TimerTrigger("3 0 0 1 * *")] TimerInfo myTimer)
         {
             const float latMinMax = 90;
             const float lonMinMax = 180;
 
-            const float latIncrement = latMinMax * 2 / 10;
-            const float lonIncrement = lonMinMax * 2 / 10;
+            const float latIncrement = latMinMax * 2 / 20;
+            const float lonIncrement = lonMinMax * 2 / 20;
             float lat1 = -latMinMax;
             float lat2 = lat1 + latIncrement;
 
