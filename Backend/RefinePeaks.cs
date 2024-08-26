@@ -49,7 +49,7 @@ namespace Backend
                         id: peak.id.ToString(),
                         partitionKey: new PartitionKey(peak.id.ToString()),
                         patchOperations: [
-                            PatchOperation.Set("/properties/groups/jamtland_fell_peaks", true),
+                            PatchOperation.Set("/properties/groups/Jämtlands fjälltoppar", true),
                             PatchOperation.Set($"/properties/groups/{peak.area}", true)
                         ]
                     );
