@@ -55,7 +55,7 @@ namespace Backend
                         ActivityIds = []
                     };
                 summitedPeakDocument.ActivityIds.Add(activity.Id);
-                await _summitedPeaksCollection.StoreDocument(summitedPeakDocument);
+                await _summitedPeaksCollection.UpsertDocument(summitedPeakDocument);
             }
         }
     }

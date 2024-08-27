@@ -41,7 +41,9 @@ var host = new HostBuilder()
             CosmosClientOptions cosmosClientOptions = new()
             {
                 HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
-                SerializerOptions = new CosmosSerializationOptions{PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase}
+                SerializerOptions = new CosmosSerializationOptions{PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase},
+                AllowBulkExecution = true,
+
             };
 
             string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");

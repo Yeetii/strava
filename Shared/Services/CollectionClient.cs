@@ -44,10 +44,6 @@ public class CollectionClient<T>(Container _container) {
         }
     }
 
-    public async Task StoreDocument(T document){
-        await _container.UpsertItemAsync(document);
-    }
-
     public async Task<List<string>> GetAllIds(){
         var sqlQuery = "SELECT VALUE c.id FROM c";
 
@@ -63,5 +59,18 @@ public class CollectionClient<T>(Container _container) {
             }
         }
         return ids;
+    }
+
+    public async Task UpsertDocument(T document){
+        await _container.UpsertItemAsync(document);
+    }
+
+    public async Task BulkUpsert(IEnumerable<T> documents){
+        List<Task> concurrentTasks = [];
+        foreach(var document in documents)
+        {
+            concurrentTasks.Add(_container.UpsertItemAsync(document));
+        }
+        await Task.WhenAll(concurrentTasks);
     }
 }

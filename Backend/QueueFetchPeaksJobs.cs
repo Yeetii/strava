@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 
 namespace Backend
@@ -6,7 +8,21 @@ namespace Backend
     {
         [ServiceBusOutput("peaksfetchjobs", Connection = "ServicebusConnection")]
         [Function("QueueFetchPeaksJobs")]
-        public static IEnumerable<PeaksFetchJob> Run([TimerTrigger("3 0 0 1 * *")] TimerInfo myTimer)
+        public static IEnumerable<ServiceBusMessage> Run([TimerTrigger("3 0 0 1 * *")] TimerInfo myTimer)
+        {
+            DateTimeOffset enqueTime = DateTimeOffset.Now;
+            foreach (var job in GeneratePeaksFetchJobs())
+            {
+                var message = new ServiceBusMessage(JsonSerializer.Serialize(job))
+                {
+                    ScheduledEnqueueTime = enqueTime
+                };
+                enqueTime = enqueTime.AddMinutes(10);
+                yield return message;
+            }
+        }
+
+        private static IEnumerable<PeaksFetchJob> GeneratePeaksFetchJobs()
         {
             const float latMinMax = 90;
             const float lonMinMax = 180;
@@ -16,11 +32,13 @@ namespace Backend
             float lat1 = -latMinMax;
             float lat2 = lat1 + latIncrement;
 
-            while (lat2 <= latMinMax){
+            while (lat2 <= latMinMax)
+            {
                 float lon1 = -lonMinMax;
                 float lon2 = lon1 + lonIncrement;
-                while (lon2 <= lonMinMax){
-                    yield return new PeaksFetchJob{Lat1 = lat1, Lat2 = lat2, Lon1 = lon1, Lon2 = lon2};
+                while (lon2 <= lonMinMax)
+                {
+                    yield return new PeaksFetchJob { Lat1 = lat1, Lat2 = lat2, Lon1 = lon1, Lon2 = lon2 };
                     lon1 = lon2;
                     lon2 += lonIncrement;
                 }

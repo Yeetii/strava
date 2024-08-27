@@ -2,16 +2,16 @@ using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 using Microsoft.Extensions.Logging;
+using Shared.Services;
 
 namespace Backend
 {
-    public class FetchPeaksWorker(ILogger<FetchPeaksWorker> _logger)
+    public class FetchPeaksWorker(ILogger<FetchPeaksWorker> _logger, CollectionClient<StoredFeature> _peaksCollection)
     {
         private const string overpassUri = "https://overpass-api.de/api/interpreter";
         static readonly HttpClient client = new();
         [Function(nameof(FetchPeaksWorker))]
-        [CosmosDBOutput("%OsmDb%", "%PeaksContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
-        public async Task<IEnumerable<StoredFeature>> Run(
+        public async Task Run(
             [ServiceBusTrigger("peaksfetchjobs", Connection = "ServicebusConnection")] PeaksFetchJob fetchJob)
         {
             string bbox = $"{fetchJob.Lat1},{fetchJob.Lon1},{fetchJob.Lat2},{fetchJob.Lon2}";
@@ -21,7 +21,7 @@ namespace Backend
             var byteContent = new ByteArrayContent(buffer);
             var response = await client.PostAsync(overpassUri, byteContent);
             string rawPeaks = await response.Content.ReadAsStringAsync();
-            RootPeaks myDeserializedClass = JsonSerializer.Deserialize<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
+            RootPeaks myDeserializedClass = JsonSerializer.Deserialize<RootPeaks>(rawPeaks) ?? throw new JsonException("Could not deserialize");
             _logger.LogInformation("Fetched {AmnPeaks} peaks", myDeserializedClass.Elements.Count);
             var peaks = myDeserializedClass.Elements.Select(x => 
                 {
@@ -42,7 +42,7 @@ namespace Backend
                     };
                 });
 
-            return peaks;
+            await _peaksCollection.BulkUpsert(peaks);
         }
     }
 }
