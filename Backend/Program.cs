@@ -1,6 +1,8 @@
 using System.Configuration;
 using System.Text.Json;
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Azure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -78,6 +80,10 @@ var host = new HostBuilder()
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             var httpClient = httpClientFactory.CreateClient();
             return new AuthenticationApi(httpClient, configuration);
+        });
+        services.AddSingleton(s => {
+            var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
+            return new ServiceBusClient(sbConnectionString);
         });
     })
     .Build();

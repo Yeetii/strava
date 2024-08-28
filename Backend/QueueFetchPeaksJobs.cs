@@ -4,12 +4,13 @@ using Microsoft.Azure.Functions.Worker;
 
 namespace Backend
 {
-    public static class QueueFetchPeaksJobs
+    public class QueueFetchPeaksJobs(ServiceBusClient _serviceBusClient)
     {
-        [ServiceBusOutput("peaksfetchjobs", Connection = "ServicebusConnection")]
         [Function("QueueFetchPeaksJobs")]
-        public static IEnumerable<ServiceBusMessage> Run([TimerTrigger("3 0 0 1 * *")] TimerInfo myTimer)
+        public async Task Run([TimerTrigger("3 0 0 1 * *")] TimerInfo myTimer)
         {
+            var messages = new List<ServiceBusMessage>();
+            var serviceBusSender = _serviceBusClient.CreateSender("peaksfetchjobs");
             DateTimeOffset enqueTime = DateTimeOffset.Now;
             foreach (var job in GeneratePeaksFetchJobs())
             {
@@ -17,9 +18,10 @@ namespace Backend
                 {
                     ScheduledEnqueueTime = enqueTime
                 };
-                enqueTime = enqueTime.AddMinutes(10);
-                yield return message;
+                messages.Add(message);
+                enqueTime = enqueTime.AddMinutes(5);
             }
+            await serviceBusSender.SendMessagesAsync(messages);
         }
 
         private static IEnumerable<PeaksFetchJob> GeneratePeaksFetchJobs()
@@ -27,8 +29,8 @@ namespace Backend
             const float latMinMax = 90;
             const float lonMinMax = 180;
 
-            const float latIncrement = latMinMax * 2 / 20;
-            const float lonIncrement = lonMinMax * 2 / 20;
+            const float latIncrement = latMinMax * 2 / 10;
+            const float lonIncrement = lonMinMax * 2 / 10;
             float lat1 = -latMinMax;
             float lat2 = lat1 + latIncrement;
 
