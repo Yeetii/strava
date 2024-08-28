@@ -12,7 +12,7 @@ namespace Backend
 
     public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi)
     {
-        readonly HttpClient _apiClient = httpClientFactory.CreateClient("apiClient");
+        readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
         [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
         [Function(nameof(StravaActivityFetcher))]
         public async Task<Activity?> Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob)

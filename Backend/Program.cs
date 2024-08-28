@@ -19,10 +19,10 @@ var host = new HostBuilder()
         });
         services.AddSingleton(new SocketsHttpHandler());
         services.AddHttpClient(
-            "apiClient",
+            "backendApiClient",
             client =>
             {
-                client.BaseAddress = new Uri(configuration.GetValue<string>("ApiUrl") ?? throw new ConfigurationErrorsException("No API Url found in config"));
+                client.BaseAddress = new Uri(configuration.GetValue<string>("BackendApiUrl") ?? throw new ConfigurationErrorsException("No API Url found in config"));
             });
         services.AddHttpClient(
             "stravaClient",

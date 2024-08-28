@@ -7,7 +7,7 @@ namespace Backend
 {
     public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi)
     {
-        readonly HttpClient _apiClient = httpClientFactory.CreateClient("apiClient");
+        readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
         // readonly ActivitiesApi _activitiesApi = new ActivitiesApi(httpClientFactory.CreateClient("StravaClient"));
 
         [Function(nameof(StravaActivitiesFetcher))]
