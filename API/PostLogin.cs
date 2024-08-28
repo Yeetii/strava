@@ -77,7 +77,7 @@ namespace API
             public required HttpResponseData Response { get; set;}
             [CosmosDBOutput("%CosmosDb%", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public User? User { get; set;}
-            [ServiceBusOutput("activityFetchJobs", Connection = "ServicebusConnection")]
+            [ServiceBusOutput("activitiesFetchJobs", Connection = "ServicebusConnection")]
             public ActivitiesFetchJob? ActivityFetchJob { get; set; }
         }
     }
