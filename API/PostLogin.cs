@@ -61,12 +61,15 @@ namespace API
                 outputs.ActivityFetchJob = fetchJob;
             }
 
-            outputs.User = new User{Id = tokenResponse.Athlete.Id.ToString(), 
+            outputs.User = new User{
+                Id = tokenResponse.Athlete.Id.ToString(),
+                UserName = tokenResponse.Athlete.Username,
                 RefreshToken = refreshToken, 
                 SessionId = sessionId, 
                 SessionExpires = expirationDate,
                 AccessToken = tokenResponse.AccessToken,
-                TokenExpiresAt = tokenResponse.ExpiresAt};
+                TokenExpiresAt = tokenResponse.ExpiresAt
+            };
 
             return outputs;
         }
