@@ -64,12 +64,26 @@ public class CollectionClient<T>(Container _container) {
     public async Task UpsertDocument(T document){
         await _container.UpsertItemAsync(document);
     }
+    public async Task BulkUpsert(IEnumerable<T> documents)
+    {
+        const int maxConcurrentThreads = 100;
+        var concurrentTasks = new List<Task>();
+        var semaphore = new SemaphoreSlim(maxConcurrentThreads);
 
-    public async Task BulkUpsert(IEnumerable<T> documents){
-        List<Task> concurrentTasks = [];
-        foreach(var document in documents)
+        foreach (var document in documents)
         {
-            concurrentTasks.Add(_container.UpsertItemAsync(document));
+            await semaphore.WaitAsync();
+            concurrentTasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    await _container.UpsertItemAsync(document);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }));
         }
         await Task.WhenAll(concurrentTasks);
     }
