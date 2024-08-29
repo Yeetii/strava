@@ -30,7 +30,7 @@ namespace Backend
             const float lonMinMax = 180;
             // Trying to minimize jobs with only ocean by fetching thin rectangles
             const int latDivisions = 1;
-            const int lonDivisions = 150;
+            const int lonDivisions = 90;
 
             const float latIncrement = latMinMax * 2 / latDivisions;
             const float lonIncrement = lonMinMax * 2 / lonDivisions;
