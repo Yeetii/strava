@@ -36,7 +36,7 @@ namespace Backend
         {
             [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public object WriteToActivities { get; set;}
-            [ServiceBusOutput("activityFetchJobs", Connection = "ServicebusConnection")]
+            [ServiceBusOutput("activitiesFetchJobs", Connection = "ServicebusConnection")]
             public ActivitiesFetchJob? NextPageJob { get; set; }
         }
     }
