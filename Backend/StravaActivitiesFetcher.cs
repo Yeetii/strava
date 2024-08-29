@@ -11,7 +11,7 @@ namespace Backend
         // readonly ActivitiesApi _activitiesApi = new ActivitiesApi(httpClientFactory.CreateClient("StravaClient"));
 
         [Function(nameof(StravaActivitiesFetcher))]
-        public async Task<Outputs> Run([ServiceBusTrigger("activitiesFetchJobs", Connection = "ServicebusConnection")] ActivitiesFetchJob fetchJob)
+        public async Task<Outputs> Run([ServiceBusTrigger("activitiesfetchjobs", Connection = "ServicebusConnection")] ActivitiesFetchJob fetchJob)
         {
             var accessTokenResponse = await _apiClient.GetAsync($"{fetchJob.UserId}/accessToken");
             var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
@@ -36,7 +36,7 @@ namespace Backend
         {
             [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public object WriteToActivities { get; set;}
-            [ServiceBusOutput("activitiesFetchJobs", Connection = "ServicebusConnection")]
+            [ServiceBusOutput("activitiesfetchjobs", Connection = "ServicebusConnection")]
             public ActivitiesFetchJob? NextPageJob { get; set; }
         }
     }

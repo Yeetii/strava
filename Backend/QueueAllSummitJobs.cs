@@ -2,7 +2,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
 using Shared.Services;
-using static Backend.QueueActivityFetchJobs;
+using static Backend.QueueSummitJobs;
 
 namespace Backend
 {

@@ -58,7 +58,7 @@ namespace API
 
             if (userExist != null){
                 var fetchJob = new ActivitiesFetchJob{UserId = userId};
-                outputs.ActivityFetchJob = fetchJob;
+                outputs.ActivitiesFetchJob = fetchJob;
             }
 
             outputs.User = new User{
@@ -80,8 +80,8 @@ namespace API
             public required HttpResponseData Response { get; set;}
             [CosmosDBOutput("%CosmosDb%", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public User? User { get; set;}
-            [ServiceBusOutput("activitiesFetchJobs", Connection = "ServicebusConnection")]
-            public ActivitiesFetchJob? ActivityFetchJob { get; set; }
+            [ServiceBusOutput("activitiesfetchjobs", Connection = "ServicebusConnection")]
+            public ActivitiesFetchJob? ActivitiesFetchJob { get; set; }
         }
     }
 }

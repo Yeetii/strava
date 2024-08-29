@@ -3,14 +3,14 @@ using Shared.Models;
 
 namespace Backend
 {
-    public class QueueActivityFetchJobs()
+    public class QueueSummitJobs()
     {
         public class CalculateSummitJob{
             public required string ActivityId { get; set; }
         }
 
         [ServiceBusOutput("calculateSummitsJobs", Connection = "ServicebusConnection")]
-        [Function(nameof(QueueActivityFetchJobs))]
+        [Function(nameof(QueueSummitJobs))]
         public IEnumerable<CalculateSummitJob> Run(
             [CosmosDBTrigger(
             databaseName: "%CosmosDb%",

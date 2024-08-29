@@ -19,7 +19,7 @@ namespace Backend
                     ScheduledEnqueueTime = enqueTime
                 };
                 messages.Add(message);
-                enqueTime = enqueTime.AddMinutes(5);
+                enqueTime = enqueTime.AddMinutes(2);
             }
             await serviceBusSender.SendMessagesAsync(messages);
         }
@@ -28,9 +28,12 @@ namespace Backend
         {
             const float latMinMax = 90;
             const float lonMinMax = 180;
+            // Trying to minimize jobs with only ocean by fetching thin rectangles
+            const int latDivisions = 1;
+            const int lonDivisions = 150;
 
-            const float latIncrement = latMinMax * 2 / 10;
-            const float lonIncrement = lonMinMax * 2 / 10;
+            const float latIncrement = latMinMax * 2 / latDivisions;
+            const float lonIncrement = lonMinMax * 2 / lonDivisions;
             float lat1 = -latMinMax;
             float lat2 = lat1 + latIncrement;
 
