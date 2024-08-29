@@ -66,7 +66,7 @@ public class CollectionClient<T>(Container _container) {
     }
     public async Task BulkUpsert(IEnumerable<T> documents)
     {
-        const int maxConcurrentThreads = 100;
+        const int maxConcurrentThreads = 50;
         var concurrentTasks = new List<Task>();
         var semaphore = new SemaphoreSlim(maxConcurrentThreads);
 
