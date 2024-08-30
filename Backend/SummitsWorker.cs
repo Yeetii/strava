@@ -52,8 +52,9 @@ namespace Backend
                 summitedPeakDocument.ActivityIds.Add(activity.Id);
                 nearbyPeaks.First(x => x.Id == peakId).Properties.TryGetValue("name", out var peakName);
                 nearbyPeaks.First(x => x.Id == peakId).Properties.TryGetValue("elevation", out var elevation);
+                var floatParseSucceeded = float.TryParse(elevation as string, out var elevationFloat);
                 summitedPeakDocument.Name = peakName as string ?? "";
-                summitedPeakDocument.Elevation = elevation as float?;
+                summitedPeakDocument.Elevation = floatParseSucceeded ? elevationFloat : null;
                 await _summitedPeaksCollection.UpsertDocument(summitedPeakDocument);
             }
         }
