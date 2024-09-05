@@ -13,6 +13,28 @@ public class CollectionClient<T>(Container _container) {
         return await QueryCollection(query);
     }
 
+    public async Task<IEnumerable<T>> FetchWithinRectangle(Coordinate c1, Coordinate c2){
+        string query = $@"
+        SELECT * 
+        FROM p
+        WHERE ST_WITHIN(
+            p.geometry, 
+            {{
+                'type': 'Polygon',
+                'coordinates': [
+                    [
+                        [{c1.Lng}, {c1.Lat}],
+                        [{c2.Lng}, {c1.Lat}],
+                        [{c2.Lng}, {c2.Lat}],
+                        [{c1.Lng}, {c2.Lat}],
+                        [{c1.Lng}, {c1.Lat}]
+                    ]
+                ]
+            }}
+        )";
+        return await QueryCollection(query);
+    }
+
     public async Task<List<T>> FetchWholeCollection(){
         return await QueryCollection("SELECT * FROM p");
     }
