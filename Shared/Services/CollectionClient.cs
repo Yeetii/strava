@@ -3,8 +3,10 @@ using Shared.Models;
 
 namespace Shared.Services;
 
-public class CollectionClient<T>(Container _container) {
-    public async Task<List<T>> GeoSpatialFetch(Coordinate center, int radius){
+public class CollectionClient<T>(Container _container)
+{
+    public async Task<List<T>> GeoSpatialFetch(Coordinate center, int radius)
+    {
         string query = string.Join(Environment.NewLine,
         "SELECT *",
         "FROM p",
@@ -13,33 +15,40 @@ public class CollectionClient<T>(Container _container) {
         return await QueryCollection(query);
     }
 
-    public async Task<IEnumerable<T>> FetchWithinRectangle(Coordinate c1, Coordinate c2){
-        string query = $@"
-        SELECT * 
-        FROM p
-        WHERE ST_WITHIN(
-            p.geometry, 
-            {{
-                'type': 'Polygon',
-                'coordinates': [
-                    [
-                        [{c1.Lng}, {c1.Lat}],
-                        [{c2.Lng}, {c1.Lat}],
-                        [{c2.Lng}, {c2.Lat}],
-                        [{c1.Lng}, {c2.Lat}],
-                        [{c1.Lng}, {c1.Lat}]
-                    ]
-                ]
-            }}
-        )";
-        return await QueryCollection(query);
-    }
-
-    public async Task<List<T>> FetchWholeCollection(){
+    public async Task<List<T>> FetchWholeCollection()
+    {
         return await QueryCollection("SELECT * FROM p");
     }
 
-    public async Task<List<T>> QueryCollection(string query){
+    public async Task<IEnumerable<T>> QueryCollectionByXYIndex(int x, int y)
+    {
+        var queryDefinition = new QueryDefinition("SELECT * FROM c WHERE c.x = @x  AND c.y = @y")
+           .WithParameter("@x", x)
+           .WithParameter("@y", y);
+
+        var partitionKey = new PartitionKeyBuilder()
+            .Add(x)
+            .Add(y)
+            .Build();
+
+        var requestOptions = new QueryRequestOptions { PartitionKey = partitionKey };
+
+        var iterator = _container.GetItemQueryIterator<T>(
+            queryDefinition,
+            requestOptions: requestOptions);
+
+        List<T> results = [];
+
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            results.AddRange(response);
+        }
+        return results;
+    }
+
+    public async Task<List<T>> QueryCollection(string query)
+    {
         List<T> documents = [];
 
         QueryDefinition queryDefinition = new(query);
@@ -54,19 +63,25 @@ public class CollectionClient<T>(Container _container) {
         return documents;
     }
 
-    public async Task<T> GetById(string id, PartitionKey partitionKey){
+    public async Task<T> GetById(string id, PartitionKey partitionKey)
+    {
         return await _container.ReadItemAsync<T>(id, partitionKey);
     }
 
-    public async Task<T?> GetByIdMaybe(string id, PartitionKey partitionKey){
-        try {
+    public async Task<T?> GetByIdMaybe(string id, PartitionKey partitionKey)
+    {
+        try
+        {
             return await GetById(id, partitionKey);
-        } catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) {
+        }
+        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
             return default;
         }
     }
 
-    public async Task<List<string>> GetAllIds(){
+    public async Task<List<string>> GetAllIds()
+    {
         var sqlQuery = "SELECT VALUE c.id FROM c";
 
         List<string> ids = [];
@@ -83,7 +98,8 @@ public class CollectionClient<T>(Container _container) {
         return ids;
     }
 
-    public async Task UpsertDocument(T document){
+    public async Task UpsertDocument(T document)
+    {
         await _container.UpsertItemAsync(document);
     }
     public async Task BulkUpsert(IEnumerable<T> documents)
