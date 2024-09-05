@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -8,21 +9,23 @@ using Shared.Services;
 
 namespace API
 {
-    public class VisitedPeak{
-        public required string Id {get; set;}
-        public required string Name {get; set;}
-        public required int Count {get; set;}
-        public float? Elevation {get; set;}
+    public class VisitedPeak
+    {
+        public required string Id { get; set; }
+        public required string Name { get; set; }
+        public required int Count { get; set; }
+        public float? Elevation { get; set; }
     }
 
-    public class SummitsStats{
-        public int TotalPeaksClimbed {get; set;}
-        public required int[] TotalPeaksClimbedCategorized {get; set;}
-        public required VisitedPeak[] MostVisitedPeaks {get; set;}
+    public class SummitsStats
+    {
+        public int TotalPeaksClimbed { get; set; }
+        public required int[] TotalPeaksClimbedCategorized { get; set; }
+        public required VisitedPeak[] MostVisitedPeaks { get; set; }
 
     }
 
-    public class GetSummitsStats(CollectionClient<User> _usersCollection, CollectionClient<SummitedPeak> _summitedPeaksCollection)
+    public class GetSummitsStats(CollectionClient<Shared.Models.User> _usersCollection, CollectionClient<SummitedPeak> _summitedPeaksCollection)
     {
         [OpenApiOperation(tags: ["Aggregates"])]
         [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = false)]
@@ -35,21 +38,25 @@ namespace API
             response.Headers.Add("Access-Control-Allow-Credentials", "true");
             string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
 
-            if (sessionId == null){
+            if (sessionId == null)
+            {
                 response.StatusCode = HttpStatusCode.Unauthorized;
                 return response;
             }
 
-            var user = (await _usersCollection.QueryCollection($"SELECT * from c WHERE c.sessionId = '{sessionId}'")).FirstOrDefault();
+            var usersQuery = new QueryDefinition($"SELECT * from c WHERE c.sessionId = '{sessionId}'");
+            var user = (await _usersCollection.ExecuteQueryAsync(usersQuery)).FirstOrDefault();
             if (user == default || user.SessionExpires < DateTime.Now)
             {
                 response.StatusCode = HttpStatusCode.Unauthorized;
                 return response;
             }
 
-            var summitedPeaks = await _summitedPeaksCollection.QueryCollection($"SELECT * FROM c where c.userId = '{user.Id}'");
+            var summitedPeaksQuery = new QueryDefinition($"SELECT * FROM c where c.userId = '{user.Id}'");
+            var summitedPeaks = (await _summitedPeaksCollection.ExecuteQueryAsync(summitedPeaksQuery)).ToList();
 
-            var summitsStats = new SummitsStats{
+            var summitsStats = new SummitsStats
+            {
                 TotalPeaksClimbed = summitedPeaks.Count,
                 TotalPeaksClimbedCategorized = GetTotalPeaksClimbedCategorized(summitedPeaks),
                 MostVisitedPeaks = GetMostVisitedPeaks(summitedPeaks)
@@ -57,26 +64,30 @@ namespace API
 
             response.StatusCode = HttpStatusCode.OK;
             await response.WriteAsJsonAsync(summitsStats);
-            return response;    
+            return response;
         }
 
-        private static int[] GetTotalPeaksClimbedCategorized(IEnumerable<SummitedPeak> summitedPeaks){
-            int[] totalPeaksClimbedCategorized = [0,0,0,0,0,0,0,0,0];
-            foreach (var summitedPeak in summitedPeaks){
+        private static int[] GetTotalPeaksClimbedCategorized(IEnumerable<SummitedPeak> summitedPeaks)
+        {
+            int[] totalPeaksClimbedCategorized = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+            foreach (var summitedPeak in summitedPeaks)
+            {
                 if (summitedPeak.Elevation is null)
                     continue;
-                int category = (int) summitedPeak.Elevation / 1000;
+                int category = (int)summitedPeak.Elevation / 1000;
                 totalPeaksClimbedCategorized[category]++;
             }
             return totalPeaksClimbedCategorized;
         }
 
-        private static VisitedPeak[] GetMostVisitedPeaks(IEnumerable<SummitedPeak> summitedPeaks){
-            return summitedPeaks.Select(peak => new VisitedPeak{
-                    Id = peak.Id,
-                    Name = peak.Name,
-                    Elevation = peak.Elevation ?? 0,
-                    Count = peak.ActivityIds.Count
+        private static VisitedPeak[] GetMostVisitedPeaks(IEnumerable<SummitedPeak> summitedPeaks)
+        {
+            return summitedPeaks.Select(peak => new VisitedPeak
+            {
+                Id = peak.Id,
+                Name = peak.Name,
+                Elevation = peak.Elevation ?? 0,
+                Count = peak.ActivityIds.Count
             })
             .OrderByDescending(visitedPeak => visitedPeak.Count)
             .Take(5).ToArray();

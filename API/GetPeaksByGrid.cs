@@ -55,8 +55,7 @@ namespace API
                     {"elevation", p.Tags.Elevation},
                     {"name", p.Tags.Name},
                     {"nameSapmi", p.Tags.NameSapmi},
-                    {"nameAlt", p.Tags.NameAlt},
-                    {"groups", new Dictionary<string, bool>()}
+                    {"nameAlt", p.Tags.NameAlt}
                 };
 
                 var properties = propertiesDirty.Where(x => x.Value != null).ToDictionary();

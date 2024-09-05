@@ -1,5 +1,5 @@
-using System.ComponentModel.DataAnnotations;
 using System.Net;
+using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -9,17 +9,17 @@ using Shared.Services;
 
 namespace API
 {
-    public class GetPeaks(CollectionClient<User> _usersCollection, CollectionClient<StoredFeature> _peaksCollection, CollectionClient<SummitedPeak> _summitedPeakCollection)
+    public class GetPeaks(CollectionClient<Shared.Models.User> _usersCollection, CollectionClient<StoredFeature> _peaksCollection, CollectionClient<SummitedPeak> _summitedPeakCollection)
     {
-        const int MinRadiusMetres = (int) 40E3;
-        const int MaxRadiusMetres = (int) 100E3;
+        const int MinRadiusMetres = (int)40E3;
+        const int MaxRadiusMetres = (int)100E3;
 
         [OpenApiOperation(tags: ["Peaks"])]
         [OpenApiParameter(name: "lat", In = ParameterLocation.Query, Type = typeof(double), Required = true)]
         [OpenApiParameter(name: "lon", In = ParameterLocation.Query, Type = typeof(double), Required = true)]
         [OpenApiParameter(name: "radius", In = ParameterLocation.Query, Type = typeof(double), Required = false)]
         [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = false)]
-        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection), 
+        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
             Description = "A GeoJson FeatureCollection with peaks. If there is a valid session cookie, the peaks are populated with the summited property.")]
         [Function("GetPeaks")]
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks")] HttpRequestData req)
@@ -44,16 +44,19 @@ namespace API
 
             if (sessionId != null)
             {
-                var user = (await _usersCollection.QueryCollection($"SELECT * from c WHERE c.sessionId = '{sessionId}'")).FirstOrDefault();
+                var usersQuery = new QueryDefinition($"SELECT * from c WHERE c.sessionId = '{sessionId}'");
+                var user = (await _usersCollection.ExecuteQueryAsync(usersQuery)).FirstOrDefault();
                 if (user == default || user.SessionExpires < DateTime.Now)
                 {
                     response.StatusCode = HttpStatusCode.Unauthorized;
                     return response;
                 }
                 // TODO: Optimization: Only query peakIds from peaks fetch
-                var summitedPeaks = await _summitedPeakCollection.QueryCollection($"SELECT * FROM c where c.userId = '{user.Id}'");
-                foreach (var peak in peaks){
-                    if (summitedPeaks.Exists(x => x.PeakId == peak.Id))
+                var summitedPeaksQuery = new QueryDefinition($"SELECT * from c WHERE c.userId = '{user.Id}'");
+                var summitedPeaks = await _summitedPeakCollection.ExecuteQueryAsync(summitedPeaksQuery);
+                foreach (var peak in peaks)
+                {
+                    if (summitedPeaks.ToList().Exists(x => x.PeakId == peak.Id))
                         peak.Properties.Add("summited", true);
                 }
             }
@@ -77,7 +80,7 @@ namespace API
             var lonSuccess = double.TryParse(req.Query["lon"], out double lon);
             if (!latSuccess || !lonSuccess || Math.Abs(lat) > 90 || Math.Abs(lon) > 180)
             {
-                center = new Coordinate(0,0);
+                center = new Coordinate(0, 0);
                 return false;
             }
             center = new Coordinate(lon, lat);
