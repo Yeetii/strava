@@ -25,6 +25,8 @@ namespace Shared.Models
 
         public Feature ToFeature()
         {
+            Properties.Add("x", X);
+            Properties.Add("y", Y);
             return new Feature
             {
                 Id = Id,
