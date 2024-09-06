@@ -15,6 +15,10 @@ namespace Shared.Services
             string query = $"[out:json][timeout:400];node[\"natural\"=\"peak\"][\"name\"]({bbox});out qt;";
             string encodedQuery = Uri.EscapeDataString(query);
             var response = await _client.GetAsync($"?data={encodedQuery}");
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception($"Could not get peaks, status code: {response.StatusCode}, {response.ReasonPhrase}");
+            }
             string rawPeaks = await response.Content.ReadAsStringAsync();
             RootPeaks rootPeaks = JsonSerializer.Deserialize<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
             return rootPeaks.Elements;

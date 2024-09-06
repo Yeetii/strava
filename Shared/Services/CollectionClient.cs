@@ -5,19 +5,19 @@ namespace Shared.Services;
 
 public class CollectionClient<T>(Container _container)
 {
-    public async Task<List<T>> GeoSpatialFetch(Coordinate center, int radius)
+    public async Task<IEnumerable<T>> GeoSpatialFetch(Coordinate center, int radius)
     {
         string query = string.Join(Environment.NewLine,
         "SELECT *",
         "FROM p",
         $"WHERE ST_DISTANCE(p.geometry, {{'type': 'Point', 'coordinates':[{center.Lng}, {center.Lat}]}}) < {radius}");
 
-        return await QueryCollection(query);
+        return await ExecuteQueryAsync(new QueryDefinition(query));
     }
 
-    public async Task<List<T>> FetchWholeCollection()
+    public async Task<IEnumerable<T>> FetchWholeCollection()
     {
-        return await QueryCollection("SELECT * FROM p");
+        return await ExecuteQueryAsync(new QueryDefinition("SELECT * FROM p"));
     }
 
     public async Task<IEnumerable<T>> QueryCollectionByXYIndex(int x, int y)
@@ -47,16 +47,15 @@ public class CollectionClient<T>(Container _container)
         return results;
     }
 
-    public async Task<List<T>> QueryCollection(string query)
+    public async Task<IEnumerable<T>> ExecuteQueryAsync(QueryDefinition queryDefinition)
     {
-        List<T> documents = [];
+        var documents = new List<T>();
 
-        QueryDefinition queryDefinition = new(query);
-        using (FeedIterator<T> resultSet = _container.GetItemQueryIterator<T>(queryDefinition))
+        using (var feedIterator = _container.GetItemQueryIterator<T>(queryDefinition))
         {
-            while (resultSet.HasMoreResults)
+            while (feedIterator.HasMoreResults)
             {
-                FeedResponse<T> response = await resultSet.ReadNextAsync();
+                var response = await feedIterator.ReadNextAsync();
                 documents.AddRange(response);
             }
         }
@@ -78,6 +77,35 @@ public class CollectionClient<T>(Container _container)
         {
             return default;
         }
+    }
+
+    public async Task<IEnumerable<T>> GetByIdsAsync(IEnumerable<string> ids)
+    {
+        const int MaxIdsPerQuery = 1000;
+        var allDocuments = new List<T>();
+
+        var idChunks = ids
+            .Select((id, index) => new { id, index })
+            .GroupBy(x => x.index / MaxIdsPerQuery)
+            .Select(group => group.Select(x => x.id).ToList());
+
+        foreach (var chunk in idChunks)
+        {
+            var queryText = "SELECT * FROM c WHERE c.id IN (" +
+                            string.Join(",", chunk.Select((_, i) => $"@id{i}")) + ")";
+
+            var queryDefinition = new QueryDefinition(queryText);
+
+            for (int i = 0; i < chunk.Count; i++)
+            {
+                queryDefinition.WithParameter($"@id{i}", chunk[i]);
+            }
+
+            var queryResult = await ExecuteQueryAsync(queryDefinition);
+            allDocuments.AddRange(queryResult);
+        }
+
+        return allDocuments;
     }
 
     public async Task<List<string>> GetAllIds()

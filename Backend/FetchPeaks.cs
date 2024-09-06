@@ -4,6 +4,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
 using Microsoft.Extensions.Logging;
+using Shared.Helpers;
 
 namespace Backend
 {
@@ -12,7 +13,7 @@ namespace Backend
         [JsonPropertyName("elements")]
         public required List<RawPeaks> Elements { get; set; }
     }
-        public class RawPeaks
+    public class RawPeaks
     {
         [JsonPropertyName("id")]
         public long Id { get; set; }
@@ -61,7 +62,7 @@ namespace Backend
             string rawPeaks = await response.Content.ReadAsStringAsync();
             RootPeaks myDeserializedClass = JsonSerializer.Deserialize<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
             _logger.LogInformation("Fetched {AmnPeaks} peaks", myDeserializedClass.Elements.Count);
-            var peaks = myDeserializedClass.Elements.Select(x => 
+            var peaks = myDeserializedClass.Elements.Select(x =>
                 {
 
                     var propertiesDirty = new Dictionary<string, object?>(){
@@ -74,11 +75,15 @@ namespace Backend
                     };
 
                     var properties = propertiesDirty.Where(x => x.Value != null).ToDictionary();
+                    var tile = SlippyTileCalculator.WGS84ToTileIndex(new Coordinate(x.Lon, x.Lat), 11);
 
-                    return new StoredFeature{
-                    Id = x.Id.ToString(),
-                    Properties = properties,
-                    Geometry= new Geometry([x.Lon, x.Lat])
+                    return new StoredFeature
+                    {
+                        Id = x.Id.ToString(),
+                        X = tile.X,
+                        Y = tile.Y,
+                        Properties = properties,
+                        Geometry = new Geometry { Coordinates = [x.Lon, x.Lat], Type = GeometryType.Point }
                     };
                 });
 
