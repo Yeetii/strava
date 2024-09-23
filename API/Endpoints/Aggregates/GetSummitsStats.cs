@@ -7,7 +7,7 @@ using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 
-namespace API
+namespace API.Endpoints.Aggregates
 {
     public class VisitedPeak
     {
@@ -25,7 +25,8 @@ namespace API
 
     }
 
-    public class GetSummitsStats(CollectionClient<Shared.Models.User> _usersCollection, CollectionClient<SummitedPeak> _summitedPeaksCollection)
+    public class GetSummitsStats(UserAuthenticationService _userAuthService,
+        CollectionClient<SummitedPeak> _summitedPeaksCollection)
     {
         [OpenApiOperation(tags: ["Aggregates"])]
         [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = false)]
@@ -38,15 +39,8 @@ namespace API
             response.Headers.Add("Access-Control-Allow-Credentials", "true");
             string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
 
-            if (sessionId == null)
-            {
-                response.StatusCode = HttpStatusCode.Unauthorized;
-                return response;
-            }
-
-            var usersQuery = new QueryDefinition($"SELECT * from c WHERE c.sessionId = '{sessionId}'");
-            var user = (await _usersCollection.ExecuteQueryAsync(usersQuery)).FirstOrDefault();
-            if (user == default || user.SessionExpires < DateTime.Now)
+            var user = await _userAuthService.GetUserFromSessionId(sessionId);
+            if (user == default)
             {
                 response.StatusCode = HttpStatusCode.Unauthorized;
                 return response;

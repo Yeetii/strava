@@ -83,6 +83,11 @@ var host = new HostBuilder()
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             return new OverpassClient(httpClientFactory);
         });
+        services.AddScoped(serviceProvider =>
+        {
+            var usersCollection = serviceProvider.GetRequiredService<CollectionClient<Shared.Models.User>>();
+            return new UserAuthenticationService(usersCollection);
+        });
     })
     .ConfigureOpenApi()
     .Build();
