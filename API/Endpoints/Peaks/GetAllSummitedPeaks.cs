@@ -37,7 +37,7 @@ namespace API
             }
 
             var summitedPeaksQuery = new QueryDefinition($"SELECT * FROM c where c.userId = '{user.Id}'");
-            var summitedPeaks = await _summitedPeakCollection.ExecuteQueryAsync(summitedPeaksQuery);
+            var summitedPeaks = await _summitedPeakCollection.ExecuteQueryAsync<SummitedPeak>(summitedPeaksQuery);
             var summitedPeaksIds = summitedPeaks.Select(x => x.PeakId).ToImmutableHashSet();
 
             var peaks = await _peaksCollection.GetByIdsAsync(summitedPeaksIds);

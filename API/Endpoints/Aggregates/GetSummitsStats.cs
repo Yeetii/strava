@@ -47,7 +47,7 @@ namespace API.Endpoints.Aggregates
             }
 
             var summitedPeaksQuery = new QueryDefinition($"SELECT * FROM c where c.userId = '{user.Id}'");
-            var summitedPeaks = (await _summitedPeaksCollection.ExecuteQueryAsync(summitedPeaksQuery)).ToList();
+            var summitedPeaks = (await _summitedPeaksCollection.ExecuteQueryAsync<SummitedPeak>(summitedPeaksQuery)).ToList();
 
             var summitsStats = new SummitsStats
             {

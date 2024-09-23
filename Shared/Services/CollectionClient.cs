@@ -3,7 +3,7 @@ using Shared.Models;
 
 namespace Shared.Services;
 
-public class CollectionClient<T>(Container _container)
+public class CollectionClient<T>(Container _container) where T : IDocument
 {
     public async Task<IEnumerable<T>> GeoSpatialFetch(Coordinate center, int radius)
     {
@@ -12,12 +12,12 @@ public class CollectionClient<T>(Container _container)
         "FROM p",
         $"WHERE ST_DISTANCE(p.geometry, {{'type': 'Point', 'coordinates':[{center.Lng}, {center.Lat}]}}) < {radius}");
 
-        return await ExecuteQueryAsync(new QueryDefinition(query));
+        return await ExecuteQueryAsync<T>(new QueryDefinition(query));
     }
 
     public async Task<IEnumerable<T>> FetchWholeCollection()
     {
-        return await ExecuteQueryAsync(new QueryDefinition("SELECT * FROM p"));
+        return await ExecuteQueryAsync<T>(new QueryDefinition("SELECT * FROM p"));
     }
 
     public async Task<IEnumerable<T>> QueryCollectionByXYIndex(int x, int y)
@@ -47,11 +47,11 @@ public class CollectionClient<T>(Container _container)
         return results;
     }
 
-    public async Task<IEnumerable<T>> ExecuteQueryAsync(QueryDefinition queryDefinition)
+    public async Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition)
     {
-        var documents = new List<T>();
+        var documents = new List<S>();
 
-        using (var feedIterator = _container.GetItemQueryIterator<T>(queryDefinition))
+        using (var feedIterator = _container.GetItemQueryIterator<S>(queryDefinition))
         {
             while (feedIterator.HasMoreResults)
             {
@@ -101,7 +101,7 @@ public class CollectionClient<T>(Container _container)
                 queryDefinition.WithParameter($"@id{i}", chunk[i]);
             }
 
-            var queryResult = await ExecuteQueryAsync(queryDefinition);
+            var queryResult = await ExecuteQueryAsync<T>(queryDefinition);
             allDocuments.AddRange(queryResult);
         }
 
@@ -152,5 +152,24 @@ public class CollectionClient<T>(Container _container)
             }));
         }
         await Task.WhenAll(concurrentTasks);
+    }
+
+    public async Task DeleteDocument(string id, PartitionKey partitionKey)
+    {
+        await _container.DeleteItemAsync<T>(id, partitionKey);
+    }
+
+    public async Task<IEnumerable<string>> GetIdsByKey(string key, string value)
+    {
+        var queryDefinition = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c." + key + " = @value")
+            .WithParameter("@value", value);
+        return await ExecuteQueryAsync<string>(queryDefinition);
+    }
+
+    public async Task DeleteDocumentsByKey(string key, string value, string? partitionKey = null)
+    {
+        var ids = await GetIdsByKey(key, value);
+        var tasks = ids.Select(id => DeleteDocument(id, new PartitionKey(partitionKey ?? id)));
+        await Task.WhenAll(tasks);
     }
 }

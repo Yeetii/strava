@@ -13,7 +13,7 @@ namespace Shared.Models
         public required Geometry Geometry { get; set; }
     }
 
-    public class StoredFeature : IStoredInGrid
+    public class StoredFeature : IStoredInGrid, IDocument
     {
         public required string Id { get; set; }
         public required int X { get; set; }

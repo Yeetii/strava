@@ -7,7 +7,7 @@ using Microsoft.OpenApi.Models;
 using Shared.Services.StravaClient;
 using Shared.Services;
 
-namespace API
+namespace API.Endpoints
 {
     public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<User> _usersCollection)
     {
@@ -21,18 +21,20 @@ namespace API
 
             var response = req.CreateResponse();
             response.Headers.Add("Access-Control-Allow-Credentials", "true");
-            var outputs = new ReturnBindings(){Response = response};
+            var outputs = new ReturnBindings() { Response = response };
 
-            if (string.IsNullOrEmpty(authCode)){
+            if (string.IsNullOrEmpty(authCode))
+            {
                 response.StatusCode = HttpStatusCode.BadRequest;
                 await response.WriteStringAsync("No tokens provided");
                 return outputs;
             }
-            
+
             var tokenResponse = await _authenticationApi.TokenExcange(authCode);
             var refreshToken = tokenResponse.RefreshToken;
-                
-            if (refreshToken == null){
+
+            if (refreshToken == null)
+            {
                 response.StatusCode = HttpStatusCode.BadRequest;
                 await response.WriteStringAsync("Auth token exchange did not provide refresh token");
                 return outputs;
@@ -56,16 +58,18 @@ namespace API
 
             var userExist = await _usersCollection.GetByIdMaybe(userId, new Microsoft.Azure.Cosmos.PartitionKey(userId));
 
-            if (userExist != null){
-                var fetchJob = new ActivitiesFetchJob{UserId = userId};
+            if (userExist == null)
+            {
+                var fetchJob = new ActivitiesFetchJob { UserId = userId };
                 outputs.ActivitiesFetchJob = fetchJob;
             }
 
-            outputs.User = new User{
+            outputs.User = new User
+            {
                 Id = tokenResponse.Athlete.Id.ToString(),
                 UserName = tokenResponse.Athlete.Username,
-                RefreshToken = refreshToken, 
-                SessionId = sessionId, 
+                RefreshToken = refreshToken,
+                SessionId = sessionId,
                 SessionExpires = expirationDate,
                 AccessToken = tokenResponse.AccessToken,
                 TokenExpiresAt = tokenResponse.ExpiresAt
@@ -77,9 +81,9 @@ namespace API
         public class ReturnBindings
         {
             [HttpResult]
-            public required HttpResponseData Response { get; set;}
+            public required HttpResponseData Response { get; set; }
             [CosmosDBOutput("%CosmosDb%", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
-            public User? User { get; set;}
+            public User? User { get; set; }
             [ServiceBusOutput("activitiesfetchjobs", Connection = "ServicebusConnection")]
             public ActivitiesFetchJob? ActivitiesFetchJob { get; set; }
         }

@@ -14,7 +14,7 @@ public class UserAuthenticationService(CollectionClient<Models.User> _usersColle
         var usersQuery = new QueryDefinition("SELECT * FROM c WHERE c.sessionId = @sessionId")
             .WithParameter("@sessionId", sessionId);
 
-        var user = (await _usersCollection.ExecuteQueryAsync(usersQuery)).FirstOrDefault();
+        var user = (await _usersCollection.ExecuteQueryAsync<Models.User>(usersQuery)).FirstOrDefault();
 
         return user?.SessionExpires >= DateTime.Now ? user : null;
     }
@@ -24,6 +24,6 @@ public class UserAuthenticationService(CollectionClient<Models.User> _usersColle
         var usersQuery = new QueryDefinition("SELECT c.sessionId FROM c WHERE c.id = @userId")
             .WithParameter("@userId", userId);
 
-        return (await _usersCollection.ExecuteQueryAsync(usersQuery)).Select(user => user.SessionId.ToString());
+        return (await _usersCollection.ExecuteQueryAsync<Models.User>(usersQuery)).Select(user => user.SessionId.ToString());
     }
 }

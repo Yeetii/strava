@@ -18,7 +18,6 @@ namespace API
         [OpenApiParameter(name: "lat", In = ParameterLocation.Query, Type = typeof(double), Required = true)]
         [OpenApiParameter(name: "lon", In = ParameterLocation.Query, Type = typeof(double), Required = true)]
         [OpenApiParameter(name: "radius", In = ParameterLocation.Query, Type = typeof(double), Required = false)]
-        [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = false)]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
             Description = "A GeoJson FeatureCollection with peaks. If there is a valid session cookie, the peaks are populated with the summited property.")]
         [Function("GetPeaks")]
@@ -41,25 +40,6 @@ namespace API
             {
                 Features = peaks.Select(x => x.ToFeature())
             };
-
-            if (sessionId != null)
-            {
-                var usersQuery = new QueryDefinition($"SELECT * from c WHERE c.sessionId = '{sessionId}'");
-                var user = (await _usersCollection.ExecuteQueryAsync(usersQuery)).FirstOrDefault();
-                if (user == default || user.SessionExpires < DateTime.Now)
-                {
-                    response.StatusCode = HttpStatusCode.Unauthorized;
-                    return response;
-                }
-                // TODO: Optimization: Only query peakIds from peaks fetch
-                var summitedPeaksQuery = new QueryDefinition($"SELECT * from c WHERE c.userId = '{user.Id}'");
-                var summitedPeaks = await _summitedPeakCollection.ExecuteQueryAsync(summitedPeaksQuery);
-                foreach (var peak in peaks)
-                {
-                    if (summitedPeaks.ToList().Exists(x => x.PeakId == peak.Id))
-                        peak.Properties.Add("summited", true);
-                }
-            }
 
             response.StatusCode = HttpStatusCode.OK;
             await response.WriteAsJsonAsync(featureCollection);

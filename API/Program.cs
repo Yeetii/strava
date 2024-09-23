@@ -66,6 +66,14 @@ var host = new HostBuilder()
             var container = cosmos.GetContainer(databaseName, containerName);
             return new CollectionClient<Shared.Models.User>(container);
         });
+        services.AddSingleton(ServiceProvider =>
+        {
+            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
+            var containerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new Exception("No peaks container name found");
+            var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmos.GetContainer(databaseName, containerName);
+            return new CollectionClient<Activity>(container);
+        });
         services.AddScoped(serviceProvider =>
         {
             var httpClient = serviceProvider.GetRequiredService<HttpClient>();

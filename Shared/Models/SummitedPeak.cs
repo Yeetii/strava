@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
+using Shared.Services;
 
 namespace Shared.Models;
 
-public class SummitedPeak{
+public class SummitedPeak : IDocument
+{
     [JsonPropertyName("id")]
     public required string Id { get; set; }
     public required string Name { get; set; }
