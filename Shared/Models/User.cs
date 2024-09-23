@@ -7,6 +7,4 @@ public class User : IDocument
     public string? RefreshToken { get; set; }
     public string? AccessToken { get; set; }
     public long TokenExpiresAt { get; set; }
-    public Guid SessionId { get; set; }
-    public DateTime SessionExpires { get; set; }
 }

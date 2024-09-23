@@ -41,21 +41,18 @@ namespace API.Endpoints
             }
 
             response.StatusCode = HttpStatusCode.OK;
-            var expirationDate = DateTime.Now.AddDays(30);
             var sessionId = Guid.NewGuid();
             var cookie = new HttpCookie("session", sessionId.ToString())
             {
-                Expires = expirationDate,
+                MaxAge = TimeSpan.FromDays(30).TotalSeconds,
                 SameSite = SameSite.ExplicitNone,
                 Secure = true,
                 Domain = isLocal ? "localhost" : "erikmagnusson.com",
                 Path = "/"
             };
             response.Cookies.Append(cookie);
-            await response.WriteStringAsync("Added user");
 
             var userId = tokenResponse.Athlete.Id.ToString();
-
             var userExist = await _usersCollection.GetByIdMaybe(userId, new Microsoft.Azure.Cosmos.PartitionKey(userId));
 
             if (userExist == null)
@@ -69,10 +66,14 @@ namespace API.Endpoints
                 Id = tokenResponse.Athlete.Id.ToString(),
                 UserName = tokenResponse.Athlete.Username,
                 RefreshToken = refreshToken,
-                SessionId = sessionId,
-                SessionExpires = expirationDate,
                 AccessToken = tokenResponse.AccessToken,
                 TokenExpiresAt = tokenResponse.ExpiresAt
+            };
+
+            outputs.Session = new Session
+            {
+                Id = sessionId.ToString(),
+                UserId = userId
             };
 
             return outputs;
@@ -84,6 +85,8 @@ namespace API.Endpoints
             public required HttpResponseData Response { get; set; }
             [CosmosDBOutput("%CosmosDb%", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public User? User { get; set; }
+            [CosmosDBOutput("%CosmosDb%", "%SessionsContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
+            public Session? Session { get; set; }
             [ServiceBusOutput("activitiesfetchjobs", Connection = "ServicebusConnection")]
             public ActivitiesFetchJob? ActivitiesFetchJob { get; set; }
         }

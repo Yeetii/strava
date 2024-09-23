@@ -66,6 +66,14 @@ var host = new HostBuilder()
             var container = cosmos.GetContainer(databaseName, containerName);
             return new CollectionClient<Shared.Models.User>(container);
         });
+        services.AddSingleton(serviceProvider =>
+        {
+            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
+            var containerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No user container name found");
+            var cosmos = serviceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmos.GetContainer(databaseName, containerName);
+            return new CollectionClient<Session>(container);
+        });
         services.AddSingleton(ServiceProvider =>
         {
             var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
@@ -94,7 +102,8 @@ var host = new HostBuilder()
         services.AddScoped(serviceProvider =>
         {
             var usersCollection = serviceProvider.GetRequiredService<CollectionClient<Shared.Models.User>>();
-            return new UserAuthenticationService(usersCollection);
+            var sessionsCollection = serviceProvider.GetRequiredService<CollectionClient<Session>>();
+            return new UserAuthenticationService(usersCollection, sessionsCollection);
         });
     })
     .ConfigureOpenApi()

@@ -2,7 +2,8 @@ using Microsoft.Azure.Cosmos;
 
 namespace Shared.Services;
 
-public class UserAuthenticationService(CollectionClient<Models.User> _usersCollection)
+public class UserAuthenticationService(CollectionClient<Models.User> _usersCollection,
+    CollectionClient<Models.Session> _sessionsCollection)
 {
     public async Task<Models.User?> GetUserFromSessionId(string? sessionId)
     {
@@ -11,19 +12,21 @@ public class UserAuthenticationService(CollectionClient<Models.User> _usersColle
             return null;
         }
 
-        var usersQuery = new QueryDefinition("SELECT * FROM c WHERE c.sessionId = @sessionId")
-            .WithParameter("@sessionId", sessionId);
+        var session = await _sessionsCollection.GetByIdMaybe(sessionId, new PartitionKey(sessionId));
+        if (session == null)
+        {
+            return null;
+        }
 
-        var user = (await _usersCollection.ExecuteQueryAsync<Models.User>(usersQuery)).FirstOrDefault();
-
-        return user?.SessionExpires >= DateTime.Now ? user : null;
+        var user = await _usersCollection.GetByIdMaybe(session.UserId, new PartitionKey(session.UserId));
+        return user;
     }
 
     public async Task<IEnumerable<string>> GetUsersActiveSessions(string userId)
     {
-        var usersQuery = new QueryDefinition("SELECT c.sessionId FROM c WHERE c.id = @userId")
+        var sessionsQuery = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.userId = @userId")
             .WithParameter("@userId", userId);
 
-        return (await _usersCollection.ExecuteQueryAsync<Models.User>(usersQuery)).Select(user => user.SessionId.ToString());
+        return await _sessionsCollection.ExecuteQueryAsync<string>(sessionsQuery);
     }
 }
