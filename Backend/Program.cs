@@ -21,10 +21,16 @@ var host = new HostBuilder()
         });
         services.AddSingleton(new SocketsHttpHandler());
         services.AddHttpClient(
+            "apiClient",
+            client =>
+            {
+                client.BaseAddress = new Uri(configuration.GetValue<string>("ApiUrl") ?? throw new ConfigurationErrorsException("No API Url found in config"));
+            });
+        services.AddHttpClient(
             "backendApiClient",
             client =>
             {
-                client.BaseAddress = new Uri(configuration.GetValue<string>("BackendApiUrl") ?? throw new ConfigurationErrorsException("No API Url found in config"));
+                client.BaseAddress = new Uri(configuration.GetValue<string>("BackendApiUrl") ?? throw new ConfigurationErrorsException("No Backend API Url found in config"));
             });
         services.AddHttpClient(
             "stravaClient",
@@ -64,7 +70,7 @@ var host = new HostBuilder()
         services.AddSingleton(ServiceProvider =>
         {
             var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
-            var containerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new Exception("No peaks container name found");
+            var containerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new Exception("No activites container name found");
             var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
             var container = cosmos.GetContainer(databaseName, containerName);
             return new CollectionClient<Activity>(container);
@@ -88,7 +94,7 @@ var host = new HostBuilder()
         services.AddSingleton(serviceProvider =>
         {
             var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
-            var containerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No user container name found");
+            var containerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No sessions container name found");
             var cosmos = serviceProvider.GetRequiredService<CosmosClient>();
             var container = cosmos.GetContainer(databaseName, containerName);
             return new CollectionClient<Session>(container);

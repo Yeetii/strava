@@ -5,7 +5,25 @@ namespace Shared.Helpers
 {
     public class SlippyTileCalculator
     {
-        public static Point WGS84ToTileIndex(Coordinate coordinate, int zoom)
+        private const int DefaultZoom = 11;
+        public static IEnumerable<Point> TileIndicesByRadius(Coordinate center, int radius, int zoom = DefaultZoom)
+        {
+            var nwCorner = GeoSpatialFunctions.ShiftCoordinate(center, -radius, radius);
+            var seCorner = GeoSpatialFunctions.ShiftCoordinate(center, radius, -radius);
+
+            var nwTileIndex = WGS84ToTileIndex(nwCorner, zoom);
+            var seTileIndex = WGS84ToTileIndex(seCorner, zoom);
+
+            for (int x = nwTileIndex.X; x <= seTileIndex.X; x++)
+            {
+                for (int y = nwTileIndex.Y; y <= seTileIndex.Y; y++)
+                {
+                    yield return new Point(x, y);
+                }
+            }
+        }
+
+        public static Point WGS84ToTileIndex(Coordinate coordinate, int zoom = DefaultZoom)
         {
             var lon = coordinate.Lng;
             var lat = coordinate.Lat;
@@ -18,7 +36,7 @@ namespace Shared.Helpers
 
             return p;
         }
-        public static (Coordinate nw, Coordinate se) TileIndexToWGS84(int x, int y, int z)
+        public static (Coordinate nw, Coordinate se) TileIndexToWGS84(int x, int y, int z = DefaultZoom)
         {
             double nwLon = TileXToLon(x, z);
             double nwLat = TileYToLat(y, z);

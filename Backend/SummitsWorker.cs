@@ -4,14 +4,21 @@ using Microsoft.Extensions.Logging;
 using Shared.Services;
 using Shared;
 using Microsoft.Azure.Cosmos;
+using Shared.Helpers;
+using System.Collections.Immutable;
+using System.Net.Http.Json;
 
 namespace Backend;
 
+// Input format: 
+// {"activityId": "11808921572"}
 public class SummitsWorker(ILogger<SummitsWorker> _logger,
-    CollectionClient<StoredFeature> _peaksCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
-    UserAuthenticationService _userAuthService)
+    UserAuthenticationService _userAuthService,
+    IHttpClientFactory _httpClientFactory)
 {
+    readonly HttpClient _apiClient = _httpClientFactory.CreateClient("apiClient");
+
     [Function("SummitsWorker")]
     [SignalROutput(HubName = "peakshunters")]
     public async Task<IEnumerable<SignalRMessageAction>> Run(
@@ -31,15 +38,18 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         }
         var startLocation = new Coordinate(activity.StartLatLng[1], activity.StartLatLng[0]);
         var activityLength = (int)Math.Ceiling(activity.Distance ?? 0);
-        var nearbyPeaks = await _peaksCollection.GeoSpatialFetch(startLocation, activityLength);
+        var tileIndices = SlippyTileCalculator.TileIndicesByRadius(startLocation, activityLength);
+        var peakFetchTasks = tileIndices.Select(i => _apiClient.GetAsync($"peaks/{i.X}/{i.Y}"));
+        var peakResponses = await Task.WhenAll(peakFetchTasks);
+        var peakCollections = await Task.WhenAll(peakResponses.Select(response => response.Content.ReadFromJsonAsync<FeatureCollection>()));
+        var nearbyPeaks = peakCollections.SelectMany(collection => collection.Features);
         var nearbyPoints = nearbyPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
         var summitedPeakIds = GeoSpatialFunctions.FindPointsIntersectingLine(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty);
         var summitedPeaks = nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id));
         await WriteToSummitedPeaks(_summitedPeaksCollection, activity, summitedPeaks);
         return await PublishJobDoneEvent(_logger, activity, summitedPeaks);
     }
-
-    private static async Task WriteToSummitedPeaks(CollectionClient<SummitedPeak> _summitedPeaksCollection, Activity activity, IEnumerable<StoredFeature> summitedPeaks)
+    private static async Task WriteToSummitedPeaks(CollectionClient<SummitedPeak> _summitedPeaksCollection, Activity activity, IEnumerable<Feature> summitedPeaks)
     {
         foreach (var peak in summitedPeaks)
         {
@@ -61,7 +71,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     }
 
     private record SummitsEvent(string ActivityId, string[] SummitedPeakIds, string[] SummitedPeakNames, bool SummitedAnyPeaks);
-    private async Task<IEnumerable<SignalRMessageAction>> PublishJobDoneEvent(ILogger<SummitsWorker> _logger, Activity activity, IEnumerable<StoredFeature> summitedPeaks)
+    private async Task<IEnumerable<SignalRMessageAction>> PublishJobDoneEvent(ILogger<SummitsWorker> _logger, Activity activity, IEnumerable<Feature> summitedPeaks)
     {
         var userId = activity.UserId;
         var sessionIds = await _userAuthService.GetUsersActiveSessions(userId);
@@ -72,18 +82,25 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
         var signalRMessages = new List<SignalRMessageAction>();
 
+        if (anySummitedPeaks)
+        {
+            _logger.LogInformation("Found {AmnPeaks} summited peaks for activity {ActivityId}", summitedPeakIds.Length, activity.Id);
+        }
+        else
+        {
+            _logger.LogInformation("Found no peaks for activity {ActivityId}", activity.Id);
+        }
+
         foreach (var sessionId in sessionIds)
         {
-            if (!summitedPeakIds.Any())
+            if (summitedPeakIds.Length == 0)
             {
-                _logger.LogInformation("Found no peaks for activity {ActivityId}", activity.Id);
                 signalRMessages.Add(new SignalRMessageAction("summitsEvents")
                 {
                     Arguments = [summitsEvent],
                     UserId = sessionId,
                 });
             }
-            _logger.LogInformation("Found {AmnPeaks} summited peaks for activity {ActivityId}", summitedPeakIds.Length, activity.Id);
             signalRMessages.Add(new SignalRMessageAction("summitsEvents")
             {
                 Arguments = [summitsEvent],

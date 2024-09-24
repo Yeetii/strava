@@ -4,13 +4,15 @@ namespace Shared
 {
     public static class GeoSpatialFunctions
     {
+        private const float earthCircumferencePoles = 40007863;
+        private const float metersPerDegreeLat = earthCircumferencePoles / 360;
         public static IEnumerable<string> FindPointsIntersectingLine(IEnumerable<(string id, Coordinate)> points, string polylineString, int maxIntersectDistance = 50)
         {
             IEnumerable<Coordinate> polyline = DecodePolyLine(polylineString);
 
             foreach ((string id, Coordinate location) in points)
             {
-                foreach(Coordinate point in polyline)
+                foreach (Coordinate point in polyline)
                 {
                     var distance = DistanceTo(location, point);
                     if (distance <= maxIntersectDistance)
@@ -37,8 +39,26 @@ namespace Shared
                 Math.Cos(rlat2) * Math.Cos(rtheta);
             dist = Math.Acos(dist);
             dist = dist * 180 / Math.PI;
-            return dist * 111189.57696; // Result in metres
+            return dist * metersPerDegreeLat; // Result in metres
         }
+        public static Coordinate ShiftCoordinate(Coordinate coordinate, double shiftX, double shiftY)
+        {
+            const double degreesToRadians = Math.PI / 180;
+
+            double latitude = coordinate.Lat;
+            double longitude = coordinate.Lng;
+
+            double latInRadians = latitude * degreesToRadians;
+
+            double deltaLat = shiftY / metersPerDegreeLat;
+            double deltaLon = shiftX / (metersPerDegreeLat * Math.Cos(latInRadians));
+
+            double newLatitude = latitude + deltaLat;
+            double newLongitude = longitude + deltaLon;
+
+            return new Coordinate(newLongitude, newLatitude);
+        }
+
 
         // This function was taken from https://gist.github.com/shinyzhu/4617989 and modified a little
         public static IEnumerable<Coordinate> DecodePolyLine(string encodedPoints)
