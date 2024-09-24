@@ -33,9 +33,25 @@ namespace API
 
                 var rawPeaks = await _overpassClient.GetPeaks(nw, se);
                 peaks = RawPeakToStoredFeature(x, y, rawPeaks);
-                // If upsert takes to long time, place upsert job on queue instead of blocking
+                if (!peaks.Any())
+                {
+                    var emptyTileMarker = new StoredFeature
+                    {
+                        X = x,
+                        Y = y,
+                        Id = "empty-" + x + "-" + y,
+                        Geometry = new Geometry
+                        {
+                            Type = "Point",
+                            Coordinates = [0, 0]
+                        }
+                    };
+                    peaks = [emptyTileMarker];
+                }
                 await _peaksCollection.BulkUpsert(peaks);
             }
+
+            peaks = peaks.Where(p => p.Id != "empty-" + x + "-" + y).ToList();
 
             var featureCollection = new FeatureCollection
             {
@@ -51,7 +67,7 @@ namespace API
         {
             foreach (var p in rawPeaks)
             {
-                var propertiesDirty = new Dictionary<string, object?>(){
+                var propertiesDirty = new Dictionary<string, string?>(){
                     {"elevation", p.Tags.Elevation},
                     {"name", p.Tags.Name},
                     {"nameSapmi", p.Tags.NameSapmi},

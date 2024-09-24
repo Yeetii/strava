@@ -47,7 +47,7 @@ namespace API
                 Features = peaks.Select(x =>
                 {
                     var p = x.ToFeature();
-                    p.Properties.Add("summited", true);
+                    p.Properties.Add("summited", true.ToString());
                     return p;
                 })
             };

@@ -65,12 +65,11 @@ namespace Backend
             var peaks = myDeserializedClass.Elements.Select(x =>
                 {
 
-                    var propertiesDirty = new Dictionary<string, object?>(){
+                    var propertiesDirty = new Dictionary<string, string?>(){
                         {"elevation", x.Tags.Elevation},
                         {"name", x.Tags.Name},
                         {"nameSapmi", x.Tags.NameSapmi},
-                        {"nameAlt", x.Tags.NameAlt},
-                        {"groups", new Dictionary<string, bool>()}
+                        {"nameAlt", x.Tags.NameAlt}
 
                     };
 

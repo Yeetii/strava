@@ -59,10 +59,10 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                 ?? new SummitedPeak
                 {
                     Id = documentId,
-                    Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName as string : "",
+                    Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName : "",
                     UserId = activity.UserId,
                     PeakId = peak.Id,
-                    Elevation = peak.Properties.TryGetValue("elevation", out var elevation) ? float.Parse(elevation as string) : null,
+                    Elevation = peak.Properties.TryGetValue("elevation", out var elevation) ? float.Parse(elevation) : null,
                     ActivityIds = []
                 };
             summitedPeakDocument.ActivityIds.Add(activity.Id);

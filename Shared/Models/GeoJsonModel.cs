@@ -9,7 +9,7 @@ namespace Shared.Models
     {
         public required string Id { get; set; }
         public string Type { get; set; } = "Feature";
-        public Dictionary<string, object> Properties { get; set; } = [];
+        public Dictionary<string, string> Properties { get; set; } = [];
         public required Geometry Geometry { get; set; }
     }
 
@@ -18,13 +18,13 @@ namespace Shared.Models
         public required string Id { get; set; }
         public required int X { get; set; }
         public required int Y { get; set; }
-        public Dictionary<string, object> Properties { get; set; } = [];
+        public Dictionary<string, string> Properties { get; set; } = [];
         public required Geometry Geometry { get; set; }
 
         public Feature ToFeature()
         {
-            Properties.Add("x", X);
-            Properties.Add("y", Y);
+            Properties.Add("x", X.ToString());
+            Properties.Add("y", Y.ToString());
             return new Feature
             {
                 Id = Id,
