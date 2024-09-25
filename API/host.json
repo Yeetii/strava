@@ -7,13 +7,18 @@
                 "excludedTypes": "Request"
             },
             "enableLiveMetricsFilters": true
+        },
+        "logLevel": {
+            "default": "Warning",
+            "Function": "Warning"
         }
     },
     "extensions": {
         "http": {
         "customHeaders": {
             "Access-Control-Expose-Headers": "session"
-        }
+        },
+        "routePrefix": "api"
         }
     }
 }
