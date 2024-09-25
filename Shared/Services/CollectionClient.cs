@@ -3,17 +3,20 @@ using Shared.Models;
 using Polly;
 using System.Net;
 using Polly.Contrib.WaitAndRetry;
+using Microsoft.Extensions.Logging;
 
 namespace Shared.Services;
 
-public class CollectionClient<T>(Container _container) where T : IDocument
+public class CollectionClient<T>(Container _container, ILogger<CollectionClient<T>> _logger) where T : IDocument
 {
-    private static async Task<E> CallWithRetry<E>(Func<Task<E>> cosmosCall)
+    private static readonly SemaphoreSlim Semaphore = new(5);
+
+    private async Task<E> CallWithRetry<E>(Func<Task<E>> cosmosCall)
     {
         // Define the Exponential Backoff Retry Policy
         var maxDelay = TimeSpan.FromSeconds(60);
         var delay = Backoff.DecorrelatedJitterBackoffV2(
-            medianFirstRetryDelay: TimeSpan.FromSeconds(1), retryCount: 10)
+            medianFirstRetryDelay: TimeSpan.FromSeconds(1), retryCount: 5)
                 .Select(s => TimeSpan.FromTicks(Math.Min(s.Ticks, maxDelay.Ticks)));
 
         var retryPolicy = Policy
@@ -25,19 +28,30 @@ public class CollectionClient<T>(Container _container) where T : IDocument
             .Handle<CosmosException>(ex => ex.StatusCode == HttpStatusCode.TooManyRequests || ex.StatusCode == HttpStatusCode.RequestTimeout)
             .CircuitBreakerAsync(
                 exceptionsAllowedBeforeBreaking: 3,
-                durationOfBreak: TimeSpan.FromSeconds(30),
+                durationOfBreak: TimeSpan.FromSeconds(60),
                 onBreak: (exception, breakDelay) =>
                 {
-                    Console.WriteLine($"Circuit broken due to {exception.Message}. Waiting {breakDelay.TotalSeconds} seconds before retry.");
+                    _logger.LogInformation("Circuit broken due to {message}. Waiting {breakDelay} seconds before retry.", exception.Message, breakDelay.TotalSeconds);
                 },
-                onReset: () => Console.WriteLine("Circuit reset. Operations will proceed."),
-                onHalfOpen: () => Console.WriteLine("Circuit is half-open. Testing the next operation.")
+                onReset: () => _logger.LogDebug("Circuit reset. Operations will proceed."),
+                onHalfOpen: () => _logger.LogDebug("Circuit is half-open. Testing the next operation.")
             );
 
         // Combine Exponential Backoff and Circuit Breaker
         var combinedPolicy = Policy.WrapAsync(retryPolicy, circuitBreakerPolicy);
 
-        return await combinedPolicy.ExecuteAsync(async () => await cosmosCall());
+        E result;
+        await Semaphore.WaitAsync();
+        try
+        {
+            result = await combinedPolicy.ExecuteAsync(async () => await cosmosCall());
+        }
+        finally
+        {
+            Semaphore.Release();
+        }
+
+        return result;
     }
 
     public async Task<IEnumerable<T>> GeoSpatialFetch(Coordinate center, int radius)
