@@ -1,10 +1,45 @@
 using Microsoft.Azure.Cosmos;
 using Shared.Models;
+using Polly;
+using System.Net;
+using Polly.Contrib.WaitAndRetry;
 
 namespace Shared.Services;
 
 public class CollectionClient<T>(Container _container) where T : IDocument
 {
+    private static async Task<E> CallWithRetry<E>(Func<Task<E>> cosmosCall)
+    {
+        // Define the Exponential Backoff Retry Policy
+        var maxDelay = TimeSpan.FromSeconds(60);
+        var delay = Backoff.DecorrelatedJitterBackoffV2(
+            medianFirstRetryDelay: TimeSpan.FromSeconds(1), retryCount: 10)
+                .Select(s => TimeSpan.FromTicks(Math.Min(s.Ticks, maxDelay.Ticks)));
+
+        var retryPolicy = Policy
+            .Handle<CosmosException>(ex => ex.StatusCode == HttpStatusCode.TooManyRequests || ex.StatusCode == HttpStatusCode.RequestTimeout)
+            .WaitAndRetryAsync(delay);
+
+        // Define the Circuit Breaker Policy
+        var circuitBreakerPolicy = Policy
+            .Handle<CosmosException>(ex => ex.StatusCode == HttpStatusCode.TooManyRequests || ex.StatusCode == HttpStatusCode.RequestTimeout)
+            .CircuitBreakerAsync(
+                exceptionsAllowedBeforeBreaking: 3,
+                durationOfBreak: TimeSpan.FromSeconds(30),
+                onBreak: (exception, breakDelay) =>
+                {
+                    Console.WriteLine($"Circuit broken due to {exception.Message}. Waiting {breakDelay.TotalSeconds} seconds before retry.");
+                },
+                onReset: () => Console.WriteLine("Circuit reset. Operations will proceed."),
+                onHalfOpen: () => Console.WriteLine("Circuit is half-open. Testing the next operation.")
+            );
+
+        // Combine Exponential Backoff and Circuit Breaker
+        var combinedPolicy = Policy.WrapAsync(retryPolicy, circuitBreakerPolicy);
+
+        return await combinedPolicy.ExecuteAsync(async () => await cosmosCall());
+    }
+
     public async Task<IEnumerable<T>> GeoSpatialFetch(Coordinate center, int radius)
     {
         string query = string.Join(Environment.NewLine,
@@ -31,27 +66,16 @@ public class CollectionClient<T>(Container _container) where T : IDocument
             .Add(y)
             .Build();
 
-        var requestOptions = new QueryRequestOptions { PartitionKey = partitionKey };
+        var requestOptions = new QueryRequestOptions { PartitionKey = partitionKey, };
 
-        var iterator = _container.GetItemQueryIterator<T>(
-            queryDefinition,
-            requestOptions: requestOptions);
-
-        List<T> results = [];
-
-        while (iterator.HasMoreResults)
-        {
-            var response = await iterator.ReadNextAsync();
-            results.AddRange(response);
-        }
-        return results;
+        return await CallWithRetry(() => ExecuteQueryAsync<T>(queryDefinition, requestOptions));
     }
 
-    public async Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition)
+    public async Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition, QueryRequestOptions requestOptions = null)
     {
         var documents = new List<S>();
 
-        using (var feedIterator = _container.GetItemQueryIterator<S>(queryDefinition))
+        using (var feedIterator = _container.GetItemQueryIterator<S>(queryDefinition, requestOptions: requestOptions))
         {
             while (feedIterator.HasMoreResults)
             {
@@ -73,7 +97,7 @@ public class CollectionClient<T>(Container _container) where T : IDocument
         {
             return await GetById(id, partitionKey);
         }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             return default;
         }
@@ -101,7 +125,7 @@ public class CollectionClient<T>(Container _container) where T : IDocument
                 queryDefinition.WithParameter($"@id{i}", chunk[i]);
             }
 
-            var queryResult = await ExecuteQueryAsync<T>(queryDefinition);
+            var queryResult = await CallWithRetry(() => ExecuteQueryAsync<T>(queryDefinition));
             allDocuments.AddRange(queryResult);
         }
 
@@ -143,7 +167,7 @@ public class CollectionClient<T>(Container _container) where T : IDocument
             {
                 try
                 {
-                    await _container.UpsertItemAsync(document);
+                    await CallWithRetry(() => _container.UpsertItemAsync(document));
                 }
                 finally
                 {

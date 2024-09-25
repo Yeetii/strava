@@ -36,7 +36,8 @@ var host = new HostBuilder()
                 HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
                 SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
                 AllowBulkExecution = true,
-                MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(3)
+                MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(1),
+                MaxRetryAttemptsOnRateLimitedRequests = 5
             };
 
             string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
