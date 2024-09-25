@@ -9,7 +9,10 @@ using Microsoft.Azure.Cosmos;
 
 namespace API.Endpoints
 {
-    public class RemoveUser(CollectionClient<Shared.Models.User> _usersCollection, CollectionClient<SummitedPeak> _summitedPeaksCollection, CollectionClient<Activity> _activitiesCollection)
+    public class RemoveUser(CollectionClient<Shared.Models.User> _usersCollection,
+        CollectionClient<SummitedPeak> _summitedPeaksCollection,
+        CollectionClient<Activity> _activitiesCollection,
+        CollectionClient<Session> _sessionsCollection)
     {
         [OpenApiOperation(tags: ["User management"])]
         [OpenApiParameter(name: "userId", In = ParameterLocation.Path)]
@@ -19,6 +22,7 @@ namespace API.Endpoints
         {
             await _summitedPeaksCollection.DeleteDocumentsByKey("userId", userId, userId);
             await _activitiesCollection.DeleteDocumentsByKey("userId", userId, userId);
+            await _sessionsCollection.DeleteDocumentsByKey("userId", userId, userId);
             await _usersCollection.DeleteDocument(userId, new PartitionKey(userId));
             return req.CreateResponse(HttpStatusCode.NoContent);
         }

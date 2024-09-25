@@ -8,12 +8,14 @@ using Shared.Helpers;
 using System.Collections.Immutable;
 using System.Net.Http.Json;
 using static Backend.QueueSummitJobs;
+using System.Drawing;
 
 namespace Backend;
 
 // Input format: 
-// {"activityId": "11808921572"}
+// {"activityId": "11808921572", "userId": "192"}
 public class SummitsWorker(ILogger<SummitsWorker> _logger,
+    CollectionClient<Activity> _activitiesCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
     UserAuthenticationService _userAuthService,
     IHttpClientFactory _httpClientFactory)
@@ -23,36 +25,42 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     [Function("SummitsWorker")]
     [SignalROutput(HubName = "peakshunters")]
     public async Task<IEnumerable<SignalRMessageAction>> Run(
-        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection")] CalculateSummitJob trigger,
-        [CosmosDBInput(
-        databaseName: "%CosmosDb%",
-        containerName: "%ActivitiesContainer%",
-        Connection  = "CosmosDBConnection",
-        Id = "{activityId}",
-        PartitionKey = "{userId}"
-        )] Activity activity)
+        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true)] IEnumerable<CalculateSummitJob> trigger)
     {
-        if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
+        var ids = trigger.Select(x => x.ActivityId);
+        var activities = await _activitiesCollection.GetByIdsAsync(ids);
+        var peaks = await FetchNearbyPeaks(activities);
+
+        var outputs = new List<Task<IEnumerable<SignalRMessageAction>>>();
+
+        Parallel.ForEach(activities, async activity =>
         {
-            _logger.LogInformation("Skipping activity {ActivityId} since it has no start location", activity.Id);
-            return await PublishJobDoneEvent(_logger, activity, []);
-        }
+            if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
+            {
+                _logger.LogInformation("Skipping activity {ActivityId} since it has no start location", activity.Id);
+                outputs.Add(PublishJobDoneEvent(activity, []));
+                return;
+            }
+            var summitedPeaks = CalculateSummitedPeaks(activity, peaks);
+            await WriteToSummitedPeaks(_summitedPeaksCollection, activity, summitedPeaks);
+            outputs.Add(PublishJobDoneEvent(activity, summitedPeaks));
+        });
+        return (await Task.WhenAll(outputs)).SelectMany(output => output);
+    }
+
+    private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)
+    {
         var startLocation = new Coordinate(activity.StartLatLng[1], activity.StartLatLng[0]);
         var activityLength = (int)Math.Ceiling(activity.Distance ?? 0);
-        var tileIndices = SlippyTileCalculator.TileIndicesByRadius(startLocation, activityLength);
-        var peakFetchTasks = tileIndices.Select(i => _apiClient.GetAsync($"peaks/{i.X}/{i.Y}"));
-        var peakResponses = await Task.WhenAll(peakFetchTasks);
-        var peakCollections = await Task.WhenAll(peakResponses.Select(response => response.Content.ReadFromJsonAsync<FeatureCollection>()));
-        var nearbyPeaks = peakCollections.SelectMany(collection => collection.Features).ToList();
-        _logger.LogInformation("Found {count} nearby peaks", nearbyPeaks.Count);
+
         var filteredPeaks = nearbyPeaks.Where(peak => GeoSpatialFunctions.DistanceTo(Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates), startLocation) < activityLength).ToList();
-        _logger.LogInformation("Found {count} nearby peaks within activity length", filteredPeaks.Count);
+        _logger.LogInformation("Calculating summits on {amnPeaks}", filteredPeaks.Count);
         var nearbyPoints = filteredPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
         var summitedPeakIds = GeoSpatialFunctions.FindPointsIntersectingLine(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty);
         var summitedPeaks = nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id));
-        await WriteToSummitedPeaks(_summitedPeaksCollection, activity, summitedPeaks);
-        return await PublishJobDoneEvent(_logger, activity, summitedPeaks);
+        return summitedPeaks;
     }
+
     private static async Task WriteToSummitedPeaks(CollectionClient<SummitedPeak> _summitedPeaksCollection, Activity activity, IEnumerable<Feature> summitedPeaks)
     {
         foreach (var peak in summitedPeaks)
@@ -74,8 +82,36 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         }
     }
 
+    private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities)
+    {
+        var tileIndices = new List<Point>();
+        foreach (var activity in activities)
+        {
+            if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
+            {
+                continue;
+            }
+            var startLocation = new Coordinate(activity.StartLatLng[1], activity.StartLatLng[0]);
+            var activityLength = (int)Math.Ceiling(activity.Distance ?? 0);
+
+            var tiles = SlippyTileCalculator.TileIndicesByRadius(startLocation, activityLength);
+            tileIndices.AddRange(tiles);
+        }
+        var nearbyPeaks = await FetchPeaksFromTiles(tileIndices.Distinct());
+        _logger.LogInformation("Found {count} nearby peaks", nearbyPeaks.Count());
+        return nearbyPeaks;
+    }
+
+    private async Task<IEnumerable<Feature>> FetchPeaksFromTiles(IEnumerable<Point> tiles)
+    {
+        var peakFetchTasks = tiles.Select(i => _apiClient.GetAsync($"peaks/{i.X}/{i.Y}"));
+        var peakResponses = await Task.WhenAll(peakFetchTasks);
+        var peakCollections = await Task.WhenAll(peakResponses.Select(response => response.Content.ReadFromJsonAsync<FeatureCollection>()));
+        return peakCollections.SelectMany(collection => collection?.Features ?? []);
+    }
+
     private record SummitsEvent(string ActivityId, string[] SummitedPeakIds, string[] SummitedPeakNames, bool SummitedAnyPeaks);
-    private async Task<IEnumerable<SignalRMessageAction>> PublishJobDoneEvent(ILogger<SummitsWorker> _logger, Activity activity, IEnumerable<Feature> summitedPeaks)
+    private async Task<IEnumerable<SignalRMessageAction>> PublishJobDoneEvent(Activity activity, IEnumerable<Feature> summitedPeaks)
     {
         var userId = activity.UserId;
         var sessionIds = await _userAuthService.GetUsersActiveSessions(userId);
