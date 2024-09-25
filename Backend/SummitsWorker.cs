@@ -54,7 +54,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var activityLength = (int)Math.Ceiling(activity.Distance ?? 0);
 
         var filteredPeaks = nearbyPeaks.Where(peak => GeoSpatialFunctions.DistanceTo(Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates), startLocation) < activityLength).ToList();
-        _logger.LogInformation("Calculating summits on {amnPeaks}", filteredPeaks.Count);
+        _logger.LogInformation("Calculating summits on {amnPeaks} peaks, for activity {activityId}, at {coord} with length {dist}m", filteredPeaks.Count, activity.Id, startLocation, activityLength);
         var nearbyPoints = filteredPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
         var summitedPeakIds = GeoSpatialFunctions.FindPointsIntersectingLine(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty);
         var summitedPeaks = nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id));

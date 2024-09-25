@@ -92,7 +92,6 @@ var host = new HostBuilder()
             "overpassClient",
             client =>
             {
-                client.BaseAddress = new Uri("https://overpass.private.coffee/api/interpreter");
                 client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
             });
         services.AddSingleton(serviceProvider =>
