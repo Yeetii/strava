@@ -14,7 +14,7 @@ namespace API
         [Function(nameof(GetAllPeaksGroups))]
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaksGroups")] HttpRequestData req,
         [CosmosDBInput(
-            databaseName: "%OsmDb%",
+            databaseName: "%CosmosDb%",
             containerName: "%PeaksGroupsContainer%",
             Connection  = "CosmosDBConnection",
             SqlQuery = "SELECT * FROM c"

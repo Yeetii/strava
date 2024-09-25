@@ -5,8 +5,10 @@ namespace Backend
 {
     public class QueueSummitJobs()
     {
-        public class CalculateSummitJob{
+        public class CalculateSummitJob
+        {
             public required string ActivityId { get; set; }
+            public required string UserId { get; set; }
         }
 
         [ServiceBusOutput("calculateSummitsJobs", Connection = "ServicebusConnection")]
@@ -19,8 +21,8 @@ namespace Backend
             LeaseContainerPrefix = "activitySummits",
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<Activity> updatedActivities)
         {
-            var ids = updatedActivities.Select(x => x.Id);
-            return ids.Select(x => new CalculateSummitJob{ActivityId = x});
+            var jobs = updatedActivities.Select(x => new CalculateSummitJob { ActivityId = x.Id, UserId = x.UserId });
+            return jobs;
         }
     }
 }

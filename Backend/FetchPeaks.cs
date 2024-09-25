@@ -47,7 +47,7 @@ namespace Backend
         private const string overpassUri = "https://overpass-api.de/api/interpreter";
         static readonly HttpClient client = new();
         [Function("FetchPeaks")]
-        [CosmosDBOutput("%OsmDb%", "%PeaksContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
+        [CosmosDBOutput("%CosmosDb%", "%PeaksContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
         public async Task<IEnumerable<StoredFeature>> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = "fetchPeaks/{bbox}")] HttpRequestData req, string bbox)
         {

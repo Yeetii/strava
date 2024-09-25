@@ -18,7 +18,7 @@ namespace API.Endpoints
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Function, "delete", Route = "{userId}")] HttpRequestData req, string userId)
         {
             await _summitedPeaksCollection.DeleteDocumentsByKey("userId", userId, userId);
-            await _activitiesCollection.DeleteDocumentsByKey("userId", userId);
+            await _activitiesCollection.DeleteDocumentsByKey("userId", userId, userId);
             await _usersCollection.DeleteDocument(userId, new PartitionKey(userId));
             return req.CreateResponse(HttpStatusCode.NoContent);
         }

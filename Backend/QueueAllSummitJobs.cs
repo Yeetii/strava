@@ -13,8 +13,9 @@ namespace Backend
         public async Task<IEnumerable<CalculateSummitJob>> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
         {
-            var ids = await _cosmosClient.GetAllIds();
-            return ids.Select(x => new CalculateSummitJob{ActivityId = x});
+            var activities = await _cosmosClient.FetchWholeCollection();
+            var jobs = activities.Select(x => new CalculateSummitJob { ActivityId = x.Id, UserId = x.UserId });
+            return jobs;
         }
     }
 }

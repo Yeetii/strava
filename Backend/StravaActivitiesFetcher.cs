@@ -8,19 +8,21 @@ namespace Backend
     public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi)
     {
         readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
-        // readonly ActivitiesApi _activitiesApi = new ActivitiesApi(httpClientFactory.CreateClient("StravaClient"));
 
         [Function(nameof(StravaActivitiesFetcher))]
         public async Task<Outputs> Run([ServiceBusTrigger("activitiesfetchjobs", Connection = "ServicebusConnection")] ActivitiesFetchJob fetchJob)
         {
             var accessTokenResponse = await _apiClient.GetAsync($"{fetchJob.UserId}/accessToken");
             var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
-            
+
             var page = fetchJob.Page ?? 1;
 
             var (activites, hasMorePages) = await _activitiesApi.GetActivitiesByAthlete(accessToken, page, fetchJob.Before, fetchJob.After);
 
-            var outputs = new Outputs();
+            var outputs = new Outputs()
+            {
+                WriteToActivities = activites.Select(ActivityMapper.MapSummaryActivity)
+            };
 
             if (hasMorePages)
             {
@@ -34,8 +36,8 @@ namespace Backend
 
         public class Outputs
         {
-            [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
-            public object WriteToActivities { get; set;}
+            [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection")]
+            public required IEnumerable<Activity> WriteToActivities { get; set; }
             [ServiceBusOutput("activitiesfetchjobs", Connection = "ServicebusConnection")]
             public ActivitiesFetchJob? NextPageJob { get; set; }
         }

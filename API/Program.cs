@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
+using System.Net.Http.Headers;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
@@ -44,7 +45,7 @@ var host = new HostBuilder()
         // TODO: Setup collection clients via factory/builder
         services.AddSingleton(serviceProvider =>
         {
-            var databaseName = configuration.GetValue<string>("OsmDb") ?? throw new ConfigurationErrorsException("No database name found");
+            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
             var containerName = configuration.GetValue<string>("PeaksContainer") ?? throw new ConfigurationErrorsException("No peaks container name found");
             var cosmos = serviceProvider.GetRequiredService<CosmosClient>();
             var container = cosmos.GetContainer(databaseName, containerName);
@@ -91,9 +92,9 @@ var host = new HostBuilder()
             "overpassClient",
             client =>
             {
-                client.BaseAddress = new Uri("https://overpass-api.de/api/interpreter");
-            }
-        );
+                client.BaseAddress = new Uri("https://overpass.private.coffee/api/interpreter");
+                client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
+            });
         services.AddSingleton(serviceProvider =>
         {
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();

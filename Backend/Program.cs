@@ -61,7 +61,7 @@ var host = new HostBuilder()
 
         services.AddSingleton(ServiceProvider =>
         {
-            var databaseName = configuration.GetValue<string>("OsmDb") ?? throw new Exception("No database name found");
+            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
             var containerName = configuration.GetValue<string>("PeaksContainer") ?? throw new Exception("No peaks container name found");
             var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
             var container = cosmos.GetContainer(databaseName, containerName);

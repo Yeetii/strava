@@ -7,6 +7,7 @@ using Microsoft.Azure.Cosmos;
 using Shared.Helpers;
 using System.Collections.Immutable;
 using System.Net.Http.Json;
+using static Backend.QueueSummitJobs;
 
 namespace Backend;
 
@@ -22,13 +23,13 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     [Function("SummitsWorker")]
     [SignalROutput(HubName = "peakshunters")]
     public async Task<IEnumerable<SignalRMessageAction>> Run(
-        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection")] string json,
+        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection")] CalculateSummitJob trigger,
         [CosmosDBInput(
         databaseName: "%CosmosDb%",
         containerName: "%ActivitiesContainer%",
         Connection  = "CosmosDBConnection",
         Id = "{activityId}",
-        PartitionKey = "{activityId}"
+        PartitionKey = "{userId}"
         )] Activity activity)
     {
         if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
@@ -42,8 +43,11 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var peakFetchTasks = tileIndices.Select(i => _apiClient.GetAsync($"peaks/{i.X}/{i.Y}"));
         var peakResponses = await Task.WhenAll(peakFetchTasks);
         var peakCollections = await Task.WhenAll(peakResponses.Select(response => response.Content.ReadFromJsonAsync<FeatureCollection>()));
-        var nearbyPeaks = peakCollections.SelectMany(collection => collection.Features);
-        var nearbyPoints = nearbyPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
+        var nearbyPeaks = peakCollections.SelectMany(collection => collection.Features).ToList();
+        _logger.LogInformation("Found {count} nearby peaks", nearbyPeaks.Count);
+        var filteredPeaks = nearbyPeaks.Where(peak => GeoSpatialFunctions.DistanceTo(Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates), startLocation) < activityLength).ToList();
+        _logger.LogInformation("Found {count} nearby peaks within activity length", filteredPeaks.Count);
+        var nearbyPoints = filteredPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
         var summitedPeakIds = GeoSpatialFunctions.FindPointsIntersectingLine(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty);
         var summitedPeaks = nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id));
         await WriteToSummitedPeaks(_summitedPeaksCollection, activity, summitedPeaks);
