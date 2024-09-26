@@ -11,22 +11,33 @@ namespace Shared.Services
 
         private readonly string[] mirrors = ["https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
 
+
+        private async Task<HttpResponseMessage> GetAsyncMultipleMirrors(string query)
+        {
+            foreach (var mirror in mirrors)
+            {
+                try
+                {
+                    var response = await _client.GetAsync($"{mirror}?data={query}");
+                    if (response.IsSuccessStatusCode)
+                    {
+                        return response;
+                    }
+                }
+                catch (Exception) { }
+            }
+            return await _client.GetAsync($"{mirrors[0]}?data={query}");
+        }
+
         public async Task<IEnumerable<RawPeaks>> GetPeaks(Coordinate southWest, Coordinate northEast)
         {
             string bbox = $"{northEast.Lat},{southWest.Lng},{southWest.Lat},{northEast.Lng}";
             string query = $"[out:json][timeout:400];node[\"natural\"=\"peak\"][\"name\"]({bbox});out qt;";
             string encodedQuery = Uri.EscapeDataString(query);
-            var response = await _client.GetAsync($"{mirrors[0]}?data={encodedQuery}");
+
+            var response = await GetAsyncMultipleMirrors(encodedQuery);
             if (!response.IsSuccessStatusCode)
-            {
-                response = await _client.GetAsync($"{mirrors[1]}?data={encodedQuery}");
-                if (!response.IsSuccessStatusCode)
-                {
-                    response = await _client.GetAsync($"{mirrors[2]}?data={encodedQuery}");
-                    if (!response.IsSuccessStatusCode)
-                        throw new Exception($"Could not get peaks, status code: {response.StatusCode}, {response.ReasonPhrase}");
-                }
-            }
+                throw new Exception($"Could not get peaks, status code: {response.StatusCode}, {response.ReasonPhrase}");
             string rawPeaks = await response.Content.ReadAsStringAsync();
             RootPeaks rootPeaks = JsonSerializer.Deserialize<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
             return rootPeaks.Elements;

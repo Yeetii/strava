@@ -1,16 +1,22 @@
-// using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Shared.Models;
 
-// namespace Shared.Services;
+namespace Shared.Services;
 
-// class CollectionClientBuilder(CosmosClient _cosmosClient){
-
-//     public CollectionClientBuilder BuildClient(IServiceCollection services, string databaseName, string containerName){
-//         services.AddSingleton(ServiceProvider => 
-//         {
-//             var container = _cosmosClient.GetContainer(databaseName, containerName);
-//             return new CollectionClient<StoredFeature>(container);
-//         });
-//         return this;
-//     }
-// }
+public class CollectionClientBuilder(IServiceCollection services)
+{
+    public CollectionClientBuilder AddCollection<T>(string databaseName, string containerName) where T : IDocument
+    {
+        services.AddSingleton(serviceProvider =>
+        {
+            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmosClient.GetContainer(databaseName, containerName);
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            return new CollectionClient<T>(container, loggerFactory);
+        });
+        return this;
+    }
+}
 

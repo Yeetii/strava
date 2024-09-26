@@ -59,46 +59,20 @@ var host = new HostBuilder()
             return new CosmosClient(cosmosDbConnectionString, cosmosClientOptions);
         });
 
-        services.AddSingleton(ServiceProvider =>
-        {
-            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
-            var containerName = configuration.GetValue<string>("PeaksContainer") ?? throw new Exception("No peaks container name found");
-            var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmos.GetContainer(databaseName, containerName);
-            return new CollectionClient<StoredFeature>(container);
-        });
-        services.AddSingleton(ServiceProvider =>
-        {
-            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
-            var containerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new Exception("No activites container name found");
-            var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmos.GetContainer(databaseName, containerName);
-            return new CollectionClient<Activity>(container);
-        });
-        services.AddSingleton(ServiceProvider =>
-        {
-            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new Exception("No database name found");
-            var containerName = configuration.GetValue<string>("SummitedPeaksContainer") ?? throw new Exception("No summited peaks container name found");
-            var cosmos = ServiceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmos.GetContainer(databaseName, containerName);
-            return new CollectionClient<SummitedPeak>(container);
-        });
-        services.AddSingleton(serviceProvider =>
-        {
-            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
-            var containerName = configuration.GetValue<string>("UsersContainer") ?? throw new ConfigurationErrorsException("No user container name found");
-            var cosmos = serviceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmos.GetContainer(databaseName, containerName);
-            return new CollectionClient<Shared.Models.User>(container);
-        });
-        services.AddSingleton(serviceProvider =>
-        {
-            var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
-            var containerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No sessions container name found");
-            var cosmos = serviceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmos.GetContainer(databaseName, containerName);
-            return new CollectionClient<Session>(container);
-        });
+        var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
+        var peaksContainerName = configuration.GetValue<string>("PeaksContainer") ?? throw new ConfigurationErrorsException("No peaks container name found");
+        var summitedPeaksContainerName = configuration.GetValue<string>("SummitedPeaksContainer") ?? throw new ConfigurationErrorsException("No summited peaks container name found");
+        var activitiesContainerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new ConfigurationErrorsException("No activities container name found");
+        var usersContainerName = configuration.GetValue<string>("UsersContainer") ?? throw new ConfigurationErrorsException("No users container name found");
+        var sessionsContainerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No sessions container name found");
+
+        new CollectionClientBuilder(services)
+            .AddCollection<StoredFeature>(databaseName, peaksContainerName)
+            .AddCollection<SummitedPeak>(databaseName, summitedPeaksContainerName)
+            .AddCollection<Shared.Models.User>(databaseName, usersContainerName)
+            .AddCollection<Session>(databaseName, sessionsContainerName)
+            .AddCollection<Activity>(databaseName, activitiesContainerName);
+
         services.AddScoped(serviceProvider =>
         {
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();

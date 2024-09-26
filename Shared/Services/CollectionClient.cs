@@ -7,8 +7,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Shared.Services;
 
-public class CollectionClient<T>(Container _container, ILogger<CollectionClient<T>> _logger) where T : IDocument
+public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) where T : IDocument
 {
+    private readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
     private static readonly SemaphoreSlim Semaphore = new(5);
 
     private async Task<E> CallWithRetry<E>(Func<Task<E>> cosmosCall)
