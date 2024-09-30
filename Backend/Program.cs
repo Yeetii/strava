@@ -1,4 +1,5 @@
 using System.Configuration;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
@@ -44,6 +45,17 @@ var host = new HostBuilder()
             var stravaClient = httpClientFactory.CreateClient("stravaClient");
             return new ActivitiesApi(stravaClient);
         });
+        services.AddHttpClient(
+            "overpassClient",
+            client =>
+            {
+                client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
+            });
+        services.AddSingleton(serviceProvider =>
+        {
+            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+            return new OverpassClient(httpClientFactory);
+        });
         services.AddSingleton(serviceProvider =>
         {
             SocketsHttpHandler socketsHttpHandler = serviceProvider.GetRequiredService<SocketsHttpHandler>();
@@ -67,7 +79,7 @@ var host = new HostBuilder()
         var sessionsContainerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No sessions container name found");
 
         new CollectionClientBuilder(services)
-            .AddCollection<StoredFeature>(databaseName, peaksContainerName)
+            .AddPeaksCollection(databaseName, peaksContainerName)
             .AddCollection<SummitedPeak>(databaseName, summitedPeaksContainerName)
             .AddCollection<Shared.Models.User>(databaseName, usersContainerName)
             .AddCollection<Session>(databaseName, sessionsContainerName)

@@ -7,15 +7,6 @@
                 "excludedTypes": "Request"
             },
             "enableLiveMetricsFilters": true
-        },
-        "logLevel": {
-            "default": "Information",
-            "Function": "Information"
-        }
-    },
-    "extensions": {
-        "serviceBus": {
-            "maxConcurrentSessions": 1
         }
     },
     "functionTimeout": "00:10:00"

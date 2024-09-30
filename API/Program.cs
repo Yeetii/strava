@@ -52,7 +52,7 @@ var host = new HostBuilder()
         var sessionsContainerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No sessions container name found");
 
         new CollectionClientBuilder(services)
-            .AddCollection<StoredFeature>(databaseName, peaksContainerName)
+            .AddPeaksCollection(databaseName, peaksContainerName)
             .AddCollection<SummitedPeak>(databaseName, summitedPeaksContainerName)
             .AddCollection<Shared.Models.User>(databaseName, usersContainerName)
             .AddCollection<Session>(databaseName, sessionsContainerName)

@@ -1,8 +1,6 @@
 using Microsoft.Azure.Cosmos;
 using Shared.Models;
-using Polly;
 using System.Net;
-using Polly.Contrib.WaitAndRetry;
 using Microsoft.Extensions.Logging;
 
 namespace Shared.Services;
@@ -10,80 +8,9 @@ namespace Shared.Services;
 public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) where T : IDocument
 {
     private readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
-    private static readonly SemaphoreSlim Semaphore = new(5);
-
-    private async Task<E> CallWithRetry<E>(Func<Task<E>> cosmosCall)
-    {
-        // Define the Exponential Backoff Retry Policy
-        var maxDelay = TimeSpan.FromSeconds(60);
-        var delay = Backoff.DecorrelatedJitterBackoffV2(
-            medianFirstRetryDelay: TimeSpan.FromSeconds(1), retryCount: 5)
-                .Select(s => TimeSpan.FromTicks(Math.Min(s.Ticks, maxDelay.Ticks)));
-
-        var retryPolicy = Policy
-            .Handle<CosmosException>(ex => ex.StatusCode == HttpStatusCode.TooManyRequests || ex.StatusCode == HttpStatusCode.RequestTimeout)
-            .WaitAndRetryAsync(delay);
-
-        // Define the Circuit Breaker Policy
-        var circuitBreakerPolicy = Policy
-            .Handle<CosmosException>(ex => ex.StatusCode == HttpStatusCode.TooManyRequests || ex.StatusCode == HttpStatusCode.RequestTimeout)
-            .CircuitBreakerAsync(
-                exceptionsAllowedBeforeBreaking: 3,
-                durationOfBreak: TimeSpan.FromSeconds(60),
-                onBreak: (exception, breakDelay) =>
-                {
-                    _logger.LogInformation("Circuit broken due to {message}. Waiting {breakDelay} seconds before retry.", exception.Message, breakDelay.TotalSeconds);
-                },
-                onReset: () => _logger.LogDebug("Circuit reset. Operations will proceed."),
-                onHalfOpen: () => _logger.LogDebug("Circuit is half-open. Testing the next operation.")
-            );
-
-        // Combine Exponential Backoff and Circuit Breaker
-        var combinedPolicy = Policy.WrapAsync(retryPolicy, circuitBreakerPolicy);
-
-        E result;
-        await Semaphore.WaitAsync();
-        try
-        {
-            result = await combinedPolicy.ExecuteAsync(async () => await cosmosCall());
-        }
-        finally
-        {
-            Semaphore.Release();
-        }
-
-        return result;
-    }
-
-    public async Task<IEnumerable<T>> GeoSpatialFetch(Coordinate center, int radius)
-    {
-        string query = string.Join(Environment.NewLine,
-        "SELECT *",
-        "FROM p",
-        $"WHERE ST_DISTANCE(p.geometry, {{'type': 'Point', 'coordinates':[{center.Lng}, {center.Lat}]}}) < {radius}");
-
-        return await ExecuteQueryAsync<T>(new QueryDefinition(query));
-    }
-
     public async Task<IEnumerable<T>> FetchWholeCollection()
     {
         return await ExecuteQueryAsync<T>(new QueryDefinition("SELECT * FROM p"));
-    }
-
-    public async Task<IEnumerable<T>> QueryCollectionByXYIndex(int x, int y)
-    {
-        var queryDefinition = new QueryDefinition("SELECT * FROM c WHERE c.x = @x  AND c.y = @y")
-           .WithParameter("@x", x)
-           .WithParameter("@y", y);
-
-        var partitionKey = new PartitionKeyBuilder()
-            .Add(x)
-            .Add(y)
-            .Build();
-
-        var requestOptions = new QueryRequestOptions { PartitionKey = partitionKey, };
-
-        return await CallWithRetry(() => ExecuteQueryAsync<T>(queryDefinition, requestOptions));
     }
 
     public async Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition, QueryRequestOptions requestOptions = null)
@@ -120,7 +47,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
     public async Task<IEnumerable<T>> GetByIdsAsync(IEnumerable<string> ids)
     {
-        const int MaxIdsPerQuery = 1000;
+        const int MaxIdsPerQuery = 256;
         var allDocuments = new List<T>();
 
         var idChunks = ids
@@ -140,7 +67,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
                 queryDefinition.WithParameter($"@id{i}", chunk[i]);
             }
 
-            var queryResult = await CallWithRetry(() => ExecuteQueryAsync<T>(queryDefinition));
+            var queryResult = await ExecuteQueryAsync<T>(queryDefinition);
             allDocuments.AddRange(queryResult);
         }
 
@@ -182,7 +109,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             {
                 try
                 {
-                    await CallWithRetry(() => _container.UpsertItemAsync(document));
+                    await _container.UpsertItemAsync(document);
                 }
                 finally
                 {

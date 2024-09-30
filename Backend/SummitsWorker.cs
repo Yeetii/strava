@@ -6,9 +6,7 @@ using Shared;
 using Microsoft.Azure.Cosmos;
 using Shared.Helpers;
 using System.Collections.Immutable;
-using System.Net.Http.Json;
 using static Backend.QueueSummitJobs;
-using System.Drawing;
 
 namespace Backend;
 
@@ -17,10 +15,9 @@ namespace Backend;
 public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
-    UserAuthenticationService _userAuthService,
-    IHttpClientFactory _httpClientFactory)
+    PeaksCollectionClient _peaksCollection,
+    UserAuthenticationService _userAuthService)
 {
-    readonly HttpClient _apiClient = _httpClientFactory.CreateClient("apiClient");
 
     [Function("SummitsWorker")]
     [SignalROutput(HubName = "peakshunters")]
@@ -29,7 +26,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     {
         var ids = trigger.Select(x => x.ActivityId);
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
-        var peaks = await FetchNearbyPeaks(activities);
+        var peaks = (await FetchNearbyPeaks(activities)).ToList();
 
         var outputs = new List<Task<IEnumerable<SignalRMessageAction>>>();
 
@@ -54,7 +51,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var activityLength = (int)Math.Ceiling(activity.Distance ?? 0);
 
         var filteredPeaks = nearbyPeaks.Where(peak => GeoSpatialFunctions.DistanceTo(Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates), startLocation) < activityLength).ToList();
-        _logger.LogInformation("Calculating summits on {amnPeaks} peaks, for activity {activityId}, at {coord} with length {dist}m", filteredPeaks.Count, activity.Id, startLocation, activityLength);
+        _logger.LogInformation("Calculating summits on {amnPeaks} peaks, for activity {activityId}, at {coord} with length {dist}m", filteredPeaks.Count, activity.Id, startLocation.ToList(), activityLength);
         var nearbyPoints = filteredPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
         var summitedPeakIds = GeoSpatialFunctions.FindPointsIntersectingLine(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty);
         var summitedPeaks = nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id));
@@ -84,7 +81,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities)
     {
-        var tileIndices = new List<Point>();
+        var tileIndices = new List<(int x, int y)>();
         foreach (var activity in activities)
         {
             if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
@@ -95,19 +92,11 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             var activityLength = (int)Math.Ceiling(activity.Distance ?? 0);
 
             var tiles = SlippyTileCalculator.TileIndicesByRadius(startLocation, activityLength);
-            tileIndices.AddRange(tiles);
+            tileIndices.AddRange(tiles.Select(x => (x.X, x.Y)));
         }
-        var nearbyPeaks = await FetchPeaksFromTiles(tileIndices.Distinct());
+        var nearbyPeaks = await _peaksCollection.FetchByTiles(tileIndices);
         _logger.LogInformation("Found {count} nearby peaks", nearbyPeaks.Count());
-        return nearbyPeaks;
-    }
-
-    private async Task<IEnumerable<Feature>> FetchPeaksFromTiles(IEnumerable<Point> tiles)
-    {
-        var peakFetchTasks = tiles.Select(i => _apiClient.GetAsync($"peaks/{i.X}/{i.Y}"));
-        var peakResponses = await Task.WhenAll(peakFetchTasks);
-        var peakCollections = await Task.WhenAll(peakResponses.Select(response => response.Content.ReadFromJsonAsync<FeatureCollection>()));
-        return peakCollections.SelectMany(collection => collection?.Features ?? []);
+        return nearbyPeaks.Select(x => x.ToFeature());
     }
 
     private record SummitsEvent(string ActivityId, string[] SummitedPeakIds, string[] SummitedPeakNames, bool SummitedAnyPeaks);

@@ -7,9 +7,9 @@ using Shared.Helpers;
 using Shared.Models;
 using Shared.Services;
 
-namespace API
+namespace API.Endpoints.Peaks
 {
-    public class GetPeaksByGrid(CollectionClient<StoredFeature> _peaksCollection, OverpassClient _overpassClient)
+    public class GetPeaksByGrid(PeaksCollectionClient _peaksCollection, OverpassClient _overpassClient)
     {
         const int DefaultZoom = 11;
 
@@ -25,7 +25,7 @@ namespace API
             var response = req.CreateResponse();
             int zoom = ParseZoom(req);
 
-            var peaks = await _peaksCollection.QueryCollectionByXYIndex(x, y);
+            var peaks = await _peaksCollection.QueryByTwoPartitionKeys(x, y);
 
             if (!peaks.Any())
             {

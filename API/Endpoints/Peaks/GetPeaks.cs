@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -9,7 +8,7 @@ using Shared.Services;
 
 namespace API
 {
-    public class GetPeaks(CollectionClient<Shared.Models.User> _usersCollection, CollectionClient<StoredFeature> _peaksCollection, CollectionClient<SummitedPeak> _summitedPeakCollection)
+    public class GetPeaks(CollectionClient<Shared.Models.User> _usersCollection, PeaksCollectionClient _peaksCollection, CollectionClient<SummitedPeak> _summitedPeakCollection)
     {
         const int MinRadiusMetres = (int)40E3;
         const int MaxRadiusMetres = (int)100E3;
