@@ -79,8 +79,8 @@ namespace Backend
                     return new StoredFeature
                     {
                         Id = x.Id.ToString(),
-                        X = tile.X,
-                        Y = tile.Y,
+                        X = tile.x,
+                        Y = tile.y,
                         Properties = properties,
                         Geometry = new Geometry { Coordinates = [x.Lon, x.Lat], Type = GeometryType.Point }
                     };

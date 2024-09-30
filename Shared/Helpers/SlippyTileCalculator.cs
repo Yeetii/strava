@@ -6,35 +6,24 @@ namespace Shared.Helpers
     public class SlippyTileCalculator
     {
         private const int DefaultZoom = 11;
-        public static IEnumerable<Point> TileIndicesByRadius(Coordinate center, int radius, int zoom = DefaultZoom)
+
+        public static IEnumerable<(int x, int y)> TileIndicesByLine(IEnumerable<Coordinate> line, int zoom = DefaultZoom)
         {
-            var nwCorner = GeoSpatialFunctions.ShiftCoordinate(center, -radius, radius);
-            var seCorner = GeoSpatialFunctions.ShiftCoordinate(center, radius, -radius);
-
-            var nwTileIndex = WGS84ToTileIndex(nwCorner, zoom);
-            var seTileIndex = WGS84ToTileIndex(seCorner, zoom);
-
-            for (int x = nwTileIndex.X; x <= seTileIndex.X; x++)
+            foreach (var coord in line)
             {
-                for (int y = nwTileIndex.Y; y <= seTileIndex.Y; y++)
-                {
-                    yield return new Point(x, y);
-                }
+                yield return WGS84ToTileIndex(coord, zoom);
             }
         }
 
-        public static Point WGS84ToTileIndex(Coordinate coordinate, int zoom = DefaultZoom)
+        public static (int x, int y) WGS84ToTileIndex(Coordinate coordinate, int zoom = DefaultZoom)
         {
             var lon = coordinate.Lng;
             var lat = coordinate.Lat;
-            Point p = new()
-            {
-                X = (int)((lon + 180.0) / 360.0 * (1 << zoom)),
-                Y = (int)((1.0 - Math.Log(Math.Tan(lat * Math.PI / 180.0) +
-                1.0 / Math.Cos(lat * Math.PI / 180.0)) / Math.PI) / 2.0 * (1 << zoom))
-            };
+            var x = (int)((lon + 180.0) / 360.0 * (1 << zoom));
+            var y = (int)((1.0 - Math.Log(Math.Tan(lat * Math.PI / 180.0) +
+                1.0 / Math.Cos(lat * Math.PI / 180.0)) / Math.PI) / 2.0 * (1 << zoom));
 
-            return p;
+            return (x, y);
         }
         public static (Coordinate nw, Coordinate se) TileIndexToWGS84(int x, int y, int z = DefaultZoom)
         {

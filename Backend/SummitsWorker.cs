@@ -81,18 +81,14 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities)
     {
-        var tileIndices = new List<(int x, int y)>();
+        var tileIndices = new HashSet<(int x, int y)>();
         foreach (var activity in activities)
         {
-            if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
+            var tiles = SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyLine(activity.SummaryPolyline));
+            foreach (var tile in tiles)
             {
-                continue;
+                tileIndices.Add(tile);
             }
-            var startLocation = new Coordinate(activity.StartLatLng[1], activity.StartLatLng[0]);
-            var activityLength = (int)Math.Ceiling(activity.Distance ?? 0);
-
-            var tiles = SlippyTileCalculator.TileIndicesByRadius(startLocation, activityLength);
-            tileIndices.AddRange(tiles.Select(x => (x.X, x.Y)));
         }
         var nearbyPeaks = await _peaksCollection.FetchByTiles(tileIndices);
         _logger.LogInformation("Found {count} nearby peaks", nearbyPeaks.Count());
