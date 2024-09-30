@@ -5,7 +5,7 @@ using Shared.Services;
 
 namespace Backend
 {
-    public class NewSummitedPeak(CollectionClient<StoredFeature> _peaksCollection,
+    public class NewSummitedPeak(PeaksCollectionClient _peaksCollection,
         UserAuthenticationService _userAuthService,
         ILogger<NewSummitedPeak> _logger)
     {

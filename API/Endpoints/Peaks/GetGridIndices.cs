@@ -8,7 +8,7 @@ using Shared.Services;
 
 namespace API.Endpoints.Peaks
 {
-    public class GetGridIndices(CollectionClient<StoredFeature> _peaksCollection)
+    public class GetGridIndices(PeaksCollectionClient _peaksCollection)
     {
         [OpenApiOperation(tags: ["Peaks"])]
         [OpenApiParameter(name: "peakIds", In = ParameterLocation.Query, Type = typeof(IEnumerable<string>), Required = true)]

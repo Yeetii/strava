@@ -10,7 +10,7 @@ using Shared.Services;
 
 namespace API
 {
-    public class GetAllSummitedPeaks(CollectionClient<StoredFeature> _peaksCollection,
+    public class GetAllSummitedPeaks(PeaksCollectionClient _peaksCollection,
         CollectionClient<SummitedPeak> _summitedPeakCollection,
         CollectionClient<Shared.Models.User> _usersCollection,
         UserAuthenticationService _userAuthService)
