@@ -84,7 +84,10 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var tileIndices = new HashSet<(int x, int y)>();
         foreach (var activity in activities)
         {
-            var tiles = SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyLine(activity.SummaryPolyline));
+            var polyline = activity.SummaryPolyline;
+            if (string.IsNullOrEmpty(polyline))
+                continue;
+            var tiles = SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyLine(polyline));
             foreach (var tile in tiles)
             {
                 tileIndices.Add(tile);
