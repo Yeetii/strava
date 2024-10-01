@@ -22,7 +22,7 @@ namespace API.Endpoints
         {
             await _summitedPeaksCollection.DeleteDocumentsByKey("userId", userId, userId);
             await _activitiesCollection.DeleteDocumentsByKey("userId", userId, userId);
-            await _sessionsCollection.DeleteDocumentsByKey("userId", userId, userId);
+            await _sessionsCollection.DeleteDocumentsByKey("userId", userId);
             await _usersCollection.DeleteDocument(userId, new PartitionKey(userId));
             return req.CreateResponse(HttpStatusCode.NoContent);
         }
