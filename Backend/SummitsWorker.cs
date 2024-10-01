@@ -15,34 +15,34 @@ namespace Backend;
 public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
-    PeaksCollectionClient _peaksCollection,
-    UserAuthenticationService _userAuthService)
+    PeaksCollectionClient _peaksCollection)
 {
 
     [Function("SummitsWorker")]
-    [SignalROutput(HubName = "peakshunters")]
-    public async Task<IEnumerable<SignalRMessageAction>> Run(
+    [ServiceBusOutput("activityprocessed", Connection = "ServicebusConnection")]
+    public async Task<IEnumerable<ActivityProcessedEvent>> Run(
         [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true)] IEnumerable<CalculateSummitJob> trigger)
     {
         var ids = trigger.Select(x => x.ActivityId);
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var peaks = (await FetchNearbyPeaks(activities)).ToList();
 
-        var outputs = new List<Task<IEnumerable<SignalRMessageAction>>>();
+        var outputs = new List<ActivityProcessedEvent>();
 
-        Parallel.ForEach(activities, async activity =>
+        await Parallel.ForEachAsync(activities, async (activity, token) =>
         {
+
             if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no start location", activity.Id);
-                outputs.Add(PublishJobDoneEvent(activity, []));
+                outputs.Add(new ActivityProcessedEvent(activity.Id, activity.UserId, [], []));
                 return;
             }
             var summitedPeaks = CalculateSummitedPeaks(activity, peaks);
             await WriteToSummitedPeaks(_summitedPeaksCollection, activity, summitedPeaks);
-            outputs.Add(PublishJobDoneEvent(activity, summitedPeaks));
+            outputs.Add(new ActivityProcessedEvent(activity.Id, activity.UserId, summitedPeaks.Select(x => x.Id).ToArray(), summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "").ToArray()));
         });
-        return (await Task.WhenAll(outputs)).SelectMany(output => output);
+        return outputs;
     }
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)
@@ -96,45 +96,5 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var nearbyPeaks = await _peaksCollection.FetchByTiles(tileIndices);
         _logger.LogInformation("Found {count} nearby peaks", nearbyPeaks.Count());
         return nearbyPeaks.Select(x => x.ToFeature());
-    }
-
-    private record SummitsEvent(string ActivityId, string[] SummitedPeakIds, string[] SummitedPeakNames, bool SummitedAnyPeaks);
-    private async Task<IEnumerable<SignalRMessageAction>> PublishJobDoneEvent(Activity activity, IEnumerable<Feature> summitedPeaks)
-    {
-        var userId = activity.UserId;
-        var sessionIds = await _userAuthService.GetUsersActiveSessions(userId);
-        var summitedPeakIds = summitedPeaks.Select(peak => peak.Id).ToArray();
-        var summitedPeakNames = summitedPeaks.Select(peak => peak.Properties.TryGetValue("name", out var peakName) ? peakName as string : "").ToArray();
-        var anySummitedPeaks = summitedPeakIds.Length != 0;
-        var summitsEvent = new SummitsEvent(activity.Id, summitedPeakIds, summitedPeakNames, anySummitedPeaks);
-
-        var signalRMessages = new List<SignalRMessageAction>();
-
-        if (anySummitedPeaks)
-        {
-            _logger.LogInformation("Found {AmnPeaks} summited peaks for activity {ActivityId}", summitedPeakIds.Length, activity.Id);
-        }
-        else
-        {
-            _logger.LogInformation("Found no peaks for activity {ActivityId}", activity.Id);
-        }
-
-        foreach (var sessionId in sessionIds)
-        {
-            if (summitedPeakIds.Length == 0)
-            {
-                signalRMessages.Add(new SignalRMessageAction("summitsEvents")
-                {
-                    Arguments = [summitsEvent],
-                    UserId = sessionId,
-                });
-            }
-            signalRMessages.Add(new SignalRMessageAction("summitsEvents")
-            {
-                Arguments = [summitsEvent],
-                UserId = sessionId,
-            });
-        }
-        return signalRMessages;
     }
 }
