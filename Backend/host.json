@@ -12,7 +12,7 @@
     "functionTimeout": "00:10:00",
     "extensions": {
         "serviceBus": {
-            "batchOptions": {"maxMessageCount": 100}
+            "batchOptions": {"maxMessageCount": 75}
         }
     }
 }
