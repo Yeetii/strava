@@ -16,7 +16,7 @@ namespace Backend
         );
 
 
-        [CosmosDBOutput("osm-cosmos", "peaksGroups", Connection = "CosmosDBConnection")]
+        [CosmosDBOutput("db", "peaksGroups", Connection = "CosmosDBConnection")]
         [Function(nameof(StoreCuratedPeaksGroups))]
         public async Task<IEnumerable<PeaksGroup>?> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "peaks/refine")] HttpRequestData req)
         {
