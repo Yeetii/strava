@@ -29,6 +29,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var peaks = (await FetchNearbyPeaks(activities)).ToList();
 
+        var summitedPeaks = new List<SummitedPeak>();
+
         await Parallel.ForEachAsync(activities, async (activity, token) =>
         {
 
@@ -39,12 +41,12 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                 await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id), token);
                 return;
             }
-            var summitedPeaks = CalculateSummitedPeaks(activity, peaks);
-            await WriteToSummitedPeaks(_summitedPeaksCollection, activity, summitedPeaks);
-            await SendActivityProcessedEvent(activity, summitedPeaks, token);
-            await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id), token);
+            var summits = CalculateSummitedPeaks(activity, peaks);
+            var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
+            summitedPeaks.AddRange(activitySummitedPeaks);
+            await SendActivityProcessedEvent(activity, summits, token);
         });
-        return;
+        await _summitedPeaksCollection.BulkUpsert(summitedPeaks);
     }
 
     private async Task SendActivityProcessedEvent(Activity activity, IEnumerable<Feature> summitedPeaks, CancellationToken token)
@@ -67,8 +69,9 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         return summitedPeaks;
     }
 
-    private static async Task WriteToSummitedPeaks(CollectionClient<SummitedPeak> _summitedPeaksCollection, Activity activity, IEnumerable<Feature> summitedPeaks)
+    private static async Task<IEnumerable<SummitedPeak>> UpdateSummitedPeaksDocuments(CollectionClient<SummitedPeak> _summitedPeaksCollection, Activity activity, IEnumerable<Feature> summitedPeaks)
     {
+        var documents = new List<SummitedPeak>();
         foreach (var peak in summitedPeaks)
         {
             var documentId = activity.UserId + "-" + peak.Id;
@@ -84,8 +87,9 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                     ActivityIds = []
                 };
             summitedPeakDocument.ActivityIds.Add(activity.Id);
-            await _summitedPeaksCollection.UpsertDocument(summitedPeakDocument);
+            documents.Add(summitedPeakDocument);
         }
+        return documents;
     }
 
     private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities)
