@@ -6,28 +6,28 @@ using Shared;
 using Microsoft.Azure.Cosmos;
 using Shared.Helpers;
 using System.Collections.Immutable;
-using static Backend.QueueSummitJobs;
+using Azure.Messaging.ServiceBus;
+using System.Text.Json;
 
 namespace Backend;
 
-// Input format: 
-// {"activityId": "11808921572", "userId": "192"}
+// Input format, given an activityId: 
+// 11808921572
 public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
-    PeaksCollectionClient _peaksCollection)
+    PeaksCollectionClient _peaksCollection,
+    ServiceBusClient serviceBusClient)
 {
+    readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender("activityprocessed");
 
     [Function("SummitsWorker")]
-    [ServiceBusOutput("activityprocessed", Connection = "ServicebusConnection")]
-    public async Task<IEnumerable<ActivityProcessedEvent>> Run(
-        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true)] IEnumerable<CalculateSummitJob> trigger)
+    public async Task Run(
+        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions)
     {
-        var ids = trigger.Select(x => x.ActivityId);
+        var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var peaks = (await FetchNearbyPeaks(activities)).ToList();
-
-        var outputs = new List<ActivityProcessedEvent>();
 
         await Parallel.ForEachAsync(activities, async (activity, token) =>
         {
@@ -35,14 +35,23 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no start location", activity.Id);
-                outputs.Add(new ActivityProcessedEvent(activity.Id, activity.UserId, [], []));
+                await SendActivityProcessedEvent(activity, [], token);
+                await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id), token);
                 return;
             }
             var summitedPeaks = CalculateSummitedPeaks(activity, peaks);
             await WriteToSummitedPeaks(_summitedPeaksCollection, activity, summitedPeaks);
-            outputs.Add(new ActivityProcessedEvent(activity.Id, activity.UserId, summitedPeaks.Select(x => x.Id).ToArray(), summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "").ToArray()));
+            await SendActivityProcessedEvent(activity, summitedPeaks, token);
+            await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id), token);
         });
-        return outputs;
+        return;
+    }
+
+    private async Task SendActivityProcessedEvent(Activity activity, IEnumerable<Feature> summitedPeaks, CancellationToken token)
+    {
+        var processedEvent = new ActivityProcessedEvent(activity.Id, activity.UserId, summitedPeaks.Select(x => x.Id).ToArray(), summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "").ToArray());
+        var json = JsonSerializer.Serialize(processedEvent);
+        await _sbSender.SendMessageAsync(new ServiceBusMessage(json), token);
     }
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)
