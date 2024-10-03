@@ -12,9 +12,7 @@
     "functionTimeout": "00:10:00",
     "extensions": {
         "serviceBus": {
-            "batchOptions": {"maxMessageCount": 75},
-            "sessionHandlerOptions": {"maxAutoRenewDuration": "00:10:00"},
-            "messageHandlerOptions": {"maxAutoRenewDuration": "00:10:00"}
+            "maxAutoLockRenewalDuration": "00:10:00"
         }
     }
 }
