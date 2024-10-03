@@ -33,15 +33,21 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
         await Parallel.ForEachAsync(activities, async (activity, token) =>
         {
-
-            if (activity.StartLatLng == null || activity.StartLatLng.Count < 2)
+            if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
             {
-                _logger.LogInformation("Skipping activity {ActivityId} since it has no start location", activity.Id);
+                _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
                 await SendActivityProcessedEvent(activity, [], token);
                 await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id), token);
                 return;
             }
-            var summits = CalculateSummitedPeaks(activity, peaks);
+            var summits = CalculateSummitedPeaks(activity, peaks).ToList();
+            if (summits.Count == 0)
+            {
+                await SendActivityProcessedEvent(activity, [], token);
+                await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id), token);
+                return;
+            }
+            _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
             var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
             summitedPeaks.AddRange(activitySummitedPeaks);
             await SendActivityProcessedEvent(activity, summits, token);
