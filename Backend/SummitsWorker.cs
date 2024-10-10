@@ -37,14 +37,14 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
                 await SendActivityProcessedEvent(activity, []);
                 await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id));
-                return;
+                continue;
             }
             var summits = CalculateSummitedPeaks(activity, peaks).ToList();
             if (summits.Count == 0)
             {
                 await SendActivityProcessedEvent(activity, []);
                 await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id));
-                return;
+                continue;
             }
             _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
             var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
