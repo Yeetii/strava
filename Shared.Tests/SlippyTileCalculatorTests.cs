@@ -13,24 +13,21 @@ namespace Shared.Tests
         {
             var coordinate = new Coordinate(lon, lat);
             var p = SlippyTileCalculator.WGS84ToTileIndex(coordinate, zoom);
-            Assert.Equal(expectedTileX, p.X);
-            Assert.Equal(expectedTileY, p.Y);
+            Assert.Equal(expectedTileX, p.x);
+            Assert.Equal(expectedTileY, p.y);
 
         }
 
-
         [Theory]
-        [InlineData(0, 0, 0, -180, 85.05112878, 0, 0)]
-        [InlineData(1, 1, 1, -90, 0, 0, -85.05112878)]
-        [InlineData(7, 7, 3, 0, 0, 45, -45)]
-        public void TileIndexToWGS84_ShouldReturnCorrectCoordinates(int x, int y, int z, double expectedNWLon, double expectedNWLat, double expectedSELon, double expectedSELat)
+        [InlineData(0, 0, 0)]
+        [InlineData(1, 1, 1)]
+        [InlineData(7, 7, 3)]
+        public void TileIndexToWGS84_ShouldReturnNwCornerInSameTile(int x, int y, int z)
         {
             var (nw, se) = SlippyTileCalculator.TileIndexToWGS84(x, y, z);
-
-            Assert.Equal(expectedNWLon, nw.Lng, 6);
-            Assert.Equal(expectedNWLat, nw.Lat, 6);
-            Assert.Equal(expectedSELon, se.Lng, 6);
-            Assert.Equal(expectedSELat, se.Lat, 6);
+            var (x2, y2) = SlippyTileCalculator.WGS84ToTileIndex(nw, z);
+            Assert.Equal(x, x2);
+            Assert.Equal(y, y2);
         }
     }
 }

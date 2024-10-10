@@ -8,29 +8,28 @@ namespace SharedTests;
 public class GeoSpatialFunctionsTests
 {
 
-    // [Fact]
-    // public void DecodePolyLineTest()
-    // {
-    //     string polyline = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@IKE?GEM?MMMEEG?o@ASGMC@EIAHG@CAMo@ECIc@CYIM?}@KM@WMeA?e@Ci@JqA?oBBY?YFe@AYGMKBCAGICHEEAG?QDWBcAN}@J}BHq@@a@Ji@@MEIB]Ji@FKB?CM?QFa@DKLMDM@g@RaAHg@Bg@Pu@HgBN_AAEGBa@XU@EBICQNKCEIE[Hq@H}ABo@Ac@B{@GiA@k@E]LcA@WFs@?WFYDcBC{ACQBa@VwBt@aEL}ATsADaAJw@DyADW?QHo@Ay@BWDuAFYHw@FYBm@DU@o@BCGsBEMECOACDEAEJKDCFKJe@AMKKEMDOGM@CIYIGEg@u@KIIOSOOEMOOEe@]WWQa@UK[?KCKDMAQKOSWq@[wAISi@k@iA_AUg@QKM?a@OIMWCa@d@[n@Y\\O\\KNWh@GTOfAAn@K|@i@hAq@x@{ArAm@p@g@r@s@p@[d@E^Jj@?dAJPp@^FCNAND^CN@DOFEPADCFWHAF@B?HWP]BCHDLONDJC\\]DDJKH?PFP?n@O^BVHXXb@VR\\JENBvAsFVr@I^Nr@GpBHrCyAVHTBhAISe@n@EXBfBJp@Bj@W~BUT?DETOPEPUHGJMFMGGRYtEE~AGZ[|CE~ADv@AhAGtAIn@ILGV?LDh@Al@QbC@jAIv@Cv@Bn@Hr@I^Iv@DpAGjBBxCDn@Nx@BlBCTYp@BZCTJh@?bAJf@@LCNKRCRGJGRE@IIKHC?CJMKCB@PTr@JPGHQISBEASw@GKYRGLJNAv@Bj@CFQIa@XCj@MV@H^x@F\\ZdAP`@NRHTYOOA?CIBWAc@K[OIMWOKB[EY@QGy@gAGE[K]eAGGe@K_AJSFyAjAm@FQNO\\Sp@Cp@JpAFTD@@EDWXcARUJ@ZZLJn@v@FF^b@ZHTPj@nA`@t@NRJ\\?TFb@dAbDF`@Tn@Vt@Xl@d@vAn@|@t@hBBn@Ff@DZVx@?\\ARPRZVh@x@l@nAPLHBLHTJl@J|@f@\\@DCLIb@g@Pa@ViARsBZgCVwAPm@b@}@bAyAh@e@l@[L_@Js@^_BVcARe@XmALU^oAHMN_@Tu@p@}@PMvAiDXcAL]Zc@VYHAXFDDHW@";
-    //     IEnumerable<Coordinate> line = GeoSpatialFunctions.DecodePolyLine(polyline);
-    //     Coordinate point = new(13.09363, 63.39677);
-    //     Assert.Contains(point, line);
-    //     Assert.True(true);
-    // }
+    [Fact]
+    public void DecodePolyLineTest()
+    {
+        string polyline = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@IKE?GEM?MMMEEG?o@ASGMC@EIAHG@CAMo@ECIc@CYIM?}@KM@WMeA?e@Ci@JqA?oBBY?YFe@AYGMKBCAGICHEEAG?QDWBcAN}@J}BHq@@a@Ji@@MEIB]Ji@FKB?CM?QFa@DKLMDM@g@RaAHg@Bg@Pu@HgBN_AAEGBa@XU@EBICQNKCEIE[Hq@H}ABo@Ac@B{@GiA@k@E]LcA@WFs@?WFYDcBC{ACQBa@VwBt@aEL}ATsADaAJw@DyADW?QHo@Ay@BWDuAFYHw@FYBm@DU@o@BCGsBEMECOACDEAEJKDCFKJe@AMKKEMDOGM@CIYIGEg@u@KIIOSOOEMOOEe@]WWQa@UK[?KCKDMAQKOSWq@[wAISi@k@iA_AUg@QKM?a@OIMWCa@d@[n@Y\\O\\KNWh@GTOfAAn@K|@i@hAq@x@{ArAm@p@g@r@s@p@[d@E^Jj@?dAJPp@^FCNAND^CN@DOFEPADCFWHAF@B?HWP]BCHDLONDJC\\]DDJKH?PFP?n@O^BVHXXb@VR\\JENBvAsFVr@I^Nr@GpBHrCyAVHTBhAISe@n@EXBfBJp@Bj@W~BUT?DETOPEPUHGJMFMGGRYtEE~AGZ[|CE~ADv@AhAGtAIn@ILGV?LDh@Al@QbC@jAIv@Cv@Bn@Hr@I^Iv@DpAGjBBxCDn@Nx@BlBCTYp@BZCTJh@?bAJf@@LCNKRCRGJGRE@IIKHC?CJMKCB@PTr@JPGHQISBEASw@GKYRGLJNAv@Bj@CFQIa@XCj@MV@H^x@F\\ZdAP`@NRHTYOOA?CIBWAc@K[OIMWOKB[EY@QGy@gAGE[K]eAGGe@K_AJSFyAjAm@FQNO\\Sp@Cp@JpAFTD@@EDWXcARUJ@ZZLJn@v@FF^b@ZHTPj@nA`@t@NRJ\\?TFb@dAbDF`@Tn@Vt@Xl@d@vAn@|@t@hBBn@Ff@DZVx@?\\ARPRZVh@x@l@nAPLHBLHTJl@J|@f@\\@DCLIb@g@Pa@ViARsBZgCVwAPm@b@}@bAyAh@e@l@[L_@Js@^_BVcARe@XmALU^oAHMN_@Tu@p@}@PMvAiDXcAL]Zc@VYHAXFDDHW@";
+        IEnumerable<Coordinate> line = GeoSpatialFunctions.DecodePolyLine(polyline);
+        Coordinate point = new(13.09474, 63.39592);
+        Assert.Equivalent(line.First(), point);
+    }
 
     [Fact]
-    public void FindPointsIntersectingLineTest(){
-        var points = new List<(string, Coordinate)>{("3178354862", new Coordinate(13.1111956, 63.4001295))};
-
+    public void FindPointsIntersectingLineTest()
+    {
+        var points = new List<(string, Coordinate)> { ("3178354862", new Coordinate(13.1111956, 63.4001295)) };
         string polylineString = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@IKE?GEM?MMMEEG?o@ASGMC@EIAHG@CAMo@ECIc@CYIM?}@KM@WMeA?e@Ci@JqA?oBBY?YFe@AYGMKBCAGICHEEAG?QDWBcAN}@J}BHq@@a@Ji@@MEIB]Ji@FKB?CM?QFa@DKLMDM@g@RaAHg@Bg@Pu@HgBN_AAEGBa@XU@EBICQNKCEIE[Hq@H}ABo@Ac@B{@GiA@k@E]LcA@WFs@?WFYDcBC{ACQBa@VwBt@aEL}ATsADaAJw@DyADW?QHo@Ay@BWDuAFYHw@FYBm@DU@o@BCGsBEMECOACDEAEJKDCFKJe@AMKKEMDOGM@CIYIGEg@u@KIIOSOOEMOOEe@]WWQa@UK[?KCKDMAQKOSWq@[wAISi@k@iA_AUg@QKM?a@OIMWCa@d@[n@Y\\O\\KNWh@GTOfAAn@K|@i@hAq@x@{ArAm@p@g@r@s@p@[d@E^Jj@?dAJPp@^FCNAND^CN@DOFEPADCFWHAF@B?HWP]BCHDLONDJC\\]DDJKH?PFP?n@O^BVHXXb@VR\\JENBvAsFVr@I^Nr@GpBHrCyAVHTBhAISe@n@EXBfBJp@Bj@W~BUT?DETOPEPUHGJMFMGGRYtEE~AGZ[|CE~ADv@AhAGtAIn@ILGV?LDh@Al@QbC@jAIv@Cv@Bn@Hr@I^Iv@DpAGjBBxCDn@Nx@BlBCTYp@BZCTJh@?bAJf@@LCNKRCRGJGRE@IIKHC?CJMKCB@PTr@JPGHQISBEASw@GKYRGLJNAv@Bj@CFQIa@XCj@MV@H^x@F\\ZdAP`@NRHTYOOA?CIBWAc@K[OIMWOKB[EY@QGy@gAGE[K]eAGGe@K_AJSFyAjAm@FQNO\\Sp@Cp@JpAFTD@@EDWXcARUJ@ZZLJn@v@FF^b@ZHTPj@nA`@t@NRJ\\?TFb@dAbDF`@Tn@Vt@Xl@d@vAn@|@t@hBBn@Ff@DZVx@?\\ARPRZVh@x@l@nAPLHBLHTJl@J|@f@\\@DCLIb@g@Pa@ViARsBZgCVwAPm@b@}@bAyAh@e@l@[L_@Js@^_BVcARe@XmALU^oAHMN_@Tu@p@}@PMvAiDXcAL]Zc@VYHAXFDDHW@";
         var matches = GeoSpatialFunctions.FindPointsIntersectingLine(points, polylineString);
         Assert.Equal("3178354862", matches.First());
     }
 
     [Fact]
-public void FindPointsIntersectingLineTest_ExecutionTime()
-{
-    var points = new List<(string, Coordinate)>
+    public void FindPointsIntersectingLineTest_ExecutionTime()
+    {
+        var points = new List<(string, Coordinate)>
 {
     ("Point1", new Coordinate(13.1111956, 63.4001295)),
     ("Point2", new Coordinate(12.1111956, 62.4001295)),
@@ -44,24 +43,25 @@ public void FindPointsIntersectingLineTest_ExecutionTime()
     ("Point10", new Coordinate(4.1111956, 54.4001295))
 };
 
-    string polylineString = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@IKE?GEM?MMMEEG?o@ASGMC@EIAHG@CAMo@ECIc@CYIM?}@KM@WMeA?e@Ci@JqA?oBBY?YFe@AYGMKBCAGICHEEAG?QDWBcAN}@J}BHq@@a@Ji@@MEIB]Ji@FKB?CM?QFa@DKLMDM@g@RaAHg@Bg@Pu@HgBN_AAEGBa@XU@EBICQNKCEIE[Hq@H}ABo@Ac@B{@GiA@k@E]LcA@WFs@?WFYDcBC{ACQBa@VwBt@aEL}ATsADaAJw@DyADW?QHo@Ay@BWDuAFYHw@FYBm@DU@o@BCGsBEMECOACDEAEJKDCFKJe@AMKKEMDOGM@CIYIGEg@u@KIIOSOOEMOOEe@]WWQa@UK[?KCKDMAQKOSWq@[wAISi@k@iA_AUg@QKM?a@OIMWCa@d@[n@Y\\O\\KNWh@GTOfAAn@K|@i@hAq@x@{ArAm@p@g@r@s@p@[d@E^Jj@?dAJPp@^FCNAND^CN@DOFEPADCFWHAF@B?HWP]BCHDLONDJC\\]DDJKH?PFP?n@O^BVHXXb@VR\\JENBvAsFVr@I^Nr@GpBHrCyAVHTBhAISe@n@EXBfBJp@Bj@W~BUT?DETOPEPUHGJMFMGGRYtEE~AGZ[|CE~ADv@AhAGtAIn@ILGV?LDh@Al@QbC@jAIv@Cv@Bn@Hr@I^Iv@DpAGjBBxCDn@Nx@BlBCTYp@BZCTJh@?bAJf@@LCNKRCRGJGRE@IIKHC?CJMKCB@PTr@JPGHQISBEASw@GKYRGLJNAv@Bj@CFQIa@XCj@MV@H^x@F\\ZdAP`@NRHTYOOA?CIBWAc@K[OIMWOKB[EY@QGy@gAGE[K]eAGGe@K_AJSFyAjAm@FQNO\\Sp@Cp@JpAFTD@@EDWXcARUJ@ZZLJn@v@FF^b@ZHTPj@nA`@t@NRJ\\?TFb@dAbDF`@Tn@Vt@Xl@d@vAn@|@t@hBBn@Ff@DZVx@?\\ARPRZVh@x@l@nAPLHBLHTJl@J|@f@\\@DCLIb@g@Pa@ViARsBZgCVwAPm@b@}@bAyAh@e@l@[L_@Js@^_BVcARe@XmALU^oAHMN_@Tu@p@}@PMvAiDXcAL]Zc@VYHAXFDDHW@";
+        string polylineString = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@IKE?GEM?MMMEEG?o@ASGMC@EIAHG@CAMo@ECIc@CYIM?}@KM@WMeA?e@Ci@JqA?oBBY?YFe@AYGMKBCAGICHEEAG?QDWBcAN}@J}BHq@@a@Ji@@MEIB]Ji@FKB?CM?QFa@DKLMDM@g@RaAHg@Bg@Pu@HgBN_AAEGBa@XU@EBICQNKCEIE[Hq@H}ABo@Ac@B{@GiA@k@E]LcA@WFs@?WFYDcBC{ACQBa@VwBt@aEL}ATsADaAJw@DyADW?QHo@Ay@BWDuAFYHw@FYBm@DU@o@BCGsBEMECOACDEAEJKDCFKJe@AMKKEMDOGM@CIYIGEg@u@KIIOSOOEMOOEe@]WWQa@UK[?KCKDMAQKOSWq@[wAISi@k@iA_AUg@QKM?a@OIMWCa@d@[n@Y\\O\\KNWh@GTOfAAn@K|@i@hAq@x@{ArAm@p@g@r@s@p@[d@E^Jj@?dAJPp@^FCNAND^CN@DOFEPADCFWHAF@B?HWP]BCHDLONDJC\\]DDJKH?PFP?n@O^BVHXXb@VR\\JENBvAsFVr@I^Nr@GpBHrCyAVHTBhAISe@n@EXBfBJp@Bj@W~BUT?DETOPEPUHGJMFMGGRYtEE~AGZ[|CE~ADv@AhAGtAIn@ILGV?LDh@Al@QbC@jAIv@Cv@Bn@Hr@I^Iv@DpAGjBBxCDn@Nx@BlBCTYp@BZCTJh@?bAJf@@LCNKRCRGJGRE@IIKHC?CJMKCB@PTr@JPGHQISBEASw@GKYRGLJNAv@Bj@CFQIa@XCj@MV@H^x@F\\ZdAP`@NRHTYOOA?CIBWAc@K[OIMWOKB[EY@QGy@gAGE[K]eAGGe@K_AJSFyAjAm@FQNO\\Sp@Cp@JpAFTD@@EDWXcARUJ@ZZLJn@v@FF^b@ZHTPj@nA`@t@NRJ\\?TFb@dAbDF`@Tn@Vt@Xl@d@vAn@|@t@hBBn@Ff@DZVx@?\\ARPRZVh@x@l@nAPLHBLHTJl@J|@f@\\@DCLIb@g@Pa@ViARsBZgCVwAPm@b@}@bAyAh@e@l@[L_@Js@^_BVcARe@XmALU^oAHMN_@Tu@p@}@PMvAiDXcAL]Zc@VYHAXFDDHW@";
 
-    // Start stopwatch
-    var stopwatch = Stopwatch.StartNew();
+        // Start stopwatch
+        var stopwatch = Stopwatch.StartNew();
 
-    GeoSpatialFunctions.FindPointsIntersectingLine(points, polylineString);
+        GeoSpatialFunctions.FindPointsIntersectingLine(points, polylineString);
 
-    // Stop stopwatch
-    stopwatch.Stop();
-    Console.WriteLine($"Execution took: {stopwatch.Elapsed.TotalSeconds}");
+        // Stop stopwatch
+        stopwatch.Stop();
+        Console.WriteLine($"Execution took: {stopwatch.Elapsed.TotalSeconds}");
 
-    // Assert that the execution time is less than 10 seconds
-    Assert.True(stopwatch.Elapsed.TotalSeconds < 10, $"Execution took longer than expected: {stopwatch.Elapsed.TotalSeconds} seconds");
-}
+        // Assert that the execution time is less than 10 seconds
+        Assert.True(stopwatch.Elapsed.TotalSeconds < 10, $"Execution took longer than expected: {stopwatch.Elapsed.TotalSeconds} seconds");
+    }
 
 
     [Fact]
-    public void DistanceToTest(){
+    public void DistanceToTest()
+    {
         Coordinate point1 = new(63.39677, 13.09363);
         Coordinate point2 = new(63.39677, 13.09363);
         Coordinate point3 = new(63.40841, 13.11212);
