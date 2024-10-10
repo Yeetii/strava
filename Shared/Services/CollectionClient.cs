@@ -8,6 +8,9 @@ namespace Shared.Services;
 public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) where T : IDocument
 {
     private readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
+    const int maxConcurrentThreads = 50;
+    private readonly SemaphoreSlim semaphore = new(maxConcurrentThreads);
+
     public async Task<IEnumerable<T>> FetchWholeCollection()
     {
         return await ExecuteQueryAsync<T>(new QueryDefinition("SELECT * FROM p"));
@@ -98,9 +101,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
     }
     public async Task BulkUpsert(IEnumerable<T> documents)
     {
-        const int maxConcurrentThreads = 50;
         var concurrentTasks = new List<Task>();
-        var semaphore = new SemaphoreSlim(maxConcurrentThreads);
 
         foreach (var document in documents)
         {

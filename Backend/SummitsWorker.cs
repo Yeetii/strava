@@ -23,43 +23,42 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     [Function("SummitsWorker")]
     public async Task Run(
-        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions)
+        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions)
     {
         var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var peaks = (await FetchNearbyPeaks(activities)).ToList();
 
-        var summitedPeaks = new List<SummitedPeak>();
 
-        await Parallel.ForEachAsync(activities, async (activity, token) =>
+        foreach (var activity in activities)
         {
             if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
-                await SendActivityProcessedEvent(activity, [], token);
-                await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id), token);
+                await SendActivityProcessedEvent(activity, []);
+                await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id));
                 return;
             }
             var summits = CalculateSummitedPeaks(activity, peaks).ToList();
             if (summits.Count == 0)
             {
-                await SendActivityProcessedEvent(activity, [], token);
-                await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id), token);
+                await SendActivityProcessedEvent(activity, []);
+                await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id));
                 return;
             }
             _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
             var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
-            summitedPeaks.AddRange(activitySummitedPeaks);
-            await SendActivityProcessedEvent(activity, summits, token);
-        });
-        await _summitedPeaksCollection.BulkUpsert(summitedPeaks);
+            await SendActivityProcessedEvent(activity, summits);
+            await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
+            await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id));
+        };
     }
 
-    private async Task SendActivityProcessedEvent(Activity activity, IEnumerable<Feature> summitedPeaks, CancellationToken token)
+    private async Task SendActivityProcessedEvent(Activity activity, IEnumerable<Feature> summitedPeaks)
     {
         var processedEvent = new ActivityProcessedEvent(activity.Id, activity.UserId, summitedPeaks.Select(x => x.Id).ToArray(), summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "").ToArray());
         var json = JsonSerializer.Serialize(processedEvent);
-        await _sbSender.SendMessageAsync(new ServiceBusMessage(json), token);
+        await _sbSender.SendMessageAsync(new ServiceBusMessage(json));
     }
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)
