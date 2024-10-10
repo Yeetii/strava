@@ -29,29 +29,32 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var peaks = (await FetchNearbyPeaks(activities)).ToList();
 
+        var processingTasks = activities.Select(activity => ProcessSummitJob(_logger, _summitedPeaksCollection, jobs.First(x => x.Body.ToString() == activity.Id), actions, peaks, activity));
+        await Task.WhenAll(processingTasks.ToArray());
+    }
 
-        foreach (var activity in activities)
+    private async Task ProcessSummitJob(ILogger<SummitsWorker> _logger, CollectionClient<SummitedPeak> _summitedPeaksCollection, ServiceBusReceivedMessage job, ServiceBusMessageActions actions, List<Feature> peaks, Activity activity)
+    {
+        if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
         {
-            if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
-            {
-                _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
-                await SendActivityProcessedEvent(activity, []);
-                await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id));
-                continue;
-            }
-            var summits = CalculateSummitedPeaks(activity, peaks).ToList();
-            if (summits.Count == 0)
-            {
-                await SendActivityProcessedEvent(activity, []);
-                await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id));
-                continue;
-            }
-            _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
-            var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
-            await SendActivityProcessedEvent(activity, summits);
-            await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
-            await actions.CompleteMessageAsync(jobs.First(x => x.Body.ToString() == activity.Id));
-        };
+            _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
+            await SendActivityProcessedEvent(activity, []);
+            await actions.CompleteMessageAsync(job);
+            return;
+        }
+        var summits = CalculateSummitedPeaks(activity, peaks).ToList();
+        if (summits.Count == 0)
+        {
+            await SendActivityProcessedEvent(activity, []);
+            await actions.CompleteMessageAsync(job);
+            return;
+        }
+        _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
+        var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
+        await SendActivityProcessedEvent(activity, summits);
+        await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
+        await actions.CompleteMessageAsync(job);
+        return;
     }
 
     private async Task SendActivityProcessedEvent(Activity activity, IEnumerable<Feature> summitedPeaks)
