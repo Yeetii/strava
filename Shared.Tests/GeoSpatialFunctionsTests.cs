@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Shared;
 using Shared.Models;
 
@@ -71,5 +70,20 @@ public class GeoSpatialFunctionsTests
         Assert.Equal(0, distance);
         Assert.True(distance2 > 2350);
         Assert.True(distance2 < 2450);
+    }
+
+    public static IEnumerable<object[]> MaxDistanceData =>
+        [
+            [new List<Coordinate> { new(14, 13), new(14.001, 13) }, 108.35],
+            [new List<Coordinate> { new(13.094740000000002, 63.395920000000004), new(13.094750000000001, 63.39593000000001), new(13.094750000000001, 63.39593000000001) }, 1.22],
+            [new List<Coordinate> { new(1, 1), new(1, 1) }, 0],
+        ];
+
+    [Theory]
+    [MemberData(nameof(MaxDistanceData))]
+    public void MaxDistanceShouldCalculateMaxDistanceBetweenTwoPoints(IEnumerable<Coordinate> points, double expected)
+    {
+        var result = GeoSpatialFunctions.MaxDistance(points);
+        Assert.Equal(expected, result, 2);
     }
 }
