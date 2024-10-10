@@ -46,6 +46,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         if (summits.Count == 0)
         {
             await SendActivityProcessedEvent(activity, []);
+            await actions.RenewMessageLockAsync(job);
             await actions.CompleteMessageAsync(job);
             return;
         }
@@ -53,6 +54,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
         await SendActivityProcessedEvent(activity, summits);
         await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
+        await actions.RenewMessageLockAsync(job);
         await actions.CompleteMessageAsync(job);
         return;
     }
