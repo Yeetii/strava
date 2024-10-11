@@ -1,6 +1,6 @@
 using Microsoft.Azure.Cosmos;
 using Shared.Models;
-using Shared.Helpers;
+using Shared.Geo;
 using Microsoft.Extensions.Logging;
 
 namespace Shared.Services;

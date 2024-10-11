@@ -1,8 +1,7 @@
-using System.Diagnostics;
-using Shared;
+using Shared.Geo;
 using Shared.Models;
 
-namespace SharedTests;
+namespace Shared.Tests;
 
 public class GeoSpatialFunctionsTests
 {
@@ -10,53 +9,46 @@ public class GeoSpatialFunctionsTests
     [Fact]
     public void DecodePolyLineTest()
     {
-        string polyline = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@IKE?GEM?MMMEEG?o@ASGMC@EIAHG@CAMo@ECIc@CYIM?}@KM@WMeA?e@Ci@JqA?oBBY?YFe@AYGMKBCAGICHEEAG?QDWBcAN}@J}BHq@@a@Ji@@MEIB]Ji@FKB?CM?QFa@DKLMDM@g@RaAHg@Bg@Pu@HgBN_AAEGBa@XU@EBICQNKCEIE[Hq@H}ABo@Ac@B{@GiA@k@E]LcA@WFs@?WFYDcBC{ACQBa@VwBt@aEL}ATsADaAJw@DyADW?QHo@Ay@BWDuAFYHw@FYBm@DU@o@BCGsBEMECOACDEAEJKDCFKJe@AMKKEMDOGM@CIYIGEg@u@KIIOSOOEMOOEe@]WWQa@UK[?KCKDMAQKOSWq@[wAISi@k@iA_AUg@QKM?a@OIMWCa@d@[n@Y\\O\\KNWh@GTOfAAn@K|@i@hAq@x@{ArAm@p@g@r@s@p@[d@E^Jj@?dAJPp@^FCNAND^CN@DOFEPADCFWHAF@B?HWP]BCHDLONDJC\\]DDJKH?PFP?n@O^BVHXXb@VR\\JENBvAsFVr@I^Nr@GpBHrCyAVHTBhAISe@n@EXBfBJp@Bj@W~BUT?DETOPEPUHGJMFMGGRYtEE~AGZ[|CE~ADv@AhAGtAIn@ILGV?LDh@Al@QbC@jAIv@Cv@Bn@Hr@I^Iv@DpAGjBBxCDn@Nx@BlBCTYp@BZCTJh@?bAJf@@LCNKRCRGJGRE@IIKHC?CJMKCB@PTr@JPGHQISBEASw@GKYRGLJNAv@Bj@CFQIa@XCj@MV@H^x@F\\ZdAP`@NRHTYOOA?CIBWAc@K[OIMWOKB[EY@QGy@gAGE[K]eAGGe@K_AJSFyAjAm@FQNO\\Sp@Cp@JpAFTD@@EDWXcARUJ@ZZLJn@v@FF^b@ZHTPj@nA`@t@NRJ\\?TFb@dAbDF`@Tn@Vt@Xl@d@vAn@|@t@hBBn@Ff@DZVx@?\\ARPRZVh@x@l@nAPLHBLHTJl@J|@f@\\@DCLIb@g@Pa@ViARsBZgCVwAPm@b@}@bAyAh@e@l@[L_@Js@^_BVcARe@XmALU^oAHMN_@Tu@p@}@PMvAiDXcAL]Zc@VYHAXFDDHW@";
-        IEnumerable<Coordinate> line = GeoSpatialFunctions.DecodePolyLine(polyline);
-        Coordinate point = new(13.09474, 63.39592);
-        Assert.Equivalent(line.First(), point);
+        string polyline = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@";
+        var line = GeoSpatialFunctions.DecodePolyline(polyline).ToArray();
+
+        List<Coordinate> coordinates =
+        [
+            new Coordinate(13.09474, 63.39592),
+            new Coordinate(13.09475, 63.39593),
+            new Coordinate(13.09461, 63.39603),
+            new Coordinate(13.09444, 63.39614),
+            new Coordinate(13.09417, 63.39627),
+            new Coordinate(13.09405, 63.39635),
+            new Coordinate(13.09349, 63.39662),
+            new Coordinate(13.09339, 63.39672),
+            new Coordinate(13.09363, 63.39677),
+            new Coordinate(13.09382, 63.39684)
+        ];
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            Assert.Equal(
+            coordinates[i].Lat,
+            line[i].Lat,
+            5
+            );
+            Assert.Equal(
+            coordinates[i].Lng,
+            line[i].Lng,
+            5
+            );
+        }
     }
 
     [Fact]
-    public void FindPointsIntersectingLineTest()
+    public void ShiftCoordinateTest()
     {
-        var points = new List<(string, Coordinate)> { ("3178354862", new Coordinate(13.1111956, 63.4001295)) };
-        string polylineString = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@IKE?GEM?MMMEEG?o@ASGMC@EIAHG@CAMo@ECIc@CYIM?}@KM@WMeA?e@Ci@JqA?oBBY?YFe@AYGMKBCAGICHEEAG?QDWBcAN}@J}BHq@@a@Ji@@MEIB]Ji@FKB?CM?QFa@DKLMDM@g@RaAHg@Bg@Pu@HgBN_AAEGBa@XU@EBICQNKCEIE[Hq@H}ABo@Ac@B{@GiA@k@E]LcA@WFs@?WFYDcBC{ACQBa@VwBt@aEL}ATsADaAJw@DyADW?QHo@Ay@BWDuAFYHw@FYBm@DU@o@BCGsBEMECOACDEAEJKDCFKJe@AMKKEMDOGM@CIYIGEg@u@KIIOSOOEMOOEe@]WWQa@UK[?KCKDMAQKOSWq@[wAISi@k@iA_AUg@QKM?a@OIMWCa@d@[n@Y\\O\\KNWh@GTOfAAn@K|@i@hAq@x@{ArAm@p@g@r@s@p@[d@E^Jj@?dAJPp@^FCNAND^CN@DOFEPADCFWHAF@B?HWP]BCHDLONDJC\\]DDJKH?PFP?n@O^BVHXXb@VR\\JENBvAsFVr@I^Nr@GpBHrCyAVHTBhAISe@n@EXBfBJp@Bj@W~BUT?DETOPEPUHGJMFMGGRYtEE~AGZ[|CE~ADv@AhAGtAIn@ILGV?LDh@Al@QbC@jAIv@Cv@Bn@Hr@I^Iv@DpAGjBBxCDn@Nx@BlBCTYp@BZCTJh@?bAJf@@LCNKRCRGJGRE@IIKHC?CJMKCB@PTr@JPGHQISBEASw@GKYRGLJNAv@Bj@CFQIa@XCj@MV@H^x@F\\ZdAP`@NRHTYOOA?CIBWAc@K[OIMWOKB[EY@QGy@gAGE[K]eAGGe@K_AJSFyAjAm@FQNO\\Sp@Cp@JpAFTD@@EDWXcARUJ@ZZLJn@v@FF^b@ZHTPj@nA`@t@NRJ\\?TFb@dAbDF`@Tn@Vt@Xl@d@vAn@|@t@hBBn@Ff@DZVx@?\\ARPRZVh@x@l@nAPLHBLHTJl@J|@f@\\@DCLIb@g@Pa@ViARsBZgCVwAPm@b@}@bAyAh@e@l@[L_@Js@^_BVcARe@XmALU^oAHMN_@Tu@p@}@PMvAiDXcAL]Zc@VYHAXFDDHW@";
-        var matches = GeoSpatialFunctions.FindPointsIntersectingLine(points, polylineString);
-        Assert.Equal("3178354862", matches.First());
+        Coordinate point1 = new(63.39677, 13.09363);
+        var movedPoint = GeoSpatialFunctions.ShiftCoordinate(point1, 50, 0);
+        var distanceMoved = GeoSpatialFunctions.DistanceTo(point1, movedPoint);
+        Assert.Equal(50, distanceMoved, 1);
     }
-
-    [Fact]
-    public void FindPointsIntersectingLineTest_ExecutionTime()
-    {
-        var points = new List<(string, Coordinate)>
-{
-    ("Point1", new Coordinate(13.1111956, 63.4001295)),
-    ("Point2", new Coordinate(12.1111956, 62.4001295)),
-    ("Point3", new Coordinate(11.1111956, 61.4001295)),
-    ("Point4", new Coordinate(10.1111956, 60.4001295)),
-    ("Point5", new Coordinate(9.1111956, 59.4001295)),
-    ("Point6", new Coordinate(8.1111956, 58.4001295)),
-    ("Point7", new Coordinate(7.1111956, 57.4001295)),
-    ("Point8", new Coordinate(6.1111956, 56.4001295)),
-    ("Point9", new Coordinate(5.1111956, 55.4001295)),
-    ("Point10", new Coordinate(4.1111956, 54.4001295))
-};
-
-        string polylineString = "o_}aKcq|nAAASZU`@Yt@OVu@nBSRIo@Me@IKE?GEM?MMMEEG?o@ASGMC@EIAHG@CAMo@ECIc@CYIM?}@KM@WMeA?e@Ci@JqA?oBBY?YFe@AYGMKBCAGICHEEAG?QDWBcAN}@J}BHq@@a@Ji@@MEIB]Ji@FKB?CM?QFa@DKLMDM@g@RaAHg@Bg@Pu@HgBN_AAEGBa@XU@EBICQNKCEIE[Hq@H}ABo@Ac@B{@GiA@k@E]LcA@WFs@?WFYDcBC{ACQBa@VwBt@aEL}ATsADaAJw@DyADW?QHo@Ay@BWDuAFYHw@FYBm@DU@o@BCGsBEMECOACDEAEJKDCFKJe@AMKKEMDOGM@CIYIGEg@u@KIIOSOOEMOOEe@]WWQa@UK[?KCKDMAQKOSWq@[wAISi@k@iA_AUg@QKM?a@OIMWCa@d@[n@Y\\O\\KNWh@GTOfAAn@K|@i@hAq@x@{ArAm@p@g@r@s@p@[d@E^Jj@?dAJPp@^FCNAND^CN@DOFEPADCFWHAF@B?HWP]BCHDLONDJC\\]DDJKH?PFP?n@O^BVHXXb@VR\\JENBvAsFVr@I^Nr@GpBHrCyAVHTBhAISe@n@EXBfBJp@Bj@W~BUT?DETOPEPUHGJMFMGGRYtEE~AGZ[|CE~ADv@AhAGtAIn@ILGV?LDh@Al@QbC@jAIv@Cv@Bn@Hr@I^Iv@DpAGjBBxCDn@Nx@BlBCTYp@BZCTJh@?bAJf@@LCNKRCRGJGRE@IIKHC?CJMKCB@PTr@JPGHQISBEASw@GKYRGLJNAv@Bj@CFQIa@XCj@MV@H^x@F\\ZdAP`@NRHTYOOA?CIBWAc@K[OIMWOKB[EY@QGy@gAGE[K]eAGGe@K_AJSFyAjAm@FQNO\\Sp@Cp@JpAFTD@@EDWXcARUJ@ZZLJn@v@FF^b@ZHTPj@nA`@t@NRJ\\?TFb@dAbDF`@Tn@Vt@Xl@d@vAn@|@t@hBBn@Ff@DZVx@?\\ARPRZVh@x@l@nAPLHBLHTJl@J|@f@\\@DCLIb@g@Pa@ViARsBZgCVwAPm@b@}@bAyAh@e@l@[L_@Js@^_BVcARe@XmALU^oAHMN_@Tu@p@}@PMvAiDXcAL]Zc@VYHAXFDDHW@";
-
-        // Start stopwatch
-        var stopwatch = Stopwatch.StartNew();
-
-        GeoSpatialFunctions.FindPointsIntersectingLine(points, polylineString);
-
-        // Stop stopwatch
-        stopwatch.Stop();
-        Console.WriteLine($"Execution took: {stopwatch.Elapsed.TotalSeconds}");
-
-        // Assert that the execution time is less than 10 seconds
-        Assert.True(stopwatch.Elapsed.TotalSeconds < 10, $"Execution took longer than expected: {stopwatch.Elapsed.TotalSeconds} seconds");
-    }
-
 
     [Fact]
     public void DistanceToTest()
@@ -70,6 +62,16 @@ public class GeoSpatialFunctionsTests
         Assert.Equal(0, distance);
         Assert.True(distance2 > 2350);
         Assert.True(distance2 < 2450);
+    }
+
+    [Fact]
+    public void DistanceToMustWorkForSmallDistances()
+    {
+        Coordinate point1 = new(63.40324, 13.08618);
+        Coordinate point2 = new(63.40324, 13.086179);
+        double distance = GeoSpatialFunctions.DistanceTo(point1, point2);
+        // Reference https://www.omnicalculator.com/other/latitude-longitude-distance
+        Assert.Equal(0.1112, distance, 4);
     }
 
     public static IEnumerable<object[]> MaxDistanceData =>

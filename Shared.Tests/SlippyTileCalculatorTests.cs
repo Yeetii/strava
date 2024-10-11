@@ -1,4 +1,4 @@
-using Shared.Helpers;
+using Shared.Geo;
 using Shared.Models;
 
 namespace Shared.Tests

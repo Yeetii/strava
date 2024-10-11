@@ -2,12 +2,12 @@ using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
-using Shared;
 using Microsoft.Azure.Cosmos;
-using Shared.Helpers;
+using Shared.Geo;
 using System.Collections.Immutable;
 using Azure.Messaging.ServiceBus;
 using System.Text.Json;
+using Shared.Geo.SummitsCalculator;
 
 namespace Backend;
 
@@ -17,7 +17,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
     PeaksCollectionClient _peaksCollection,
-    ServiceBusClient serviceBusClient)
+    ServiceBusClient serviceBusClient,
+    ISummitsCalculator _summitsCalculator)
 {
     readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender("activityprocessed");
 
@@ -28,11 +29,9 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var peaks = (await FetchNearbyPeaks(activities)).ToList();
-
         var processingTasks = activities.Select(activity => ProcessSummitJob(_logger, _summitedPeaksCollection, jobs.First(x => x.Body.ToString() == activity.Id), actions, peaks, activity));
         await Task.WhenAll(processingTasks.ToArray());
     }
-
     private async Task ProcessSummitJob(ILogger<SummitsWorker> _logger, CollectionClient<SummitedPeak> _summitedPeaksCollection, ServiceBusReceivedMessage job, ServiceBusMessageActions actions, List<Feature> peaks, Activity activity)
     {
         if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
@@ -68,13 +67,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)
     {
-        var startLocation = new Coordinate(activity.StartLatLng[1], activity.StartLatLng[0]);
-        var activityLength = (int)Math.Ceiling(activity.Distance ?? 0);
-
-        var filteredPeaks = nearbyPeaks.Where(peak => GeoSpatialFunctions.DistanceTo(Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates), startLocation) < activityLength).ToList();
-        _logger.LogInformation("Calculating summits on {amnPeaks} peaks, for activity {activityId}, at {coord} with length {dist}m", filteredPeaks.Count, activity.Id, startLocation.ToList(), activityLength);
-        var nearbyPoints = filteredPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
-        var summitedPeakIds = GeoSpatialFunctions.FindPointsIntersectingLine(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty);
+        var nearbyPoints = nearbyPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
+        var summitedPeakIds = _summitsCalculator.FindPointsNearRoute(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty);
         var summitedPeaks = nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id));
         return summitedPeaks;
     }
@@ -110,7 +104,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             var polyline = activity.SummaryPolyline;
             if (string.IsNullOrEmpty(polyline))
                 continue;
-            var tiles = SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyLine(polyline));
+            var tiles = SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyline(polyline));
             foreach (var tile in tiles)
             {
                 tileIndices.Add(tile);

@@ -1,7 +1,7 @@
 using System.Drawing;
 using Shared.Models;
 
-namespace Shared.Helpers
+namespace Shared.Geo
 {
     public class SlippyTileCalculator
     {

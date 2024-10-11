@@ -13,6 +13,9 @@
 			"path": "Shared.Tests"
 		},
 		{
+			"path": "Shared.Benchmarks"
+		},
+		{
 			"path": "API.Tests"
 		},
 		{

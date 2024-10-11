@@ -6,6 +6,7 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Shared.Geo.SummitsCalculator;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
@@ -101,6 +102,10 @@ var host = new HostBuilder()
             var usersCollection = serviceProvider.GetRequiredService<CollectionClient<Shared.Models.User>>();
             var sessionsCollection = serviceProvider.GetRequiredService<CollectionClient<Session>>();
             return new UserAuthenticationService(usersCollection, sessionsCollection);
+        });
+        services.AddScoped<ISummitsCalculator>(serviceProvider =>
+        {
+            return new SummitsCalculatorWithBoundingBoxFilter();
         });
     })
     .Build();

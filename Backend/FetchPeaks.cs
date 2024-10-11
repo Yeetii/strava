@@ -4,7 +4,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
 using Microsoft.Extensions.Logging;
-using Shared.Helpers;
+using Shared.Geo;
 
 namespace Backend
 {
