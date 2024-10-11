@@ -38,6 +38,10 @@ public class PeaksCollectionClient(Container container, ILoggerFactory loggerFac
 
     public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int zoom = 11)
     {
+        if (!keys.Any())
+        {
+            return [];
+        }
         var peaks = await QueryByListOfKeys(keys);
         var missingTiles = GetMissingTiles(peaks, keys);
         foreach (var (x, y) in missingTiles)
