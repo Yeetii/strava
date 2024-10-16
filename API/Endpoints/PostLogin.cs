@@ -6,10 +6,11 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Services.StravaClient;
 using Shared.Services;
+using Microsoft.Extensions.Logging;
 
 namespace API.Endpoints
 {
-    public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<User> _usersCollection)
+    public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<User> _usersCollection, ILogger<PostLogin> _logger)
     {
         [OpenApiOperation(tags: ["User management"])]
         [OpenApiParameter(name: "authCode", In = ParameterLocation.Path)]
@@ -18,7 +19,6 @@ namespace API.Endpoints
         public async Task<ReturnBindings> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "{authCode}/login")] HttpRequestData req, string authCode)
         {
             var isLocal = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT")); // set to "Development" locally
-
             var response = req.CreateResponse();
             response.Headers.Add("Access-Control-Allow-Credentials", "true");
             var outputs = new ReturnBindings() { Response = response };
@@ -53,10 +53,12 @@ namespace API.Endpoints
             response.Cookies.Append(cookie);
 
             var userId = tokenResponse.Athlete.Id.ToString();
+            _logger.LogInformation("Logging in user {userId} ", userId);
             var userExist = await _usersCollection.GetByIdMaybe(userId, new Microsoft.Azure.Cosmos.PartitionKey(userId));
 
             if (userExist == null)
             {
+                _logger.LogInformation("Creating new user {userId}, sending activities fetch jobs", userId);
                 var fetchJob = new ActivitiesFetchJob { UserId = userId };
                 outputs.ActivitiesFetchJob = fetchJob;
             }
@@ -65,6 +67,8 @@ namespace API.Endpoints
             {
                 Id = tokenResponse.Athlete.Id.ToString(),
                 UserName = tokenResponse.Athlete.Username,
+                FirstName = tokenResponse.Athlete.Firstname,
+                LastName = tokenResponse.Athlete.Lastname,
                 RefreshToken = refreshToken,
                 AccessToken = tokenResponse.AccessToken,
                 TokenExpiresAt = tokenResponse.ExpiresAt

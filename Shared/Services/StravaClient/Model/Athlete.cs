@@ -8,7 +8,7 @@ public class Athlete
         public int Id { get; set; }
 
         [JsonPropertyName("username")]
-        public string Username { get; set; }
+        public string? Username { get; set; }
 
         [JsonPropertyName("resource_state")]
         public int ResourceState { get; set; }
@@ -50,7 +50,7 @@ public class Athlete
         public int BadgeTypeId { get; set; }
 
         [JsonPropertyName("weight")]
-        public double Weight { get; set; }
+        public double? Weight { get; set; }
 
         [JsonPropertyName("profile_medium")]
         public string ProfileMedium { get; set; }
