@@ -13,13 +13,27 @@ namespace Backend
 
     public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi)
     {
-        readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
+        readonly HttpClient _backendApiClient = httpClientFactory.CreateClient("backendApiClient");
         [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection")]
         [Function(nameof(StravaActivityFetcher))]
         public async Task<Activity?> Run([ServiceBusTrigger("activityFetchJobs", Connection = "ServicebusConnection")] ActivityFetchJob fetchJob)
         {
-            Thread.Sleep(1000);
-            var accessTokenResponse = await _apiClient.GetAsync($"{fetchJob.UserId}/accessToken");
+            var accessTokenResponse = await _backendApiClient.GetAsync($"{fetchJob.UserId}/accessToken");
+
+            if (!accessTokenResponse.IsSuccessStatusCode)
+            {
+                if (accessTokenResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    _logger.LogError("No access token found in database");
+                    return default;
+                }
+                else
+                {
+                    _logger.LogError("Failed to get access token {statusCode}", accessTokenResponse.StatusCode);
+                    return default;
+                }
+            }
+
             var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
 
             var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
