@@ -8,7 +8,7 @@ namespace Shared.Services;
 public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) where T : IDocument
 {
     private readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
-    const int maxConcurrentThreads = 50;
+    const int maxConcurrentThreads = 2;
     private readonly SemaphoreSlim semaphore = new(maxConcurrentThreads);
 
     public async Task<IEnumerable<T>> FetchWholeCollection()
