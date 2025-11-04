@@ -12,11 +12,8 @@ namespace API
 {
     public class GetAllSummitedPeaks(PeaksCollectionClient _peaksCollection,
         CollectionClient<SummitedPeak> _summitedPeakCollection,
-        CollectionClient<Shared.Models.User> _usersCollection,
         UserAuthenticationService _userAuthService)
     {
-        const int DefaultZoom = 11;
-
         [OpenApiOperation(tags: ["Peaks"])]
         [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
@@ -38,6 +35,8 @@ namespace API
 
             var summitedPeaksQuery = new QueryDefinition($"SELECT * FROM c where c.userId = '{user.Id}'");
             var summitedPeaks = await _summitedPeakCollection.ExecuteQueryAsync<SummitedPeak>(summitedPeaksQuery);
+            var summitedPeaksDict = summitedPeaks
+                .ToDictionary(g => g.PeakId, g => g);
             var summitedPeaksIds = summitedPeaks.Select(x => x.PeakId).ToImmutableHashSet();
 
             var peaks = await _peaksCollection.GetByIdsAsync(summitedPeaksIds);
@@ -48,6 +47,7 @@ namespace API
                 {
                     var p = x.ToFeature();
                     p.Properties.Add("summited", true.ToString());
+                    p.Properties.Add("summitsCount", summitedPeaksDict[x.Id].ActivityIds.Count.ToString());
                     return p;
                 })
             };
