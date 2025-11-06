@@ -16,7 +16,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         return await ExecuteQueryAsync<T>(new QueryDefinition("SELECT * FROM p"));
     }
 
-    public async Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition, QueryRequestOptions requestOptions = null)
+    public async Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition, QueryRequestOptions? requestOptions = null)
     {
         var documents = new List<S>();
 

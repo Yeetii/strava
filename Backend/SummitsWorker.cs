@@ -4,10 +4,10 @@ using Microsoft.Extensions.Logging;
 using Shared.Services;
 using Microsoft.Azure.Cosmos;
 using Shared.Geo;
-using System.Collections.Immutable;
 using Azure.Messaging.ServiceBus;
 using System.Text.Json;
 using Shared.Geo.SummitsCalculator;
+using BAMCIS.GeoJSON;
 
 namespace Backend;
 
@@ -60,16 +60,20 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     private async Task SendActivityProcessedEvent(Activity activity, IEnumerable<Feature> summitedPeaks)
     {
-        var processedEvent = new ActivityProcessedEvent(activity.Id, activity.UserId, summitedPeaks.Select(x => x.Id).ToArray(), summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "").ToArray());
+        var processedEvent = new ActivityProcessedEvent(activity.Id, activity.UserId, [.. summitedPeaks.Select(x => x.Id.Value)], [.. summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "")]);
         var json = JsonSerializer.Serialize(processedEvent);
         await _sbSender.SendMessageAsync(new ServiceBusMessage(json));
     }
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)
     {
-        var nearbyPoints = nearbyPeaks.Select(peak => (peak.Id, Coordinate.ParseGeoJsonCoordinate(peak.Geometry.Coordinates)));
-        var summitedPeakIds = _summitsCalculator.FindPointsNearRoute(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty);
-        var summitedPeaks = nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id));
+        var nearbyPoints = nearbyPeaks.Select(peak =>
+        {
+            var position = ((Point)peak.Geometry).Coordinates;
+            return (peak.Id.Value, new Coordinate(position.Longitude, position.Latitude));
+        });
+        var summitedPeakIds = _summitsCalculator.FindPointsNearRoute(nearbyPoints, activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToHashSet();
+        var summitedPeaks = nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id.Value));
         return summitedPeaks;
     }
 
@@ -86,7 +90,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                     Id = documentId,
                     Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName : "",
                     UserId = activity.UserId,
-                    PeakId = peak.Id,
+                    PeakId = peak.Id.Value,
                     Elevation = peak.Properties.TryGetValue("elevation", out var elevation) ? float.Parse(elevation) : null,
                     ActivityIds = []
                 };

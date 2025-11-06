@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Linq.Expressions;
 using Shared.Models;
 
 namespace Shared.Geo
@@ -25,18 +26,18 @@ namespace Shared.Geo
 
             return (x, y);
         }
-        public static (Coordinate nw, Coordinate se) TileIndexToWGS84(int x, int y, int z = DefaultZoom)
+        public static (Coordinate sw, Coordinate ne) TileIndexToWGS84(int x, int y, int z = DefaultZoom)
         {
-            double nwLon = TileXToLon(x, z);
-            double nwLat = TileYToLat(y, z);
+            double wLon = TileXToLon(x, z);
+            double nLat = TileYToLat(y, z);
 
-            double seLon = TileXToLon(x + 1, z);
-            double seLat = TileYToLat(y + 1, z);
+            double eLon = TileXToLon(x + 1, z);
+            double sLat = TileYToLat(y + 1, z);
 
-            var nw = new Coordinate(nwLon, nwLat);
-            var se = new Coordinate(seLon, seLat);
+            var sw = new Coordinate(wLon, sLat);
+            var ne = new Coordinate(eLon, nLat);
 
-            return (nw, se);
+            return (sw, ne);
         }
 
         private static double TileXToLon(int x, int z)

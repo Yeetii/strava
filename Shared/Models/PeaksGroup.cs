@@ -1,3 +1,5 @@
+using BAMCIS.GeoJSON;
+
 namespace Shared.Models
 {
     public class PeaksGroup

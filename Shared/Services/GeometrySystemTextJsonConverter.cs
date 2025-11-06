@@ -1,0 +1,45 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using BAMCIS.GeoJSON;
+
+namespace Shared.Services
+{
+    /// <summary>
+    /// System.Text.Json converter for BAMCIS.GeoJSON.Geometry
+    /// </summary>
+    public class GeometrySystemTextJsonConverter : JsonConverter<Geometry>
+    {
+        public override Geometry Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Null)
+            {
+                return null;
+            }
+
+            using var doc = JsonDocument.ParseValue(ref reader);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("type", out var typeProp))
+            {
+                throw new JsonException("Invalid geojson geometry object, does not have 'type' field.");
+            }
+
+            // Use BAMCIS.GeoJSON factory to deserialize
+            var json = root.GetRawText();
+            return Geometry.FromJson(json);
+        }
+
+        public override void Write(Utf8JsonWriter writer, Geometry value, JsonSerializerOptions options)
+        {
+            if (value == null)
+            {
+                writer.WriteNullValue();
+                return;
+            }
+            // Use BAMCIS.GeoJSON to serialize
+            var json = value.ToJson();
+            using var doc = JsonDocument.Parse(json);
+            doc.WriteTo(writer);
+        }
+    }
+}

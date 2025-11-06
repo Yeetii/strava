@@ -1,5 +1,6 @@
-using System.Text.Json.Serialization;
-using System.Text.Json;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using BAMCIS.GeoJSON;
 using Shared.Models;
 
 
@@ -29,9 +30,10 @@ namespace Shared.Services
             return await _client.GetAsync($"{mirrors[0]}?data={query}");
         }
 
-        public async Task<IEnumerable<RawPeaks>> GetPeaks(Coordinate southWest, Coordinate northEast)
+        public async Task<IEnumerable<Feature>> GetPeaks(Coordinate southWest, Coordinate northEast)
         {
-            string bbox = $"{northEast.Lat},{southWest.Lng},{southWest.Lat},{northEast.Lng}";
+            // Overpass expects bbox as: minLat,minLon,maxLat,maxLon
+            string bbox = $"{southWest.Lat},{southWest.Lng},{northEast.Lat},{northEast.Lng}";
             string query = $"[out:json][timeout:400];node[\"natural\"=\"peak\"][\"name\"]({bbox});out qt;";
             string encodedQuery = Uri.EscapeDataString(query);
 
@@ -39,42 +41,54 @@ namespace Shared.Services
             if (!response.IsSuccessStatusCode)
                 throw new Exception($"Could not get peaks, status code: {response.StatusCode}, {response.ReasonPhrase}");
             string rawPeaks = await response.Content.ReadAsStringAsync();
-            RootPeaks rootPeaks = JsonSerializer.Deserialize<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
-            return rootPeaks.Elements;
+            if (string.IsNullOrWhiteSpace(rawPeaks) || !(rawPeaks.TrimStart().StartsWith("{") || rawPeaks.TrimStart().StartsWith("[")))
+            {
+                // Log the raw response for debugging
+                Console.WriteLine("Overpass response was not valid JSON:");
+                Console.WriteLine(rawPeaks);
+                throw new Exception("Overpass API did not return valid JSON. Response may be HTML or an error page.");
+            }
+            RootPeaks rootPeaks = JsonConvert.DeserializeObject<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
+            return ConvertRawPeaksToFeatures(rootPeaks.Elements);
+        }
+
+        private static IEnumerable<Feature> ConvertRawPeaksToFeatures(IEnumerable<RawPeaks> rawPeaks)
+        {
+            foreach (var p in rawPeaks)
+            {
+                // Convert tags to simple dictionary, filtering out nulls
+                var properties = p.Tags
+                    .Where(kvp => kvp.Value.Type == JTokenType.String)
+                    .ToDictionary(
+                        kvp => kvp.Key,
+                        kvp => (dynamic)kvp.Value.ToString()
+                    );
+
+                var geometry = new Point(new Position(p.Lon, p.Lat));
+                var feature = new Feature(geometry, properties, null, new FeatureId(p.Id.ToString()));
+                
+                yield return feature;
+            }
         }
     }
 
     public class RootPeaks
     {
-        [JsonPropertyName("elements")]
+        [JsonProperty("elements")]
         public required List<RawPeaks> Elements { get; set; }
     }
     public class RawPeaks
     {
-        [JsonPropertyName("id")]
+        [JsonProperty("id")]
         public long Id { get; set; }
 
-        [JsonPropertyName("lat")]
+        [JsonProperty("lat")]
         public double Lat { get; set; }
 
-        [JsonPropertyName("lon")]
+        [JsonProperty("lon")]
         public double Lon { get; set; }
 
-        [JsonPropertyName("tags")]
-        public required Tags Tags { get; set; }
-    }
-    public class Tags
-    {
-        [JsonPropertyName("ele")]
-        public string? Elevation { get; set; }
-
-        [JsonPropertyName("name")]
-        public string? Name { get; set; }
-
-        [JsonPropertyName("name:sma")]
-        public string? NameSapmi { get; set; }
-
-        [JsonPropertyName("alt_name")]
-        public string? NameAlt { get; set; }
+        [JsonProperty("tags")]
+        public Dictionary<string, JToken> Tags { get; set; } = new();
     }
 }

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Net;
+using BAMCIS.GeoJSON;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -41,16 +42,16 @@ namespace API
 
             var peaks = await _peaksCollection.GetByIdsAsync(summitedPeaksIds);
 
-            var featureCollection = new FeatureCollection
+            var features = peaks.Select(x =>
             {
-                Features = peaks.Select(x =>
-                {
-                    var p = x.ToFeature();
-                    p.Properties.Add("summited", true.ToString());
-                    p.Properties.Add("summitsCount", summitedPeaksDict[x.Id].ActivityIds.Count.ToString());
-                    return p;
-                })
-            };
+                var feature = x.ToFeature();
+                // Add summit-specific properties
+                feature.Properties["summited"] = true.ToString();
+                feature.Properties["summitsCount"] = summitedPeaksDict[x.Id].ActivityIds.Count.ToString();
+                return feature;
+            }).ToList();
+
+            var featureCollection = new FeatureCollection(features);
 
             response.StatusCode = HttpStatusCode.OK;
             await response.WriteAsJsonAsync(featureCollection);

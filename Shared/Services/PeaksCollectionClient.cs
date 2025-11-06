@@ -20,22 +20,6 @@ public class PeaksCollectionClient(Container container, ILoggerFactory loggerFac
         return await ExecuteQueryAsync<StoredFeature>(new QueryDefinition(query));
     }
 
-    public async Task<IEnumerable<StoredFeature>> QueryByTwoPartitionKeys(int x, int y)
-    {
-        var queryDefinition = new QueryDefinition("SELECT * FROM c WHERE c.x = @x  AND c.y = @y")
-           .WithParameter("@x", x)
-           .WithParameter("@y", y);
-
-        var partitionKey = new PartitionKeyBuilder()
-            .Add(x)
-            .Add(y)
-            .Build();
-
-        var requestOptions = new QueryRequestOptions { PartitionKey = partitionKey, };
-
-        return await ExecuteQueryAsync<StoredFeature>(queryDefinition, requestOptions);
-    }
-
     public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int zoom = 11)
     {
         if (!keys.Any())
@@ -78,51 +62,17 @@ public class PeaksCollectionClient(Container container, ILoggerFactory loggerFac
 
     private async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom)
     {
-        var (nw, se) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
+        var (sw, ne) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
 
-        var rawPeaks = await _overpassClient.GetPeaks(nw, se);
-        var peaks = RawPeakToStoredFeature(x, y, rawPeaks);
+        var rawPeaks = await _overpassClient.GetPeaks(sw, ne);
+        var peaks = rawPeaks.Select(x => new StoredFeature(x));
         if (!peaks.Any())
         {
-            var emptyTileMarker = new StoredFeature
-            {
-                X = x,
-                Y = y,
-                Id = "empty-" + x + "-" + y,
-                Geometry = new Geometry
-                {
-                    Type = "Point",
-                    Coordinates = [0, 0]
-                }
-            };
+            var emptyTileMarker = new StoredFeature(x, y);
             peaks = [emptyTileMarker];
         }
         await BulkUpsert(peaks);
         return peaks;
-    }
-
-    private static IEnumerable<StoredFeature> RawPeakToStoredFeature(int x, int y, IEnumerable<RawPeaks> rawPeaks)
-    {
-        foreach (var p in rawPeaks)
-        {
-            var propertiesDirty = new Dictionary<string, string?>(){
-                    {"elevation", p.Tags.Elevation},
-                    {"name", p.Tags.Name},
-                    {"nameSapmi", p.Tags.NameSapmi},
-                    {"nameAlt", p.Tags.NameAlt}
-                };
-
-            var properties = propertiesDirty.Where(x => x.Value != null).ToDictionary();
-
-            yield return new StoredFeature
-            {
-                Id = p.Id.ToString(),
-                X = x,
-                Y = y,
-                Properties = properties,
-                Geometry = new Geometry { Coordinates = [p.Lon, p.Lat], Type = GeometryType.Point }
-            };
-        };
     }
 
     public Task<IEnumerable<StoredFeature>> FetchWholeCollection()
@@ -130,7 +80,7 @@ public class PeaksCollectionClient(Container container, ILoggerFactory loggerFac
         return _collectionClient.FetchWholeCollection();
     }
 
-    public Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition, QueryRequestOptions requestOptions = null)
+    public Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition, QueryRequestOptions? requestOptions = null)
     {
         return _collectionClient.ExecuteQueryAsync<S>(queryDefinition, requestOptions);
     }

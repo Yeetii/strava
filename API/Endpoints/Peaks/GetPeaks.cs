@@ -1,4 +1,5 @@
 using System.Net;
+using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -8,7 +9,7 @@ using Shared.Services;
 
 namespace API
 {
-    public class GetPeaks(CollectionClient<Shared.Models.User> _usersCollection, PeaksCollectionClient _peaksCollection, CollectionClient<SummitedPeak> _summitedPeakCollection)
+    public class GetPeaks(PeaksCollectionClient _peaksCollection)
     {
         const int MinRadiusMetres = (int)40E3;
         const int MaxRadiusMetres = (int)100E3;
@@ -22,25 +23,22 @@ namespace API
         [Function("GetPeaks")]
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks")] HttpRequestData req)
         {
-            var response = req.CreateResponse();
             // Probably won't need this in production if I move the API to the same domain as the frontend
-            response.Headers.Add("Access-Control-Allow-Credentials", "true");
             string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
             if (!ParseCenter(req, out Coordinate center))
             {
-                response.StatusCode = HttpStatusCode.BadRequest;
-                await response.WriteStringAsync("Invalid lat and lon, must be valid decimal degree format");
-                return response;
+                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                await badResponse.WriteStringAsync("Invalid lat and lon, must be valid decimal degree format");
+                return badResponse;
             }
             int radius = ParseRadius(req);
 
             var peaks = await _peaksCollection.GeoSpatialFetch(center, radius);
-            var featureCollection = new FeatureCollection
-            {
-                Features = peaks.Select(x => x.ToFeature())
-            };
+            var features = peaks.Select(x => x.ToFeature()).ToList();
+            var featureCollection = new FeatureCollection(features);
 
-            response.StatusCode = HttpStatusCode.OK;
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            response.Headers.Add("Access-Control-Allow-Credentials", "true");
             await response.WriteAsJsonAsync(featureCollection);
             return response;
         }
