@@ -31,5 +31,18 @@ public class CollectionClientBuilder(IServiceCollection services)
         });
         return this;
     }
+
+    public CollectionClientBuilder AddPathsCollection(string databaseName, string containerName)
+    {
+        services.AddSingleton(serviceProvider =>
+        {
+            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmosClient.GetContainer(databaseName, containerName);
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            var overpassClient = serviceProvider.GetRequiredService<OverpassClient>();
+            return new PathsCollectionClient(container, loggerFactory, overpassClient);
+        });
+        return this;
+    }
 }
 

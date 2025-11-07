@@ -1,5 +1,6 @@
 using System.Configuration;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker.Extensions.OpenApi.Extensions;
 using Microsoft.Extensions.Configuration;
@@ -25,7 +26,10 @@ var host = new HostBuilder()
             options.PropertyNameCaseInsensitive = true;
             options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
             options.Converters.Add(new GeometrySystemTextJsonConverter());
+            options.Converters.Add(new JsonStringEnumConverter());
+            options.Converters.Add(new FeatureIdJsonConverter());
         });
+
         services.AddSingleton(new SocketsHttpHandler());
         services.AddHttpClient();
 
@@ -47,6 +51,7 @@ var host = new HostBuilder()
 
         var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
         var peaksContainerName = configuration.GetValue<string>("PeaksContainer") ?? throw new ConfigurationErrorsException("No peaks container name found");
+        var pathsContainerName = configuration.GetValue<string>("PathsContainer") ?? throw new ConfigurationErrorsException("No paths container name found");
         var summitedPeaksContainerName = configuration.GetValue<string>("SummitedPeaksContainer") ?? throw new ConfigurationErrorsException("No summited peaks container name found");
         var activitiesContainerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new ConfigurationErrorsException("No activities container name found");
         var usersContainerName = configuration.GetValue<string>("UsersContainer") ?? throw new ConfigurationErrorsException("No users container name found");
@@ -54,6 +59,7 @@ var host = new HostBuilder()
 
         new CollectionClientBuilder(services)
             .AddPeaksCollection(databaseName, peaksContainerName)
+            .AddPathsCollection(databaseName, pathsContainerName)
             .AddCollection<SummitedPeak>(databaseName, summitedPeaksContainerName)
             .AddCollection<Shared.Models.User>(databaseName, usersContainerName)
             .AddCollection<Session>(databaseName, sessionsContainerName)

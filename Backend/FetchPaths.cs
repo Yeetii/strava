@@ -5,6 +5,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
 using Microsoft.Extensions.Logging;
 using BAMCIS.GeoJSON;
+using Shared.Services;
 
 namespace Backend
 {
@@ -35,57 +36,23 @@ namespace Backend
         public double Lon { get; set; }
     }
 
-    public class FetchPaths(ILogger<FetchPaths> _logger)
+    public class FetchPaths(ILogger<FetchPaths> _logger, OverpassClient _overpassClient)
     {
-        private const string overpassUri = "https://overpass-api.de/api/interpreter";
-        static readonly HttpClient client = new();
-
         [Function("FetchPaths")]
         [CosmosDBOutput("%CosmosDb%", "%PathsContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
         public async Task<IEnumerable<StoredFeature>> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = "fetchPaths/{bbox}")] HttpRequestData req, string bbox)
         {
-            // Fetch hiking trails and paths with geometry
-            string body = @"[out:json][timeout:300];" + "\n" +
-            $"            way[\"highway\"=\"path\"]({bbox});" + "\n" +
-            @"            out geom;" + "\n";
+            // Parse bbox string: expected format "minLat,minLon,maxLat,maxLon"
+            var parts = bbox.Split(',');
+            if (parts.Length != 4)
+                throw new ArgumentException("Bounding box must have 4 comma-separated values: minLat,minLon,maxLat,maxLon");
+            var southWest = new Coordinate(double.Parse(parts[1]), double.Parse(parts[0]));
+            var northEast = new Coordinate(double.Parse(parts[3]), double.Parse(parts[2]));
 
-            var buffer = System.Text.Encoding.UTF8.GetBytes(body);
-            var byteContent = new ByteArrayContent(buffer);
-            var response = await client.PostAsync(overpassUri, byteContent);
-            string rawPaths = await response.Content.ReadAsStringAsync();
-            
-            // Log the response if it's not JSON
-            if (!rawPaths.TrimStart().StartsWith("{"))
-            {
-                _logger.LogError("Overpass API returned non-JSON response: {Response}", rawPaths);
-                throw new Exception($"Overpass API error: {rawPaths}");
-            }
-            
-            RootPaths myDeserializedClass = JsonSerializer.Deserialize<RootPaths>(rawPaths) ?? throw new Exception("Could not deserialize");
-            _logger.LogInformation("Fetched {AmtPaths} paths", myDeserializedClass.Elements.Count);
-
-            var paths = myDeserializedClass.Elements
-                .Where(x => x.Geometry != null && x.Geometry.Any())
-                .Select(x =>
-                {
-                    // Convert tags to simple dictionary, filtering out nulls
-                    var properties = x.Tags
-                        .Where(kvp => kvp.Value.ValueKind == JsonValueKind.String)
-                        .ToDictionary(
-                            kvp => kvp.Key,
-                            kvp => (dynamic)kvp.Value.GetString()!
-                        );
-
-                    // Convert path geometry to GeoJSON LineString coordinates
-                    var coordinates = x.Geometry!.Select(node => new double[] { node.Lon, node.Lat }).ToList();
-
-                    var geometry = new LineString([.. coordinates.Select(coord => new Position(coord[0], coord[1]))]);
-                    var feature = new Feature(geometry, properties, null, new FeatureId(x.Id.ToString()));
-                    return new StoredFeature(feature);
-                });
-
-            return paths;
+            var features = await _overpassClient.GetPaths(southWest, northEast);
+            _logger.LogInformation("Fetched {Count} paths", features.Count());
+            return features.Select(f => new StoredFeature(f));
         }
     }
 }

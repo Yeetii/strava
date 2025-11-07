@@ -20,6 +20,8 @@ var host = new HostBuilder()
         {
             options.PropertyNameCaseInsensitive = true;
             options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            options.Converters.Add(new GeometrySystemTextJsonConverter());
+            options.Converters.Add(new FeatureIdJsonConverter());
         });
         services.AddSingleton(new SocketsHttpHandler());
         services.AddHttpClient(
