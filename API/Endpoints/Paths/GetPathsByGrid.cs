@@ -17,7 +17,7 @@ public class GetPathsByGrid(PathsCollectionClient _pathsCollectionClient)
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection))]
     [Function("GetPathsByGrid")]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "paths/{x}/{y}")] HttpRequestData req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "paths/{x}/{y}")] HttpRequestData req,
         int x, int y)
     {
         var paths = await _pathsCollectionClient.FetchByTiles([(x, y)]);
