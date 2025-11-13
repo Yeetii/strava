@@ -6,6 +6,7 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 
 namespace API.Endpoints
 {
@@ -16,6 +17,7 @@ namespace API.Endpoints
     {
         [OpenApiOperation(tags: ["User management"])]
         [OpenApiParameter(name: "userId", In = ParameterLocation.Path)]
+        [OpenApiSecurity("function_key", SecuritySchemeType.ApiKey, Name = "code", In = OpenApiSecurityLocationType.Query)]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.NoContent, contentType: "text/plain", bodyType: typeof(string), Description = "All data belonging to user has been removed")]
         [Function(nameof(RemoveUser))]
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Function, "delete", Route = "{userId}")] HttpRequestData req, string userId)

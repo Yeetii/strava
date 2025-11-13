@@ -1,10 +1,8 @@
+using BAMCIS.GeoJSON;
+using Shared.Geo;
+
 namespace Shared.Models;
 
-public class PeakInfo(string id, string name)
-{
-    public string Id { get; set; } = id;
-    public string Name { get; set; } = name;
-}
 public class Activity : IDocument
 {
     public required string Id { get; set; }
@@ -29,7 +27,41 @@ public class Activity : IDocument
     public float? MaxSpeed { get; set; }
     public string? Polyline { get; set; }
     public string? SummaryPolyline { get; set; }
-    public List<PeakInfo> Peaks { get; set; } = [];
+
+    public Feature ToFeature()
+    {
+        var properties = new Dictionary<string, dynamic>
+        {
+            ["id"] = Id,
+            ["userId"] = UserId,
+            ["name"] = Name,
+            ["description"] = Description,
+            ["distance"] = Distance,
+            ["movingTime"] = MovingTime,
+            ["elapsedTime"] = ElapsedTime,
+            ["calories"] = Calories,
+            ["totalElevationGain"] = TotalElevationGain,
+            ["elevHigh"] = ElevHigh,
+            ["elevLow"] = ElevLow,
+            ["sportType"] = SportType,
+            ["startDate"] = StartDate,
+            ["startDateLocal"] = StartDateLocal,
+            ["timezone"] = Timezone,
+            ["startLatLng"] = StartLatLng,
+            ["endLatLng"] = EndLatLng,
+            ["athleteCount"] = AthleteCount,
+            ["averageSpeed"] = AverageSpeed,
+            ["maxSpeed"] = MaxSpeed,
+        };
+        
+        var decodedPolyline = GeoSpatialFunctions.DecodePolyline(SummaryPolyline ?? "");
+        var positions = decodedPolyline.Select(coord => new Position(coord.Lng, coord.Lat)).ToList();
+        if (positions.Count < 1)
+        {
+            throw new Exception("Activity does not contain a valid polyline with multiple points.");
+        }
+        return new Feature(new LineString(positions), properties, null, new FeatureId(Id));
+    }
 }
 
 public static class SportTypes

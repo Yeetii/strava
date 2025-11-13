@@ -52,10 +52,10 @@ public static class GeoSpatialFunctions
 
 
     // This function was taken from https://gist.github.com/shinyzhu/4617989 and modified a little
-    public static IEnumerable<Coordinate> DecodePolyline(string encodedPoints)
+    public static IEnumerable<Coordinate> DecodePolyline(string? encodedPoints)
     {
         if (string.IsNullOrEmpty(encodedPoints))
-            throw new ArgumentNullException(nameof(encodedPoints));
+            yield break;
 
         int index = 0;
 
