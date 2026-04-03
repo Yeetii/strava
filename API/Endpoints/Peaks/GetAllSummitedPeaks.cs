@@ -14,6 +14,7 @@ namespace API
 {
     public class GetAllSummitedPeaks(PeaksCollectionClient _peaksCollection,
         CollectionClient<SummitedPeak> _summitedPeakCollection,
+        CollectionClient<Activity> _activityCollection,
         UserAuthenticationService _userAuthService)
     {
         [OpenApiOperation(tags: ["Peaks"])]
@@ -42,15 +43,36 @@ namespace API
             var summitedPeaksDict = summitedPeaks
                 .ToDictionary(g => g.PeakId, g => g);
             var summitedPeaksIds = summitedPeaks.Select(x => x.PeakId).ToImmutableHashSet();
+            var activityIds = summitedPeaks
+                .SelectMany(x => x.ActivityIds)
+                .Distinct()
+                .ToArray();
+            var activitiesById = activityIds.Length == 0
+                ? new Dictionary<string, Activity>()
+                : (await _activityCollection.GetByIdsAsync(activityIds)).ToDictionary(activity => activity.Id, activity => activity);
 
             var peaks = await _peaksCollection.GetByIdsAsync(summitedPeaksIds);
 
             var features = peaks.Select(x =>
             {
                 var feature = x.ToFeature();
+                var summitedPeak = summitedPeaksDict[x.Id];
+                var ascentDates = summitedPeak.ActivityIds
+                    .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
+                        ? activity.StartDateLocal
+                        : (DateTime?)null)
+                    .Where(date => date.HasValue)
+                    .Select(date => date!.Value)
+                    .OrderBy(date => date)
+                    .ToArray();
                 // Add summit-specific properties
-                feature.Properties["summited"] = true.ToString();
-                feature.Properties["summitsCount"] = summitedPeaksDict[x.Id].ActivityIds.Count.ToString();
+                feature.Properties["summited"] = true;
+                feature.Properties["summitsCount"] = summitedPeak.ActivityIds.Count;
+                if (ascentDates.Length > 0)
+                {
+                    feature.Properties["firstAscent"] = ascentDates.First().ToString("O");
+                    feature.Properties["lastAscent"] = ascentDates.Last().ToString("O");
+                }
                 return feature;
             }).ToList();
 
