@@ -6,6 +6,7 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using API.Utils;
 
 namespace API.Endpoints.Aggregates
 {
@@ -47,7 +48,9 @@ namespace API.Endpoints.Aggregates
             }
 
             var summitedPeaksQuery = new QueryDefinition($"SELECT * FROM c where c.userId = '{user.Id}'");
-            var summitedPeaks = (await _summitedPeaksCollection.ExecuteQueryAsync<SummitedPeak>(summitedPeaksQuery)).ToList();
+            var summitedPeaks = SummitedPeakConsolidator.ConsolidateByPeakId(
+                await _summitedPeaksCollection.ExecuteQueryAsync<SummitedPeak>(summitedPeaksQuery)
+            );
 
             var summitsStats = new SummitsStats
             {
