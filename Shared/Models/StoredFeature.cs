@@ -25,20 +25,27 @@ namespace Shared.Models
             Id = feature.Id.Value;
             Geometry = feature.Geometry;
             Properties = feature.Properties;
-            // Geometry = System.Text.Json.JsonSerializer.Deserialize<object>(feature.Geometry.ToJson());
-            var geometry = feature.Geometry;
-            // Get first coordinate from geometry to determine tile
-            var coordinate = geometry.Type switch
-            {
-                GeoJsonType.Point => new Coordinate(((Point)geometry).Coordinates.Longitude, ((Point)geometry).Coordinates.Latitude),
-                GeoJsonType.LineString => new Coordinate(((LineString)geometry).Coordinates.First().Longitude, ((LineString)geometry).Coordinates.First().Latitude),
-                GeoJsonType.Polygon => new Coordinate(((Polygon)geometry).Coordinates.First().Coordinates.First().Longitude, ((Polygon)geometry).Coordinates.First().Coordinates.First().Latitude),
-                _ => throw new NotSupportedException($"Geometry type {geometry.Type} not supported for tile calculation")
-            };
+            var coordinate = GetRepresentativeCoordinate(feature.Geometry);
 
             var (x, y) = SlippyTileCalculator.WGS84ToTileIndex(coordinate, 11);
             X = x;
             Y = y;
+        }
+
+        private static Coordinate GetRepresentativeCoordinate(Geometry geometry)
+        {
+            return geometry switch
+            {
+                Point point => new Coordinate(point.Coordinates.Longitude, point.Coordinates.Latitude),
+                LineString lineString => new Coordinate(lineString.Coordinates.First().Longitude, lineString.Coordinates.First().Latitude),
+                Polygon polygon => new Coordinate(
+                    polygon.Coordinates.First().Coordinates.First().Longitude,
+                    polygon.Coordinates.First().Coordinates.First().Latitude),
+                MultiPolygon multiPolygon => new Coordinate(
+                    multiPolygon.Coordinates.First().Coordinates.First().Coordinates.First().Longitude,
+                    multiPolygon.Coordinates.First().Coordinates.First().Coordinates.First().Latitude),
+                _ => throw new NotSupportedException($"Geometry type {geometry.Type} not supported for tile calculation")
+            };
         }
 
         [SetsRequiredMembers]

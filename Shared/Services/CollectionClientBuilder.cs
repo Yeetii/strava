@@ -44,5 +44,18 @@ public class CollectionClientBuilder(IServiceCollection services)
         });
         return this;
     }
+
+    public CollectionClientBuilder AddProtectedAreasCollection(string databaseName, string containerName)
+    {
+        services.AddSingleton(serviceProvider =>
+        {
+            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmosClient.GetContainer(databaseName, containerName);
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            var overpassClient = serviceProvider.GetRequiredService<OverpassClient>();
+            return new ProtectedAreasCollectionClient(container, loggerFactory, overpassClient);
+        });
+        return this;
+    }
 }
 

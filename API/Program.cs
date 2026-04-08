@@ -36,6 +36,7 @@ var host = new HostBuilder()
         services.AddSingleton(serviceProvider =>
         {
             SocketsHttpHandler socketsHttpHandler = serviceProvider.GetRequiredService<SocketsHttpHandler>();
+
             CosmosClientOptions cosmosClientOptions = new()
             {
                 HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
@@ -51,6 +52,7 @@ var host = new HostBuilder()
 
         var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
         var peaksContainerName = configuration.GetValue<string>("PeaksContainer") ?? throw new ConfigurationErrorsException("No peaks container name found");
+        var protectedAreasContainerName = configuration.GetValue<string>("ProtectedAreasContainer") ?? throw new ConfigurationErrorsException("No protected areas container name found");
         var pathsContainerName = configuration.GetValue<string>("PathsContainer") ?? throw new ConfigurationErrorsException("No paths container name found");
         var summitedPeaksContainerName = configuration.GetValue<string>("SummitedPeaksContainer") ?? throw new ConfigurationErrorsException("No summited peaks container name found");
         var activitiesContainerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new ConfigurationErrorsException("No activities container name found");
@@ -59,6 +61,7 @@ var host = new HostBuilder()
 
         new CollectionClientBuilder(services)
             .AddPeaksCollection(databaseName, peaksContainerName)
+            .AddProtectedAreasCollection(databaseName, protectedAreasContainerName)
             .AddPathsCollection(databaseName, pathsContainerName)
             .AddCollection<SummitedPeak>(databaseName, summitedPeaksContainerName)
             .AddCollection<Shared.Models.User>(databaseName, usersContainerName)
