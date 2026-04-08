@@ -34,6 +34,7 @@ import sqlite3
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from tqdm import tqdm
 
@@ -49,17 +50,22 @@ def _content_type(data: bytes) -> str:
     return 'application/octet-stream'
 
 
-def _upload_tile(container_client, blob_name: str, data: bytes, overwrite: bool) -> None:
+def _upload_tile(container_client, blob_name: str, data: bytes, overwrite: bool) -> bool:
+    """Upload a single tile blob. Returns True if uploaded, False if skipped (already exists)."""
     content_settings = ContentSettings(
         content_type=_content_type(data),
         cache_control='public, max-age=86400',
     )
-    container_client.upload_blob(
-        name=blob_name,
-        data=data,
-        content_settings=content_settings,
-        overwrite=overwrite,
-    )
+    try:
+        container_client.upload_blob(
+            name=blob_name,
+            data=data,
+            content_settings=content_settings,
+            overwrite=overwrite,
+        )
+        return True
+    except ResourceExistsError:
+        return False
 
 
 def extract_and_upload(
@@ -131,7 +137,9 @@ def extract_and_upload(
                     for f in done_futures:
                         name = futures.pop(f)
                         try:
-                            f.result()
+                            uploaded = f.result()
+                            if not uploaded:
+                                skipped += 1
                         except Exception as exc:
                             print(f'\nError uploading {name}: {exc}', file=sys.stderr)
                             errors += 1
@@ -141,7 +149,9 @@ def extract_and_upload(
             for future in as_completed(futures):
                 name = futures[future]
                 try:
-                    future.result()
+                    uploaded = future.result()
+                    if not uploaded:
+                        skipped += 1
                 except Exception as exc:
                     print(f'\nError uploading {name}: {exc}', file=sys.stderr)
                     errors += 1
