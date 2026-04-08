@@ -2,7 +2,7 @@
 param location string = resourceGroup().location
 
 @description('Name of the storage account (3-24 lowercase alphanumeric)')
-param storageAccountName string = 'basemaptiles${uniqueString(resourceGroup().id)}'
+param storageAccountName string = 'stbasemaptiles'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
