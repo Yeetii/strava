@@ -5,7 +5,6 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
-using Shared.Geo;
 using Shared.Models;
 using Shared.Services;
 
@@ -49,7 +48,8 @@ public class GetVisitedPaths(
 
         var pathIds = visitedPathsList.Select(vp => vp.PathId).Distinct().ToList();
         var pathFeatures = (await pathsCollectionClient.GetByIdsAsync(pathIds))
-            .ToDictionary(sf => sf.Id, sf => sf.ToFeature());
+            .GroupBy(sf => sf.Id)
+            .ToDictionary(g => g.Key, g => g.First().ToFeature());
 
         var allActivityIds = visitedPathsList.SelectMany(vp => vp.ActivityIds).Distinct().ToArray();
         var activitiesById = allActivityIds.Length == 0
