@@ -21,7 +21,6 @@ namespace Backend
 
             foreach (var activity in updatedActivities)
             {
-                var message = new ServiceBusMessage(activity.Id);
                 await Task.WhenAll(
                     summitsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)),
                     pathsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)),

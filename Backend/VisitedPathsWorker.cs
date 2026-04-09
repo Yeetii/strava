@@ -76,8 +76,8 @@ public class VisitedPathsWorker(
             documents.Add(doc);
         }
 
-        await _visitedPathsCollection.BulkUpsert(documents);
         await actions.RenewMessageLockAsync(job);
+        await _visitedPathsCollection.BulkUpsert(documents);
         await actions.CompleteMessageAsync(job);
     }
 

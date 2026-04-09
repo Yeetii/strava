@@ -77,8 +77,8 @@ public class VisitedAreasWorker(
             documents.Add(doc);
         }
 
-        await _visitedAreasCollection.BulkUpsert(documents);
         await actions.RenewMessageLockAsync(job);
+        await _visitedAreasCollection.BulkUpsert(documents);
         await actions.CompleteMessageAsync(job);
     }
 
