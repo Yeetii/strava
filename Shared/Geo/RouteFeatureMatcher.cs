@@ -33,6 +33,19 @@ public static class RouteFeatureMatcher
         return false;
     }
 
+    public static bool IsPointInGeometry(Coordinate point, Geometry geometry)
+    {
+        foreach (var ring in GetOuterRings(geometry))
+        {
+            var bounds = GetBounds(ring, 0);
+            if (Contains(bounds, point) && PointInPolygon(point, ring))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static bool RouteIntersectsPolygon(string polylineString, Geometry geometry)
     {
         var routeCoordinates = GeoSpatialFunctions.DecodePolyline(polylineString).ToList();

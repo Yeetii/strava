@@ -4,19 +4,16 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
-using Shared.Geo;
 using Shared.Models;
 using Shared.Services;
 
 namespace API.Endpoints.ProtectedAreas;
 
 public class GetVisitedProtectedAreas(
-    ProtectedAreasCollectionClient protectedAreasCollectionClient,
+    CollectionClient<VisitedArea> visitedAreasCollection,
     CollectionClient<Activity> activityCollection,
     UserAuthenticationService userAuthService)
 {
-    private const int ProtectedAreaTileZoom = 8;
-
     private sealed record VisitedProtectedAreaDto(
         string AreaId,
         string Name,
@@ -44,68 +41,42 @@ public class GetVisitedProtectedAreas(
             return response;
         }
 
-        var activities = await activityCollection.ExecuteQueryAsync<Activity>(
+        var visitedAreas = await visitedAreasCollection.ExecuteQueryAsync<VisitedArea>(
             new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId").WithParameter("@userId", user.Id)
         );
+        var visitedAreasList = visitedAreas.ToList();
 
-        var activityList = activities
-            .Where(activity => !string.IsNullOrWhiteSpace(activity.Polyline ?? activity.SummaryPolyline))
-            .ToList();
+        var allActivityIds = visitedAreasList.SelectMany(va => va.ActivityIds).Distinct().ToArray();
+        var activitiesById = allActivityIds.Length == 0
+            ? new Dictionary<string, Activity>()
+            : (await activityCollection.GetByIdsAsync(allActivityIds)).ToDictionary(a => a.Id, a => a);
 
-        var tileIndices = activityList
-            .SelectMany(activity => SlippyTileCalculator.TileIndicesByLine(
-                GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty),
-                ProtectedAreaTileZoom))
-            .Distinct()
-            .ToList();
-
-        var protectedAreas = (await protectedAreasCollectionClient.FetchByTiles(tileIndices, ProtectedAreaTileZoom))
-            .Select(area => area.ToFeature())
-            .ToDictionary(feature => feature.Id.Value, feature => feature);
-
-        var visitedAreas = new Dictionary<string, HashSet<string>>();
-        foreach (var activity in activityList)
-        {
-            var polyline = activity.Polyline ?? activity.SummaryPolyline ?? string.Empty;
-            foreach (var area in protectedAreas.Values)
+        var result = visitedAreasList
+            .Select(va =>
             {
-                if (RouteFeatureMatcher.RouteIntersectsPolygon(polyline, area.Geometry))
-                {
-                    if (!visitedAreas.TryGetValue(area.Id.Value, out var activityIds))
-                    {
-                        activityIds = [];
-                        visitedAreas[area.Id.Value] = activityIds;
-                    }
-
-                    activityIds.Add(activity.Id);
-                }
-            }
-        }
-
-        var activitiesById = activityList.ToDictionary(activity => activity.Id, activity => activity);
-        var result = visitedAreas
-            .Select(entry =>
-            {
-                var area = protectedAreas[entry.Key];
-                var sortedDates = entry.Value
-                    .Select(activityId => activitiesById[activityId].StartDateLocal)
-                    .OrderBy(date => date)
-                    .Select(date => date.ToString("O"))
+                var sortedDates = va.ActivityIds
+                    .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
+                        ? activity.StartDateLocal
+                        : (DateTime?)null)
+                    .Where(d => d.HasValue)
+                    .Select(d => d!.Value)
+                    .OrderBy(d => d)
+                    .Select(d => d.ToString("O"))
                     .ToArray();
 
                 return new VisitedProtectedAreaDto(
-                    entry.Key,
-                    area.Properties.TryGetValue("name", out var name) ? name?.ToString() ?? entry.Key : entry.Key,
-                    area.Properties.TryGetValue("areaType", out var areaType) ? areaType?.ToString() ?? "protected_area" : "protected_area",
-                    entry.Value.Count,
-                    entry.Value.Order().ToArray(),
+                    va.AreaId,
+                    va.Name,
+                    va.AreaType,
+                    va.ActivityIds.Count,
+                    va.ActivityIds.Order().ToArray(),
                     sortedDates,
-                    area.Properties.TryGetValue("wikidata", out var wikidata) ? wikidata?.ToString() : null,
-                    area.Properties.TryGetValue("wikimedia_commons", out var wikimediaCommons) ? wikimediaCommons?.ToString() : null
+                    va.Wikidata,
+                    va.WikimediaCommons
                 );
             })
-            .OrderByDescending(area => area.TimesVisited)
-            .ThenBy(area => area.Name)
+            .OrderByDescending(a => a.TimesVisited)
+            .ThenBy(a => a.Name)
             .ToArray();
 
         response.StatusCode = HttpStatusCode.OK;

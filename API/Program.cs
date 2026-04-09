@@ -1,6 +1,7 @@
 using System.Configuration;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker.Extensions.OpenApi.Extensions;
 using Microsoft.Extensions.Configuration;
@@ -58,6 +59,8 @@ var host = new HostBuilder()
         var activitiesContainerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new ConfigurationErrorsException("No activities container name found");
         var usersContainerName = configuration.GetValue<string>("UsersContainer") ?? throw new ConfigurationErrorsException("No users container name found");
         var sessionsContainerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No sessions container name found");
+        var visitedPathsContainerName = configuration.GetValue<string>("VisitedPathsContainer") ?? throw new ConfigurationErrorsException("No visited paths container name found");
+        var visitedAreasContainerName = configuration.GetValue<string>("VisitedAreasContainer") ?? throw new ConfigurationErrorsException("No visited areas container name found");
 
         new CollectionClientBuilder(services)
             .AddPeaksCollection(databaseName, peaksContainerName)
@@ -66,7 +69,9 @@ var host = new HostBuilder()
             .AddCollection<SummitedPeak>(databaseName, summitedPeaksContainerName)
             .AddCollection<Shared.Models.User>(databaseName, usersContainerName)
             .AddCollection<Session>(databaseName, sessionsContainerName)
-            .AddCollection<Activity>(databaseName, activitiesContainerName);
+            .AddCollection<Activity>(databaseName, activitiesContainerName)
+            .AddCollection<VisitedPath>(databaseName, visitedPathsContainerName)
+            .AddCollection<VisitedArea>(databaseName, visitedAreasContainerName);
 
         services.AddScoped(serviceProvider =>
         {
@@ -83,6 +88,11 @@ var host = new HostBuilder()
         {
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             return new OverpassClient(httpClientFactory);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
+            return new ServiceBusClient(sbConnectionString);
         });
         services.AddScoped(serviceProvider =>
         {

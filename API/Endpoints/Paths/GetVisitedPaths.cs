@@ -13,11 +13,10 @@ namespace API.Endpoints.Paths;
 
 public class GetVisitedPaths(
     PathsCollectionClient pathsCollectionClient,
+    CollectionClient<VisitedPath> visitedPathsCollection,
     CollectionClient<Activity> activityCollection,
     UserAuthenticationService userAuthService)
 {
-    private const int PathTileZoom = 11;
-
     [OpenApiOperation(tags: ["Paths"])]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
@@ -36,61 +35,43 @@ public class GetVisitedPaths(
             return response;
         }
 
-        var activities = await activityCollection.ExecuteQueryAsync<Activity>(
+        var visitedPaths = await visitedPathsCollection.ExecuteQueryAsync<VisitedPath>(
             new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId").WithParameter("@userId", user.Id)
         );
+        var visitedPathsList = visitedPaths.ToList();
 
-        var activityList = activities
-            .Where(activity => !string.IsNullOrWhiteSpace(activity.Polyline ?? activity.SummaryPolyline))
-            .ToList();
-
-        var tileIndices = activityList
-            .SelectMany(activity => SlippyTileCalculator.TileIndicesByLine(
-                GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty),
-                PathTileZoom))
-            .Distinct()
-            .ToList();
-
-        var pathFeatures = (await pathsCollectionClient.FetchByTiles(tileIndices, PathTileZoom)).Features
-            .ToDictionary(feature => feature.Id.Value, feature => feature);
-
-        var visitedPathActivityIds = new Dictionary<string, HashSet<string>>();
-        foreach (var activity in activityList)
+        if (visitedPathsList.Count == 0)
         {
-            var polyline = activity.Polyline ?? activity.SummaryPolyline ?? string.Empty;
-            foreach (var path in pathFeatures.Values)
-            {
-                if (path.Geometry is not LineString line)
-                {
-                    continue;
-                }
-
-                var lineCoordinates = line.Coordinates.Select(position => new Coordinate(position.Longitude, position.Latitude));
-                if (RouteFeatureMatcher.RouteIntersectsLine(polyline, lineCoordinates))
-                {
-                    if (!visitedPathActivityIds.TryGetValue(path.Id.Value, out var activityIds))
-                    {
-                        activityIds = [];
-                        visitedPathActivityIds[path.Id.Value] = activityIds;
-                    }
-
-                    activityIds.Add(activity.Id);
-                }
-            }
+            response.StatusCode = HttpStatusCode.OK;
+            await response.WriteAsJsonAsync(new FeatureCollection([]));
+            return response;
         }
 
-        var activitiesById = activityList.ToDictionary(activity => activity.Id, activity => activity);
-        var features = visitedPathActivityIds
-            .Select(entry =>
-            {
-                var feature = pathFeatures[entry.Key];
-                feature.Properties["timesVisited"] = entry.Value.Count;
-                feature.Properties["activityIds"] = entry.Value.Order().ToArray();
+        var pathIds = visitedPathsList.Select(vp => vp.PathId).Distinct().ToList();
+        var pathFeatures = (await pathsCollectionClient.GetByIdsAsync(pathIds))
+            .ToDictionary(sf => sf.Id, sf => sf.ToFeature());
 
-                var sortedDates = entry.Value
-                    .Select(activityId => activitiesById[activityId].StartDateLocal)
-                    .OrderBy(date => date)
-                    .Select(date => date.ToString("O"))
+        var allActivityIds = visitedPathsList.SelectMany(vp => vp.ActivityIds).Distinct().ToArray();
+        var activitiesById = allActivityIds.Length == 0
+            ? new Dictionary<string, Activity>()
+            : (await activityCollection.GetByIdsAsync(allActivityIds)).ToDictionary(a => a.Id, a => a);
+
+        var features = visitedPathsList
+            .Where(vp => pathFeatures.ContainsKey(vp.PathId))
+            .Select(vp =>
+            {
+                var feature = pathFeatures[vp.PathId];
+                feature.Properties["timesVisited"] = vp.ActivityIds.Count;
+                feature.Properties["activityIds"] = vp.ActivityIds.Order().ToArray();
+
+                var sortedDates = vp.ActivityIds
+                    .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
+                        ? activity.StartDateLocal
+                        : (DateTime?)null)
+                    .Where(d => d.HasValue)
+                    .Select(d => d!.Value)
+                    .OrderBy(d => d)
+                    .Select(d => d.ToString("O"))
                     .ToArray();
 
                 feature.Properties["visitedDates"] = sortedDates;
@@ -102,7 +83,7 @@ public class GetVisitedPaths(
 
                 return feature;
             })
-            .OrderByDescending(feature => feature.Properties.TryGetValue("timesVisited", out var timesVisited) ? (int)timesVisited : 0)
+            .OrderByDescending(f => f.Properties.TryGetValue("timesVisited", out var timesVisited) ? (int)timesVisited : 0)
             .ToList();
 
         response.StatusCode = HttpStatusCode.OK;
