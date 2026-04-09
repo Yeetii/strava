@@ -8,9 +8,9 @@ using System.Globalization;
 
 namespace Shared.Services
 {
-    public class OverpassClient(IHttpClientFactory httpClientFactory)
+    public class OverpassClient(HttpClient httpClient)
     {
-        readonly HttpClient _client = httpClientFactory.CreateClient("overpassClient");
+        readonly HttpClient _client = httpClient;
 
         private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
 

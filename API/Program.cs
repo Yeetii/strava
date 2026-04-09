@@ -63,17 +63,11 @@ var host = new HostBuilder()
             var httpClient = serviceProvider.GetRequiredService<HttpClient>();
             return new AuthenticationApi(httpClient, configuration);
         });
-        services.AddHttpClient(
-            "overpassClient",
+        services.AddHttpClient<OverpassClient>(
             client =>
             {
                 client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
             });
-        services.AddSingleton(serviceProvider =>
-        {
-            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
-            return new OverpassClient(httpClientFactory);
-        });
         services.AddSingleton(serviceProvider =>
         {
             var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");

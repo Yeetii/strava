@@ -49,8 +49,7 @@ var host = new HostBuilder()
             var stravaClient = httpClientFactory.CreateClient("stravaClient");
             return new ActivitiesApi(stravaClient);
         });
-        services.AddHttpClient(
-            "overpassClient",
+        services.AddHttpClient<OverpassClient>(
             client =>
             {
                 client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
