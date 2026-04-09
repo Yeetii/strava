@@ -1,5 +1,3 @@
-using System.Globalization;
-using BAMCIS.GeoJSON;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using Shared.Geo;
@@ -35,66 +33,38 @@ public class ProtectedAreasCollectionClient(Container container, ILoggerFactory 
     private async Task<IEnumerable<StoredFeature>> FetchByTile(int x, int y, int zoom)
     {
         var existingDocuments = (await QueryTile(x, y, zoom)).ToList();
-        if (existingDocuments.Any(document => document.Id == GetTileMarkerId(x, y)))
+        if (existingDocuments.Count != 0)
         {
-            return existingDocuments;
+            return existingDocuments.Where(doc => !IsTileMarker(doc));
         }
 
         var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
         var fetchedFeatures = (await _overpassClient.GetProtectedAreas(southWest, northEast))
-            .Select(feature => new StoredFeature(feature))
+            .Select(feature => new StoredFeature(feature, zoom))
             .ToList();
 
-        fetchedFeatures.Add(CreateTileMarker(x, y, southWest, northEast));
+        if (fetchedFeatures.Count == 0)
+        {
+            fetchedFeatures.Add(new StoredFeature(x, y, zoom));
+        }
         await BulkUpsert(fetchedFeatures);
         return fetchedFeatures;
     }
 
     private async Task<IEnumerable<StoredFeature>> QueryTile(int x, int y, int zoom)
     {
-        var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
-        var polygon = CreateTilePolygonLiteral(southWest, northEast);
-        var query = new QueryDefinition($"SELECT * FROM c WHERE ST_INTERSECTS(c.geometry, {polygon})");
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE c.X = @x AND c.Y = @y AND c.Zoom = @zoom"
+        )
+            .WithParameter("@x", x)
+            .WithParameter("@y", y)
+            .WithParameter("@zoom", zoom);
         return await ExecuteQueryAsync<StoredFeature>(query);
-    }
-
-    private static string CreateTilePolygonLiteral(Coordinate southWest, Coordinate northEast)
-    {
-        var west = southWest.Lng.ToString(CultureInfo.InvariantCulture);
-        var south = southWest.Lat.ToString(CultureInfo.InvariantCulture);
-        var east = northEast.Lng.ToString(CultureInfo.InvariantCulture);
-        var north = northEast.Lat.ToString(CultureInfo.InvariantCulture);
-
-        return $"{{\"type\":\"Polygon\",\"coordinates\":[[[{west},{south}],[{east},{south}],[{east},{north}],[{west},{north}],[{west},{south}]]]}}";
-    }
-
-    private static StoredFeature CreateTileMarker(int x, int y, Coordinate southWest, Coordinate northEast)
-    {
-        var center = new Position(
-            (southWest.Lng + northEast.Lng) / 2,
-            (southWest.Lat + northEast.Lat) / 2
-        );
-        return new StoredFeature
-        {
-            Id = GetTileMarkerId(x, y),
-            X = x,
-            Y = y,
-            Geometry = new Point(center, null),
-            Properties = new Dictionary<string, dynamic>
-            {
-                ["tileMarker"] = true,
-            },
-        };
-    }
-
-    private static string GetTileMarkerId(int x, int y)
-    {
-        return $"protected-area-tile-{x}-{y}";
     }
 
     private static bool IsTileMarker(StoredFeature document)
     {
-        return document.Id.StartsWith("protected-area-tile-");
+        return document.Id.StartsWith("empty-");
     }
 
     public Task<IEnumerable<StoredFeature>> FetchWholeCollection()
