@@ -1,21 +1,32 @@
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 
 namespace Backend
 {
-    public class QueueSummitJobs()
+    public class QueueActivityJobs(ServiceBusClient serviceBusClient)
     {
-        [ServiceBusOutput("calculateSummitsJobs", Connection = "ServicebusConnection")]
-        [Function(nameof(QueueSummitJobs))]
-        public IEnumerable<string> Run(
+        [Function(nameof(QueueActivityJobs))]
+        public async Task Run(
             [CosmosDBTrigger(
             databaseName: "%CosmosDb%",
-            containerName:"%ActivitiesContainer%",
+            containerName: "%ActivitiesContainer%",
             Connection = "CosmosDBConnection",
-            LeaseContainerPrefix = "activitySummits",
+            LeaseContainerPrefix = "activityJobs",
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<Activity> updatedActivities)
         {
-            return updatedActivities.Select(x => x.Id);
+            var summitsSender = serviceBusClient.CreateSender("calculateSummitsJobs");
+            var pathsSender = serviceBusClient.CreateSender("calculateVisitedPathsJobs");
+            var areasSender = serviceBusClient.CreateSender("calculateVisitedAreasJobs");
+
+            foreach (var activity in updatedActivities)
+            {
+                await Task.WhenAll(
+                    summitsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)),
+                    pathsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)),
+                    areasSender.SendMessageAsync(new ServiceBusMessage(activity.Id))
+                );
+            }
         }
     }
 }
