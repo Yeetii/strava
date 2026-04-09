@@ -1,5 +1,4 @@
 using System.Net;
-using BAMCIS.GeoJSON;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -11,15 +10,22 @@ using Shared.Services;
 namespace API.Endpoints.Paths;
 
 public class GetVisitedPaths(
-    PathsCollectionClient pathsCollectionClient,
     CollectionClient<VisitedPath> visitedPathsCollection,
     CollectionClient<Activity> activityCollection,
     UserAuthenticationService userAuthService)
 {
+    private sealed record VisitedPathDto(
+        string PathId,
+        string? Name,
+        string? Type,
+        int TimesVisited,
+        string[] ActivityIds,
+        string[] Dates);
+
     [OpenApiOperation(tags: ["Paths"])]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
-        Description = "A GeoJson FeatureCollection of paths the authenticated user has been on.")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<VisitedPathDto>),
+        Description = "A list of paths the authenticated user has been on.")]
     [Function(nameof(GetVisitedPaths))]
     public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "visitedPaths")] HttpRequestData req)
     {
@@ -39,31 +45,14 @@ public class GetVisitedPaths(
         );
         var visitedPathsList = visitedPaths.ToList();
 
-        if (visitedPathsList.Count == 0)
-        {
-            response.StatusCode = HttpStatusCode.OK;
-            await response.WriteAsJsonAsync(new FeatureCollection([]));
-            return response;
-        }
-
-        var pathIds = visitedPathsList.Select(vp => vp.PathId).Distinct().ToList();
-        var pathFeatures = (await pathsCollectionClient.GetByIdsAsync(pathIds))
-            .GroupBy(sf => sf.Id)
-            .ToDictionary(g => g.Key, g => g.First().ToFeature());
-
         var allActivityIds = visitedPathsList.SelectMany(vp => vp.ActivityIds).Distinct().ToArray();
         var activitiesById = allActivityIds.Length == 0
             ? new Dictionary<string, Activity>()
             : (await activityCollection.GetByIdsAsync(allActivityIds)).ToDictionary(a => a.Id, a => a);
 
-        var features = visitedPathsList
-            .Where(vp => pathFeatures.ContainsKey(vp.PathId))
+        var result = visitedPathsList
             .Select(vp =>
             {
-                var feature = pathFeatures[vp.PathId];
-                feature.Properties["timesVisited"] = vp.ActivityIds.Count;
-                feature.Properties["activityIds"] = vp.ActivityIds.Order().ToArray();
-
                 var sortedDates = vp.ActivityIds
                     .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
                         ? activity.StartDateLocal
@@ -74,20 +63,20 @@ public class GetVisitedPaths(
                     .Select(d => d.ToString("O"))
                     .ToArray();
 
-                feature.Properties["visitedDates"] = sortedDates;
-                if (sortedDates.Length > 0)
-                {
-                    feature.Properties["firstVisited"] = sortedDates[0];
-                    feature.Properties["lastVisited"] = sortedDates[^1];
-                }
-
-                return feature;
+                return new VisitedPathDto(
+                    vp.PathId,
+                    vp.Name,
+                    vp.Type,
+                    vp.ActivityIds.Count,
+                    vp.ActivityIds.Order().ToArray(),
+                    sortedDates
+                );
             })
-            .OrderByDescending(f => f.Properties.TryGetValue("timesVisited", out var timesVisited) ? (int)timesVisited : 0)
-            .ToList();
+            .OrderByDescending(p => p.TimesVisited)
+            .ToArray();
 
         response.StatusCode = HttpStatusCode.OK;
-        await response.WriteAsJsonAsync(new FeatureCollection(features));
+        await response.WriteAsJsonAsync(result);
         return response;
     }
 }

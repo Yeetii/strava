@@ -39,7 +39,7 @@ public class VisitedAreasWorker(
         ServiceBusReceivedMessage job,
         ServiceBusMessageActions actions,
         List<Activity> activitiesList,
-        List<Feature> nearbyAreas)
+        List<StoredFeature> nearbyAreas)
     {
         var activityId = job.Body.ToString();
         var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
@@ -57,8 +57,9 @@ public class VisitedAreasWorker(
         _logger.LogInformation("Activity {ActivityId} visits {AreaCount} areas", activityId, visitedAreas.Count);
 
         var documents = new List<VisitedArea>();
-        foreach (var (areaId, areaFeature) in visitedAreas)
+        foreach (var area in visitedAreas)
         {
+            var areaId = area.LogicalId;
             var documentId = activity.UserId + "-" + areaId;
             var partitionKey = new PartitionKey(activity.UserId);
             var doc = await _visitedAreasCollection.GetByIdMaybe(documentId, partitionKey)
@@ -67,10 +68,10 @@ public class VisitedAreasWorker(
                     Id = documentId,
                     UserId = activity.UserId,
                     AreaId = areaId,
-                    Name = areaFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() ?? areaId : areaId,
-                    AreaType = areaFeature.Properties.TryGetValue("areaType", out var areaType) ? areaType?.ToString() ?? "protected_area" : "protected_area",
-                    Wikidata = areaFeature.Properties.TryGetValue("wikidata", out var wikidata) ? wikidata?.ToString() : null,
-                    WikimediaCommons = areaFeature.Properties.TryGetValue("wikimedia_commons", out var wmc) ? wmc?.ToString() : null,
+                    Name = area.Properties.TryGetValue("name", out var name) ? name?.ToString() ?? areaId : areaId,
+                    AreaType = area.Properties.TryGetValue("areaType", out var areaType) ? areaType?.ToString() ?? "protected_area" : "protected_area",
+                    Wikidata = area.Properties.TryGetValue("wikidata", out var wikidata) ? wikidata?.ToString() : null,
+                    WikimediaCommons = area.Properties.TryGetValue("wikimedia_commons", out var wmc) ? wmc?.ToString() : null,
                     ActivityIds = []
                 };
             doc.ActivityIds.Add(activity.Id);
@@ -82,12 +83,12 @@ public class VisitedAreasWorker(
         await actions.CompleteMessageAsync(job);
     }
 
-    private static IEnumerable<(string areaId, Feature feature)> FindVisitedAreas(List<Coordinate> activityPoints, IEnumerable<Feature> areas)
+    private static IEnumerable<StoredFeature> FindVisitedAreas(List<Coordinate> activityPoints, IEnumerable<StoredFeature> areas)
     {
         foreach (var area in areas)
         {
             if (ActivityVisitsArea(activityPoints, area.Geometry))
-                yield return (area.Id.Value, area);
+                yield return area;
         }
     }
 
@@ -130,7 +131,7 @@ public class VisitedAreasWorker(
         }
     }
 
-    private async Task<IEnumerable<Feature>> FetchNearbyAreas(IEnumerable<Activity> activities)
+    private async Task<IEnumerable<StoredFeature>> FetchNearbyAreas(IEnumerable<Activity> activities)
     {
         var tileIndices = new HashSet<(int x, int y)>();
         foreach (var activity in activities)
@@ -145,6 +146,6 @@ public class VisitedAreasWorker(
 
         var areas = await _protectedAreasCollection.FetchByTiles(tileIndices, AreaTileZoom);
         _logger.LogInformation("Found {Count} nearby areas", areas.Count());
-        return areas.Select(a => a.ToFeature());
+        return areas;
     }
 }

@@ -55,13 +55,14 @@ public class VisitedPathsWorker(
         }
 
         var activityPoints = GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToList();
-        var visitedPathIds = FindVisitedPaths(activityPoints, nearbyPaths).ToList();
+        var visitedPaths = FindVisitedPaths(activityPoints, nearbyPaths).ToList();
 
-        _logger.LogInformation("Activity {ActivityId} visits {PathCount} paths", activityId, visitedPathIds.Count);
+        _logger.LogInformation("Activity {ActivityId} visits {PathCount} paths", activityId, visitedPaths.Count);
 
         var documents = new List<VisitedPath>();
-        foreach (var pathId in visitedPathIds)
+        foreach (var pathFeature in visitedPaths)
         {
+            var pathId = pathFeature.Id.Value;
             var documentId = activity.UserId + "-" + pathId;
             var partitionKey = new PartitionKey(activity.UserId);
             var doc = await _visitedPathsCollection.GetByIdMaybe(documentId, partitionKey)
@@ -70,6 +71,8 @@ public class VisitedPathsWorker(
                     Id = documentId,
                     UserId = activity.UserId,
                     PathId = pathId,
+                    Name = pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
+                    Type = pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
                     ActivityIds = []
                 };
             doc.ActivityIds.Add(activity.Id);
@@ -81,7 +84,7 @@ public class VisitedPathsWorker(
         await actions.CompleteMessageAsync(job);
     }
 
-    private static IEnumerable<string> FindVisitedPaths(List<Coordinate> activityPoints, IEnumerable<Feature> paths)
+    private static IEnumerable<Feature> FindVisitedPaths(List<Coordinate> activityPoints, IEnumerable<Feature> paths)
     {
         foreach (var path in paths)
         {
@@ -93,7 +96,7 @@ public class VisitedPathsWorker(
                 .ToList();
 
             if (ActivityVisitsPath(activityPoints, pathPoints))
-                yield return path.Id.Value;
+                yield return path;
         }
     }
 

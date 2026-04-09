@@ -9,12 +9,16 @@ namespace Shared.Models
     public class StoredFeature : IStoredInGrid, IDocument
     {
         public required string Id { get; set; }
+        public string? FeatureId { get; set; }
         public required int X { get; set; }
         public required int Y { get; set; }
         public int Zoom { get; set; }
         public IDictionary<string, dynamic> Properties { get; set; } = new Dictionary<string, dynamic>();
         [JsonConverter(typeof(GeometrySystemTextJsonConverter))]
         public required Geometry Geometry { get; set; }
+
+        [JsonIgnore]
+        public string LogicalId => FeatureId ?? Id;
 
         public StoredFeature()
         {
@@ -24,6 +28,7 @@ namespace Shared.Models
         public StoredFeature(Feature feature, int zoom = 11)
         {
             Id = feature.Id.Value;
+            FeatureId = feature.Id.Value;
             Geometry = feature.Geometry;
             Properties = feature.Properties;
             var coordinate = GeometryCentroidHelper.GetCentroid(feature.Geometry);
@@ -35,12 +40,27 @@ namespace Shared.Models
         }
 
         [SetsRequiredMembers]
+        public StoredFeature(Feature feature, int x, int y, int zoom, bool storePerTile)
+        {
+            var featureId = feature.Id.Value;
+
+            Id = storePerTile ? $"{featureId}:{zoom}:{x}:{y}" : featureId;
+            FeatureId = featureId;
+            Geometry = feature.Geometry;
+            Properties = feature.Properties;
+            X = x;
+            Y = y;
+            Zoom = zoom;
+        }
+
+        [SetsRequiredMembers]
         public StoredFeature(int x, int y, int zoom = 11)
         {
             X = x;
             Y = y;
             Zoom = zoom;
-            Id = "empty-" + x + "-" + y;
+            Id = $"empty-{zoom}-{x}-{y}";
+            FeatureId = Id;
             var emptyGeometry = new Point(new Position(0, 0));
             Geometry = emptyGeometry;
         }
@@ -58,7 +78,7 @@ namespace Shared.Models
                 Geometry,
                 propertiesCopy,
                 null,
-                new FeatureId(Id)
+                new FeatureId(LogicalId)
             );
         }
     }

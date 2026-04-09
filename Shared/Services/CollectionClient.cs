@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Shared.Services;
 
-public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) where T : IDocument
+public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) : ICollectionClient<T> where T : IDocument
 {
     private readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
     const int maxConcurrentThreads = 2;
