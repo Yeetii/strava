@@ -1,39 +1,129 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using BAMCIS.GeoJSON;
+using Microsoft.Extensions.Logging;
 using Shared.Geo;
 using Shared.Models;
 using System.Globalization;
+using System.Net;
 
 
 namespace Shared.Services
 {
-    public class OverpassClient(HttpClient httpClient)
+    public class OverpassClient(HttpClient httpClient, ILogger<OverpassClient> logger)
     {
         readonly HttpClient _client = httpClient;
+        readonly ILogger<OverpassClient> _logger = logger;
+        private const int MaxAttemptsPerMirror = 2;
+        private const int DefaultMaxConcurrentRequests = 2;
+        private static readonly TimeSpan BaseThrottleDelay = TimeSpan.FromMilliseconds(750);
+        private static readonly int MaxConcurrentRequests = GetMaxConcurrentRequests();
+        private static readonly SemaphoreSlim RequestSemaphore = new(MaxConcurrentRequests, MaxConcurrentRequests);
+        private static readonly HttpStatusCode[] ThrottledStatusCodes = [
+            HttpStatusCode.TooManyRequests,
+            HttpStatusCode.BadGateway,
+            HttpStatusCode.ServiceUnavailable,
+            HttpStatusCode.GatewayTimeout
+        ];
 
-        private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
+        private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass.maprva.org/api/interpreter"];
 
 
         private async Task<HttpResponseMessage> GetAsyncMultipleMirrors(string query, CancellationToken cancellationToken = default)
         {
-            foreach (var mirror in mirrors)
+            await RequestSemaphore.WaitAsync(cancellationToken);
+
+            Exception? lastException = null;
+            HttpStatusCode? lastStatusCode = null;
+            var mirrorsInAttemptOrder = (string[])mirrors.Clone();
+            Random.Shared.Shuffle(mirrorsInAttemptOrder);
+
+            try
             {
-                try
+                foreach (var mirror in mirrorsInAttemptOrder)
                 {
-                    var response = await _client.GetAsync($"{mirror}?data={query}", cancellationToken);
-                    if (response.IsSuccessStatusCode)
+                    for (var attempt = 1; attempt <= MaxAttemptsPerMirror; attempt++)
                     {
-                        return response;
+                        try
+                        {
+                            var response = await _client.GetAsync($"{mirror}?data={query}", cancellationToken);
+                            if (response.IsSuccessStatusCode)
+                            {
+                                return response;
+                            }
+
+                            lastStatusCode = response.StatusCode;
+
+                            if (!IsThrottledStatusCode(response.StatusCode))
+                            {
+                                response.Dispose();
+                                break;
+                            }
+
+                            var delay = GetRetryDelay(response, attempt);
+                            _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on attempt {Attempt}. Retrying after {DelayMs}ms.", mirror, (int)response.StatusCode, attempt, delay.TotalMilliseconds);
+                            response.Dispose();
+                            await Task.Delay(delay, cancellationToken);
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            lastException = ex;
+                            _logger.LogWarning(ex, "Overpass mirror {Mirror} failed on attempt {Attempt}.", mirror, attempt);
+                            break;
+                        }
                     }
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception) { }
+
+                if (lastException != null)
+                    throw lastException;
+
+                throw new HttpRequestException($"All Overpass mirrors failed or throttled. Last status code: {(int?)lastStatusCode}");
             }
-            return await _client.GetAsync($"{mirrors[0]}?data={query}", cancellationToken);
+            finally
+            {
+                RequestSemaphore.Release();
+            }
+        }
+
+        private static int GetMaxConcurrentRequests()
+        {
+            var configuredValue = Environment.GetEnvironmentVariable("OverpassMaxConcurrency");
+
+            return int.TryParse(configuredValue, out var maxConcurrency) && maxConcurrency > 0
+                ? maxConcurrency
+                : DefaultMaxConcurrentRequests;
+        }
+
+        private static bool IsThrottledStatusCode(HttpStatusCode statusCode)
+        {
+            return ThrottledStatusCodes.Contains(statusCode);
+        }
+
+        private static TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)
+        {
+            var retryAfter = response.Headers.RetryAfter;
+
+            if (retryAfter?.Delta is TimeSpan delta)
+                return ClampRetryDelay(delta);
+
+            if (retryAfter?.Date is DateTimeOffset date)
+                return ClampRetryDelay(date - DateTimeOffset.UtcNow);
+
+            var exponentialDelay = TimeSpan.FromMilliseconds(BaseThrottleDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
+            return ClampRetryDelay(exponentialDelay);
+        }
+
+        private static TimeSpan ClampRetryDelay(TimeSpan delay)
+        {
+            if (delay <= TimeSpan.Zero)
+                return BaseThrottleDelay;
+
+            var maxDelay = TimeSpan.FromSeconds(8);
+            return delay <= maxDelay ? delay : maxDelay;
         }
 
         private static string CreateBoundingBox(Coordinate southWest, Coordinate northEast)

@@ -13,7 +13,9 @@
     "extensions": {
         "serviceBus": {
             "maxAutoLockRenewalDuration": "00:10:00",
-            "maxMessageBatchSize": 200
+            "maxConcurrentCalls": 1,
+            "prefetchCount": 0,
+            "maxMessageBatchSize": 20
         }
     }
 }
