@@ -11,7 +11,7 @@ namespace Backend
     {
         [HttpResult]
         public required HttpResponseData Response { get; set;}
-        [ServiceBusOutput("activityFetchJobs", Connection = "ServicebusConnection")]
+        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServicebusConnection")]
         public ActivityFetchJob? ActivityFetchJob { get; set; }
     }
     public class StravaWebhook(ILogger<StravaWebhook> _logger, IConfiguration _configuration)

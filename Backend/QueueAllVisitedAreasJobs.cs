@@ -13,7 +13,7 @@ namespace Backend
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
         {
             var activities = await _cosmosClient.FetchWholeCollection();
-            var sender = serviceBusClient.CreateSender("calculateVisitedAreasJobs");
+            var sender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs);
             foreach (var activity in activities)
             {
                 await sender.SendMessageAsync(new ServiceBusMessage(activity.Id));

@@ -9,9 +9,9 @@ namespace Backend
     public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection)
     {
         readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
-        [ServiceBusOutput("activitiesfetchjobs", Connection = "ServicebusConnection")]
+        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, Connection = "ServicebusConnection")]
         [Function(nameof(StravaActivitiesFetcher))]
-        public async Task<ActivitiesFetchJob?> Run([ServiceBusTrigger("activitiesfetchjobs", Connection = "ServicebusConnection")] ActivitiesFetchJob fetchJob)
+        public async Task<ActivitiesFetchJob?> Run([ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, Connection = "ServicebusConnection")] ActivitiesFetchJob fetchJob)
         {
             var accessTokenResponse = await _apiClient.GetAsync($"{fetchJob.UserId}/accessToken");
             var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();

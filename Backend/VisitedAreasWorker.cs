@@ -19,7 +19,7 @@ public class VisitedAreasWorker(
 
     [Function(nameof(VisitedAreasWorker))]
     public async Task Run(
-        [ServiceBusTrigger("calculateVisitedAreasJobs", Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
+        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
         ServiceBusReceivedMessage[] jobs,
         ServiceBusMessageActions actions)
     {

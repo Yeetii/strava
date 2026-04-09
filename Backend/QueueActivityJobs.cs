@@ -15,9 +15,9 @@ namespace Backend
             LeaseContainerPrefix = "activityJobs",
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<Activity> updatedActivities)
         {
-            var summitsSender = serviceBusClient.CreateSender("calculateSummitsJobs");
-            var pathsSender = serviceBusClient.CreateSender("calculateVisitedPathsJobs");
-            var areasSender = serviceBusClient.CreateSender("calculateVisitedAreasJobs");
+            var summitsSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.CalculateSummitsJobs);
+            var pathsSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs);
+            var areasSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs);
 
             foreach (var activity in updatedActivities)
             {

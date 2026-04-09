@@ -11,7 +11,7 @@ public class ActivityEventWorker(UserAuthenticationService _userAuthService, ILo
 
     [Function(nameof(ActivityEventWorker))]
     [SignalROutput(HubName = "peakshunters")]
-    public async Task<IEnumerable<SignalRMessageAction>> Run([ServiceBusTrigger("activityprocessed", Connection = "ServicebusConnection", IsBatched = true)] IEnumerable<ActivityProcessedEvent> processedEvents)
+    public async Task<IEnumerable<SignalRMessageAction>> Run([ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityProcessed, Connection = "ServicebusConnection", IsBatched = true)] IEnumerable<ActivityProcessedEvent> processedEvents)
     {
         _logger.LogInformation("Publishing {amnEvents} signalR activity processed events", processedEvents.Count());
         var messages = new List<SignalRMessageAction>();

@@ -17,9 +17,9 @@ public class QueueActivityJobs(
 {
     private static readonly Dictionary<string, string> JobTypeToQueue = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["summits"] = "calculateSummitsJobs",
-        ["visitedPaths"] = "calculateVisitedPathsJobs",
-        ["visitedAreas"] = "calculateVisitedAreasJobs",
+        ["summits"] = Shared.Constants.ServiceBusConfig.CalculateSummitsJobs,
+        ["visitedPaths"] = Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs,
+        ["visitedAreas"] = Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs,
     };
 
     [OpenApiOperation(tags: ["Queue"])]

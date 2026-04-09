@@ -7,7 +7,7 @@ namespace Backend
 {
     public class QueueAllSummitJobs(CollectionClient<Activity> _cosmosClient)
     {
-        [ServiceBusOutput("calculateSummitsJobs", Connection = "ServicebusConnection")]
+        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.CalculateSummitsJobs, Connection = "ServicebusConnection")]
         [Function(nameof(QueueAllSummitJobs))]
         public async Task<IEnumerable<string>> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
