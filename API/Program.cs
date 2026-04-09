@@ -1,27 +1,22 @@
-using System.Configuration;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker.Extensions.OpenApi.Extensions;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
+using Shared.Constants;
 using System.Net.Http.Headers;
+using Microsoft.Extensions.Configuration;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
-    .ConfigureAppConfiguration((hostingContext, config) =>
-    {
-        config.AddEnvironmentVariables();
-    })
     .ConfigureServices((hostingContext, services) =>
     {
         var configuration = hostingContext.Configuration;
-
         services.Configure<JsonSerializerOptions>(options =>
         {
             options.PropertyNameCaseInsensitive = true;
@@ -51,27 +46,17 @@ var host = new HostBuilder()
             return new CosmosClient(cosmosDbConnectionString, cosmosClientOptions);
         });
 
-        var databaseName = configuration.GetValue<string>("CosmosDb") ?? throw new ConfigurationErrorsException("No database name found");
-        var peaksContainerName = configuration.GetValue<string>("PeaksContainer") ?? throw new ConfigurationErrorsException("No peaks container name found");
-        var protectedAreasContainerName = configuration.GetValue<string>("ProtectedAreasContainer") ?? throw new ConfigurationErrorsException("No protected areas container name found");
-        var pathsContainerName = configuration.GetValue<string>("PathsContainer") ?? throw new ConfigurationErrorsException("No paths container name found");
-        var summitedPeaksContainerName = configuration.GetValue<string>("SummitedPeaksContainer") ?? throw new ConfigurationErrorsException("No summited peaks container name found");
-        var activitiesContainerName = configuration.GetValue<string>("ActivitiesContainer") ?? throw new ConfigurationErrorsException("No activities container name found");
-        var usersContainerName = configuration.GetValue<string>("UsersContainer") ?? throw new ConfigurationErrorsException("No users container name found");
-        var sessionsContainerName = configuration.GetValue<string>("SessionsContainer") ?? throw new ConfigurationErrorsException("No sessions container name found");
-        var visitedPathsContainerName = configuration.GetValue<string>("VisitedPathsContainer") ?? throw new ConfigurationErrorsException("No visited paths container name found");
-        var visitedAreasContainerName = configuration.GetValue<string>("VisitedAreasContainer") ?? throw new ConfigurationErrorsException("No visited areas container name found");
 
         new CollectionClientBuilder(services)
-            .AddPeaksCollection(databaseName, peaksContainerName)
-            .AddProtectedAreasCollection(databaseName, protectedAreasContainerName)
-            .AddPathsCollection(databaseName, pathsContainerName)
-            .AddCollection<SummitedPeak>(databaseName, summitedPeaksContainerName)
-            .AddCollection<Shared.Models.User>(databaseName, usersContainerName)
-            .AddCollection<Session>(databaseName, sessionsContainerName)
-            .AddCollection<Activity>(databaseName, activitiesContainerName)
-            .AddCollection<VisitedPath>(databaseName, visitedPathsContainerName)
-            .AddCollection<VisitedArea>(databaseName, visitedAreasContainerName);
+            .AddPeaksCollection(DatabaseConfig.CosmosDb, DatabaseConfig.PeaksContainer)
+            .AddProtectedAreasCollection(DatabaseConfig.CosmosDb, DatabaseConfig.ProtectedAreasContainer)
+            .AddPathsCollection(DatabaseConfig.CosmosDb, DatabaseConfig.PathsContainer)
+            .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
+            .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)
+            .AddCollection<Session>(DatabaseConfig.CosmosDb, DatabaseConfig.SessionsContainer)
+            .AddCollection<Activity>(DatabaseConfig.CosmosDb, DatabaseConfig.ActivitiesContainer)
+            .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
+            .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer);
 
         services.AddScoped(serviceProvider =>
         {
