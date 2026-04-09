@@ -9,7 +9,7 @@ public abstract class TiledCollectionClient(Container container, ILoggerFactory 
 {
     protected readonly OverpassClient _overpassClient = overpassClient;
 
-    protected async Task<IEnumerable<StoredFeature>> QueryByListOfKeys(IEnumerable<(int x, int y)> keys, int zoom)
+    protected async Task<IEnumerable<StoredFeature>> QueryByListOfKeys(IEnumerable<(int x, int y)> keys, int zoom, CancellationToken cancellationToken = default)
     {
         var keyConditions = string.Join(" OR ", keys.Select((key, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
         var queryDefinition = new QueryDefinition($"SELECT * FROM c WHERE ({keyConditions}) AND c.zoom = @zoom")
@@ -22,7 +22,7 @@ public abstract class TiledCollectionClient(Container container, ILoggerFactory 
                 .WithParameter($"@y{index}", y);
             index++;
         }
-        return await ExecuteQueryAsync<StoredFeature>(queryDefinition);
+        return await ExecuteQueryAsync<StoredFeature>(queryDefinition, cancellationToken: cancellationToken);
     }
 
     protected static IEnumerable<(int x, int y)> GetMissingTiles(IEnumerable<StoredFeature> documents, IEnumerable<(int x, int y)> keys)
@@ -31,17 +31,17 @@ public abstract class TiledCollectionClient(Container container, ILoggerFactory 
         return keys.Where(p => !keysInDocuments.Contains((p.x, p.y)));
     }
 
-    protected abstract Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom);
+    protected abstract Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, CancellationToken cancellationToken = default);
 
-    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int zoom = 11)
+    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int zoom = 11, CancellationToken cancellationToken = default)
     {
         if (!keys.Any())
             return [];
 
-        var docs = (await QueryByListOfKeys(keys, zoom)).ToList();
+        var docs = (await QueryByListOfKeys(keys, zoom, cancellationToken)).ToList();
         var missingTiles = GetMissingTiles(docs, keys);
         foreach (var (x, y) in missingTiles)
-            docs.AddRange(await FetchMissingTile(x, y, zoom));
+            docs.AddRange(await FetchMissingTile(x, y, zoom, cancellationToken));
 
         return docs.Where(d => !d.Id.StartsWith("empty-"));
     }

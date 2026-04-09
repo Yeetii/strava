@@ -19,13 +19,15 @@ namespace API.Endpoints.Peaks
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
             Description = "A GeoJson FeatureCollection with peaks.")]
         [Function(nameof(GetPeaksByGrid))]
-        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks/{x}/{y}")] HttpRequestData req, int x, int y)
+        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks/{x}/{y}")] HttpRequestData req, int x, int y, CancellationToken cancellationToken)
         {
             int zoom = ParseZoom(req);
-            var peaks = await _peaksCollection.FetchByTiles([(x, y)], zoom);
+            var peaks = await _peaksCollection.FetchByTiles([(x, y)], zoom, cancellationToken);
 
             var features = peaks.Select(p => p.ToFeature()).ToList();
             var featureCollection = new FeatureCollection(features);
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(featureCollection);

@@ -18,11 +18,13 @@ public class GetActivitiesByGrid(PathsCollectionClient _pathsCollectionClient)
     [Function("GetActivitiesByGrid")]
     public async Task<HttpResponseData> Run(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "activities/{x}/{y}")] HttpRequestData req,
-        int x, int y)
+        int x, int y,
+        CancellationToken cancellationToken)
     {
-        var activities = await _pathsCollectionClient.FetchByTiles([(x, y)]);
+        var activities = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
         var features = activities.Features.Select(f => f).ToList();
         var featureCollection = new FeatureCollection(features);
+        cancellationToken.ThrowIfCancellationRequested();
         var response = req.CreateResponse(HttpStatusCode.OK);
         response.Headers.Add("Access-Control-Allow-Credentials", "true");
         await response.WriteAsJsonAsync(featureCollection);

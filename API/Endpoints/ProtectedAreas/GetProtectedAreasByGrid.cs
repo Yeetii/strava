@@ -19,11 +19,13 @@ public class GetProtectedAreasByGrid(ProtectedAreasCollectionClient protectedAre
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
         Description = "A GeoJson FeatureCollection with nature reserves and national parks.")]
     [Function(nameof(GetProtectedAreasByGrid))]
-    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "protectedAreas/{x}/{y}")] HttpRequestData req, int x, int y)
+    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "protectedAreas/{x}/{y}")] HttpRequestData req, int x, int y, CancellationToken cancellationToken)
     {
         var zoom = ParseZoom(req);
-        var protectedAreas = await protectedAreasCollectionClient.FetchByTiles([(x, y)], zoom);
+        var protectedAreas = await protectedAreasCollectionClient.FetchByTiles([(x, y)], zoom, cancellationToken);
         var featureCollection = new FeatureCollection(protectedAreas.Select(area => area.ToFeature()).ToList());
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(featureCollection);

@@ -21,7 +21,7 @@ namespace API
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
             Description = "A GeoJson FeatureCollection with peaks. If there is a valid session cookie, the peaks are populated with the summited property.")]
         [Function("GetPeaks")]
-        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks")] HttpRequestData req)
+        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks")] HttpRequestData req, CancellationToken cancellationToken)
         {
             // Probably won't need this in production if I move the API to the same domain as the frontend
             string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
@@ -33,9 +33,11 @@ namespace API
             }
             int radius = ParseRadius(req);
 
-            var peaks = await _peaksCollection.GeoSpatialFetch(center, radius);
+            var peaks = await _peaksCollection.GeoSpatialFetch(center, radius, cancellationToken);
             var features = peaks.Select(x => x.ToFeature()).ToList();
             var featureCollection = new FeatureCollection(features);
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             var response = req.CreateResponse(HttpStatusCode.OK);
             response.Headers.Add("Access-Control-Allow-Credentials", "true");

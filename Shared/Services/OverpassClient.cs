@@ -15,21 +15,25 @@ namespace Shared.Services
         private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
 
 
-        private async Task<HttpResponseMessage> GetAsyncMultipleMirrors(string query)
+        private async Task<HttpResponseMessage> GetAsyncMultipleMirrors(string query, CancellationToken cancellationToken = default)
         {
             foreach (var mirror in mirrors)
             {
                 try
                 {
-                    var response = await _client.GetAsync($"{mirror}?data={query}");
+                    var response = await _client.GetAsync($"{mirror}?data={query}", cancellationToken);
                     if (response.IsSuccessStatusCode)
                     {
                         return response;
                     }
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch (Exception) { }
             }
-            return await _client.GetAsync($"{mirrors[0]}?data={query}");
+            return await _client.GetAsync($"{mirrors[0]}?data={query}", cancellationToken);
         }
 
         private static string CreateBoundingBox(Coordinate southWest, Coordinate northEast)
@@ -40,17 +44,17 @@ namespace Shared.Services
             );
         }
 
-        public async Task<IEnumerable<Feature>> GetPeaks(Coordinate southWest, Coordinate northEast)
+        public async Task<IEnumerable<Feature>> GetPeaks(Coordinate southWest, Coordinate northEast, CancellationToken cancellationToken = default)
         {
             // Overpass expects bbox as: minLat,minLon,maxLat,maxLon
             string bbox = CreateBoundingBox(southWest, northEast);
             string query = $"[out:json][timeout:400];node[\"natural\"=\"peak\"][\"name\"]({bbox});out qt;";
             string encodedQuery = Uri.EscapeDataString(query);
 
-            var response = await GetAsyncMultipleMirrors(encodedQuery);
+            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 throw new Exception($"Could not get peaks, status code: {response.StatusCode}, {response.ReasonPhrase}");
-            string rawPeaks = await response.Content.ReadAsStringAsync();
+            string rawPeaks = await response.Content.ReadAsStringAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(rawPeaks) || !(rawPeaks.TrimStart().StartsWith("{") || rawPeaks.TrimStart().StartsWith("[")))
             {
                 // Log the raw response for debugging
@@ -81,16 +85,16 @@ namespace Shared.Services
             }
         }
 
-        public async Task<IEnumerable<Feature>> GetPaths(Coordinate southWest, Coordinate northEast)
+        public async Task<IEnumerable<Feature>> GetPaths(Coordinate southWest, Coordinate northEast, CancellationToken cancellationToken = default)
         {
             string bbox = CreateBoundingBox(southWest, northEast);
             string query = $"[out:json][timeout:400];way[\"highway\"=\"path\"]({bbox});out geom;";
             string encodedQuery = Uri.EscapeDataString(query);
 
-            var response = await GetAsyncMultipleMirrors(encodedQuery);
+            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 throw new Exception($"Could not get paths, status code: {response.StatusCode}, {response.ReasonPhrase}");
-            string rawPaths = await response.Content.ReadAsStringAsync();
+            string rawPaths = await response.Content.ReadAsStringAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(rawPaths) || !(rawPaths.TrimStart().StartsWith("{") || rawPaths.TrimStart().StartsWith("[")))
             {
                 Console.WriteLine("Overpass response was not valid JSON:");
@@ -119,7 +123,7 @@ namespace Shared.Services
             }
         }
 
-        public async Task<IEnumerable<Feature>> GetProtectedAreas(Coordinate southWest, Coordinate northEast)
+        public async Task<IEnumerable<Feature>> GetProtectedAreas(Coordinate southWest, Coordinate northEast, CancellationToken cancellationToken = default)
         {
             string bbox = CreateBoundingBox(southWest, northEast);
             string query = string.Join(string.Empty,
@@ -132,11 +136,11 @@ namespace Shared.Services
             );
             string encodedQuery = Uri.EscapeDataString(query);
 
-            var response = await GetAsyncMultipleMirrors(encodedQuery);
+            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 throw new Exception($"Could not get protected areas, status code: {response.StatusCode}, {response.ReasonPhrase}");
 
-            string rawAreas = await response.Content.ReadAsStringAsync();
+            string rawAreas = await response.Content.ReadAsStringAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(rawAreas) || !(rawAreas.TrimStart().StartsWith("{") || rawAreas.TrimStart().StartsWith("[")))
             {
                 Console.WriteLine("Overpass response was not valid JSON:");
