@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using BAMCIS.GeoJSON;
+using Shared.Geo;
 using Shared.Models;
 using System.Globalization;
 
@@ -189,10 +190,14 @@ namespace Shared.Services
                 return null;
             }
 
-            var polygons = members
-                .Where(member => member.Role == "outer")
-                .Select(member => BuildPolygonFromPath(member.Geometry))
-                .OfType<Polygon>()
+            var outerSegments = members
+                .Where(member => member.Role == "outer" && member.Geometry != null && member.Geometry.Count >= 2)
+                .Select(member => member.Geometry!.Select(node => new Position(node.Lon, node.Lat)));
+
+            var rings = PolygonRingAssembler.AssembleRings(outerSegments);
+
+            var polygons = rings
+                .Select(ring => new Polygon([ring], null))
                 .ToList();
 
             return polygons.Count switch
