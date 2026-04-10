@@ -32,11 +32,16 @@ var host = new HostBuilder()
         services.AddSingleton(serviceProvider =>
         {
             SocketsHttpHandler socketsHttpHandler = serviceProvider.GetRequiredService<SocketsHttpHandler>();
+            var configuredConnectionMode = configuration.GetValue<string>("CosmosConnectionMode");
+            var connectionMode = Enum.TryParse<ConnectionMode>(configuredConnectionMode, ignoreCase: true, out var parsedConnectionMode)
+                ? parsedConnectionMode
+                : ConnectionMode.Direct;
 
             CosmosClientOptions cosmosClientOptions = new()
             {
                 HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
                 SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
+                ConnectionMode = connectionMode,
                 AllowBulkExecution = true,
                 MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(1),
                 MaxRetryAttemptsOnRateLimitedRequests = 5
