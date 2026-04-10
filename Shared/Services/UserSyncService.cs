@@ -76,17 +76,8 @@ public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
 
     private static UserSyncPayload ToPayload(IEnumerable<UserSyncItem> items)
     {
-        var settings = items
-            .Where(item => item.Category == UserSyncItem.SettingsCategory)
-            .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => new UserSyncEntry(item.Key, item.UpdatedAt, item.Deleted, ParseRawJson(item.ValueJson)))
-            .ToArray();
-
-        var files = items
-            .Where(item => item.Category == UserSyncItem.FilesCategory)
-            .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => new UserSyncEntry(item.Key, item.UpdatedAt, item.Deleted, ParseRawJson(item.ValueJson)))
-            .ToArray();
+        var settings = ToEntries(items, UserSyncItem.SettingsCategory);
+        var files = ToEntries(items, UserSyncItem.FilesCategory);
 
         return new UserSyncPayload(settings, files);
     }
@@ -110,5 +101,14 @@ public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
 
         using var document = JsonDocument.Parse(valueJson);
         return document.RootElement.Clone();
+    }
+
+    private static UserSyncEntry[] ToEntries(IEnumerable<UserSyncItem> items, string category)
+    {
+        return items
+            .Where(item => item.Category == category)
+            .OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => new UserSyncEntry(item.Key, item.UpdatedAt, item.Deleted, ParseRawJson(item.ValueJson)))
+            .ToArray();
     }
 }

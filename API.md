@@ -28,6 +28,65 @@ Sets a `session` cookie (HttpOnly, SameSite=None, Secure, MaxAge=30 days). No re
 
 ---
 
+## User Sync
+
+### `GET /userSync`
+
+🔒 Authenticated
+
+Returns the authenticated user's synced Trailscope snapshot.
+
+**Response** `200 OK` `application/json`
+```ts
+{
+  settings: Array<{
+    key: string
+    updatedAt: number
+    deleted: boolean
+    value: unknown | null
+  }>
+  files: Array<{
+    key: string
+    updatedAt: number
+    deleted: boolean
+    value: unknown | null
+  }>
+}
+```
+
+Conflict rule: newest `updatedAt` wins.
+
+### `POST /userSync`
+
+🔒 Authenticated
+
+Accepts local sync changes and returns the merged authoritative snapshot.
+
+**Request body** `application/json`
+```ts
+{
+  settings: Array<{
+    key: string
+    updatedAt: number
+    deleted: boolean
+    value: unknown | null
+  }>
+  files: Array<{
+    key: string
+    updatedAt: number
+    deleted: boolean
+    value: unknown | null
+  }>
+}
+```
+
+**Response** `200 OK` `application/json`
+Same shape as `GET /userSync`.
+
+For architecture, implementation notes, and local-dev gotchas, see `USER_SYNC.md` in the repo root.
+
+---
+
 ## SignalR
 
 ### `GET /connectSignalR`
