@@ -12,6 +12,8 @@ namespace API.Endpoints.OverpassCache;
 public class GetOverpassCache(OverpassCacheCollectionClient _overpassCacheCollection)
 {
     private const int DefaultZoom = 11;
+    private const int MinZoom = 0;
+    private const int MaxZoom = 20;
 
     [OpenApiOperation(tags: ["OverpassCache"])]
     [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
@@ -39,6 +41,13 @@ public class GetOverpassCache(OverpassCacheCollectionClient _overpassCacheCollec
             }
 
             var zoom = ParseZoom(req);
+            if (zoom < MinZoom || zoom > MaxZoom)
+            {
+                var badZoom = req.CreateResponse(HttpStatusCode.BadRequest);
+                await badZoom.WriteStringAsync($"The 'zoom' parameter must be between {MinZoom} and {MaxZoom}.", cancellationToken);
+                return badZoom;
+            }
+
             var featureCollection = await _overpassCacheCollection.FetchByTile(x, y, zoom, query, cancellationToken);
 
             var response = req.CreateResponse(HttpStatusCode.OK);

@@ -14,6 +14,7 @@ public class OverpassCacheCollectionClient(Container container, ILoggerFactory l
     : CollectionClient<OverpassCacheDocument>(container, loggerFactory)
 {
     private readonly OverpassClient _overpassClient = overpassClient;
+    private const string EmptyPrefix = "empty-";
 
     /// <summary>
     /// Fetches features for the given tile from the Cosmos cache, or queries Overpass if not cached.
@@ -33,11 +34,11 @@ public class OverpassCacheCollectionClient(Container container, ILoggerFactory l
         var partitionKey = OverpassCacheDocument.MakePartitionKey(x, y);
 
         var cached = await GetByIdMaybe(id, new PartitionKey(partitionKey), cancellationToken)
-                  ?? await GetByIdMaybe($"empty-{id}", new PartitionKey(partitionKey), cancellationToken);
+                  ?? await GetByIdMaybe($"{EmptyPrefix}{id}", new PartitionKey(partitionKey), cancellationToken);
 
         if (cached != null)
         {
-            if (cached.Id.StartsWith("empty-"))
+            if (cached.Id.StartsWith(EmptyPrefix))
                 return new FeatureCollection([]);
 
             var cachedFeatures = JsonSerializer.Deserialize<List<Feature>>(cached.FeaturesJson) ?? [];
@@ -64,7 +65,7 @@ public class OverpassCacheCollectionClient(Container container, ILoggerFactory l
             }
             : new OverpassCacheDocument
             {
-                Id = $"empty-{id}",
+                Id = $"{EmptyPrefix}{id}",
                 PartitionKey = partitionKey,
                 X = x,
                 Y = y,
