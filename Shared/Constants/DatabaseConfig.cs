@@ -14,5 +14,6 @@ namespace Shared.Constants
         public const string ProtectedAreasContainer = "protectedAreas";
         public const string PathsContainer = "paths";
         public const string PeaksGroupsContainer = "peaksGroups";
+        public const string OverpassCacheContainer = "overpassCache";
     }
 }

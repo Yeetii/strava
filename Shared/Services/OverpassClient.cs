@@ -328,6 +328,73 @@ namespace Shared.Services
             return new Polygon([new LinearRing(positions, null)], null);
         }
 
+        /// <summary>
+        /// Executes an arbitrary overpass query and converts the result to GeoJSON features.
+        /// The caller is responsible for substituting any bbox placeholders in the query before calling this method.
+        /// </summary>
+        public async Task<IEnumerable<Feature>> ExecuteGenericQuery(string query, CancellationToken cancellationToken = default)
+        {
+            string encodedQuery = Uri.EscapeDataString(query);
+
+            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"Overpass query failed, status code: {response.StatusCode}, {response.ReasonPhrase}");
+
+            string rawJson = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(rawJson) || !(rawJson.TrimStart().StartsWith("{") || rawJson.TrimStart().StartsWith("[")))
+            {
+                Console.WriteLine("Overpass response was not valid JSON:");
+                Console.WriteLine(rawJson);
+                throw new Exception("Overpass API did not return valid JSON. Response may be HTML or an error page.");
+            }
+
+            var root = JsonConvert.DeserializeObject<RootGenericOverpass>(rawJson)
+                ?? throw new Exception("Could not deserialize Overpass response.");
+
+            return ConvertGenericElementsToFeatures(root.Elements);
+        }
+
+        private static IEnumerable<Feature> ConvertGenericElementsToFeatures(IEnumerable<RawGenericOverpassElement> elements)
+        {
+            foreach (var element in elements)
+            {
+                Geometry? geometry = element.Type switch
+                {
+                    "node" when element.Lat.HasValue && element.Lon.HasValue
+                        => new Point(new Position(element.Lon.Value, element.Lat.Value)),
+                    "way" when element.Geometry != null && element.Geometry.Count >= 2
+                        => BuildLineStringOrPolygon(element.Geometry),
+                    "relation"
+                        => BuildGeometryFromRelation(element.Members),
+                    _ => null,
+                };
+
+                if (geometry == null) continue;
+
+                var properties = element.Tags
+                    .Where(kvp => kvp.Value.Type == JTokenType.String)
+                    .ToDictionary(
+                        kvp => kvp.Key,
+                        kvp => (dynamic)kvp.Value.ToString()
+                    );
+
+                yield return new Feature(geometry, properties, null, new FeatureId($"{element.Type}:{element.Id}"));
+            }
+        }
+
+        private static Geometry BuildLineStringOrPolygon(List<PathNode> nodes)
+        {
+            var positions = nodes.Select(n => new Position(n.Lon, n.Lat)).ToList();
+            if (positions.Count >= 4)
+            {
+                var first = positions[0];
+                var last = positions[^1];
+                if (first.Longitude == last.Longitude && first.Latitude == last.Latitude)
+                    return new Polygon([new LinearRing(positions, null)], null);
+            }
+            return new LineString(positions);
+        }
+
         private static string GetProtectedAreaType(Dictionary<string, dynamic> properties)
         {
             var boundary = properties.TryGetValue("boundary", out var boundaryValue) ? boundaryValue?.ToString() : null;
@@ -422,5 +489,35 @@ namespace Shared.Services
 
         [JsonProperty("geometry")]
         public List<PathNode>? Geometry { get; set; }
+    }
+
+    public class RootGenericOverpass
+    {
+        [JsonProperty("elements")]
+        public List<RawGenericOverpassElement> Elements { get; set; } = [];
+    }
+
+    public class RawGenericOverpassElement
+    {
+        [JsonProperty("type")]
+        public string Type { get; set; } = string.Empty;
+
+        [JsonProperty("id")]
+        public long Id { get; set; }
+
+        [JsonProperty("lat")]
+        public double? Lat { get; set; }
+
+        [JsonProperty("lon")]
+        public double? Lon { get; set; }
+
+        [JsonProperty("geometry")]
+        public List<PathNode>? Geometry { get; set; }
+
+        [JsonProperty("members")]
+        public List<RawProtectedAreaMember>? Members { get; set; }
+
+        [JsonProperty("tags")]
+        public Dictionary<string, JToken> Tags { get; set; } = new();
     }
 }
