@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Shared.Serialization;
 
 namespace Shared.Models;
 
@@ -15,5 +17,7 @@ public class UserSyncItem : IDocument
     public required string Key { get; set; }
     public required long UpdatedAt { get; set; }
     public bool Deleted { get; set; }
-    public JsonElement? Value { get; set; }
+    [JsonPropertyName("value")]
+    [JsonConverter(typeof(RawJsonStringConverter))]
+    public string? ValueJson { get; set; }
 }

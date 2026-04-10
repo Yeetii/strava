@@ -66,7 +66,7 @@ public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
                 Key = entry.Key,
                 UpdatedAt = entry.UpdatedAt,
                 Deleted = entry.Deleted,
-                Value = entry.Deleted ? null : entry.Value
+                ValueJson = entry.Deleted ? null : ToRawJson(entry.Value)
             };
 
             await syncCollection.UpsertDocument(updatedItem, cancellationToken);
@@ -79,13 +79,13 @@ public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
         var settings = items
             .Where(item => item.Category == UserSyncItem.SettingsCategory)
             .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => new UserSyncEntry(item.Key, item.UpdatedAt, item.Deleted, item.Value))
+            .Select(item => new UserSyncEntry(item.Key, item.UpdatedAt, item.Deleted, ParseRawJson(item.ValueJson)))
             .ToArray();
 
         var files = items
             .Where(item => item.Category == UserSyncItem.FilesCategory)
             .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => new UserSyncEntry(item.Key, item.UpdatedAt, item.Deleted, item.Value))
+            .Select(item => new UserSyncEntry(item.Key, item.UpdatedAt, item.Deleted, ParseRawJson(item.ValueJson)))
             .ToArray();
 
         return new UserSyncPayload(settings, files);
@@ -94,5 +94,21 @@ public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
     public static string CreateItemId(string userId, string category, string key)
     {
         return $"userSync:{category}:{userId}:{key}";
+    }
+
+    private static string? ToRawJson(JsonElement? value)
+    {
+        return value?.GetRawText();
+    }
+
+    private static JsonElement? ParseRawJson(string? valueJson)
+    {
+        if (string.IsNullOrWhiteSpace(valueJson))
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(valueJson);
+        return document.RootElement.Clone();
     }
 }
