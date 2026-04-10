@@ -6,6 +6,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
+using API.Utils;
 
 namespace API.Endpoints.Paths;
 
@@ -21,12 +22,18 @@ public class GetPathsByGrid(PathsCollectionClient _pathsCollectionClient)
         int x, int y,
         CancellationToken cancellationToken)
     {
-        var paths = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
-        var features = paths.Features.Select(f => f).ToList();
-        var featureCollection = new FeatureCollection(features);
-        cancellationToken.ThrowIfCancellationRequested();
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(featureCollection);
-        return response;
+        try
+        {
+            var paths = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
+            var features = paths.Features.Select(f => f).ToList();
+            var featureCollection = new FeatureCollection(features);
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            await response.WriteAsJsonAsync(featureCollection);
+            return response;
+        }
+        catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
+        {
+            return RequestCancellation.CreateCancelledResponse(req);
+        }
     }
 }

@@ -6,6 +6,7 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using API.Utils;
 
 namespace API
 {
@@ -23,26 +24,29 @@ namespace API
         [Function("GetPeaks")]
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks")] HttpRequestData req, CancellationToken cancellationToken)
         {
-            // Probably won't need this in production if I move the API to the same domain as the frontend
-            string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
-            if (!ParseCenter(req, out Coordinate center))
+            try
             {
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badResponse.WriteStringAsync("Invalid lat and lon, must be valid decimal degree format");
-                return badResponse;
+                if (!ParseCenter(req, out Coordinate center))
+                {
+                    var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+                    await badResponse.WriteStringAsync("Invalid lat and lon, must be valid decimal degree format");
+                    return badResponse;
+                }
+                int radius = ParseRadius(req);
+
+                var peaks = await _peaksCollection.GeoSpatialFetch(center, radius, cancellationToken);
+                var features = peaks.Select(x => x.ToFeature()).ToList();
+                var featureCollection = new FeatureCollection(features);
+
+                var response = req.CreateResponse(HttpStatusCode.OK);
+                response.Headers.Add("Access-Control-Allow-Credentials", "true");
+                await response.WriteAsJsonAsync(featureCollection);
+                return response;
             }
-            int radius = ParseRadius(req);
-
-            var peaks = await _peaksCollection.GeoSpatialFetch(center, radius, cancellationToken);
-            var features = peaks.Select(x => x.ToFeature()).ToList();
-            var featureCollection = new FeatureCollection(features);
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Access-Control-Allow-Credentials", "true");
-            await response.WriteAsJsonAsync(featureCollection);
-            return response;
+            catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
+            {
+                return RequestCancellation.CreateCancelledResponse(req);
+            }
         }
 
         private static int ParseRadius(HttpRequestData req)

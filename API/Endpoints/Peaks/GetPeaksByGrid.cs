@@ -5,6 +5,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
+using API.Utils;
 
 namespace API.Endpoints.Peaks
 {
@@ -21,17 +22,22 @@ namespace API.Endpoints.Peaks
         [Function(nameof(GetPeaksByGrid))]
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaks/{x}/{y}")] HttpRequestData req, int x, int y, CancellationToken cancellationToken)
         {
-            int zoom = ParseZoom(req);
-            var peaks = await _peaksCollection.FetchByTiles([(x, y)], zoom, cancellationToken);
+            try
+            {
+                int zoom = ParseZoom(req);
+                var peaks = await _peaksCollection.FetchByTiles([(x, y)], zoom, cancellationToken);
 
-            var features = peaks.Select(p => p.ToFeature()).ToList();
-            var featureCollection = new FeatureCollection(features);
+                var features = peaks.Select(p => p.ToFeature()).ToList();
+                var featureCollection = new FeatureCollection(features);
 
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            await response.WriteAsJsonAsync(featureCollection);
-            return response;
+                var response = req.CreateResponse(HttpStatusCode.OK);
+                await response.WriteAsJsonAsync(featureCollection);
+                return response;
+            }
+            catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
+            {
+                return RequestCancellation.CreateCancelledResponse(req);
+            }
         }
 
         private static int ParseZoom(HttpRequestData req)

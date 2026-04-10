@@ -53,6 +53,7 @@ var host = new HostBuilder()
             .AddPathsCollection(DatabaseConfig.CosmosDb, DatabaseConfig.PathsContainer)
             .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
             .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)
+            .AddCollection<UserSyncItem>(DatabaseConfig.CosmosDb, DatabaseConfig.UserSyncItemsContainer)
             .AddCollection<Session>(DatabaseConfig.CosmosDb, DatabaseConfig.SessionsContainer)
             .AddCollection<Activity>(DatabaseConfig.CosmosDb, DatabaseConfig.ActivitiesContainer)
             .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
@@ -79,6 +80,7 @@ var host = new HostBuilder()
             var sessionsCollection = serviceProvider.GetRequiredService<CollectionClient<Session>>();
             return new UserAuthenticationService(usersCollection, sessionsCollection);
         });
+        services.AddScoped<UserSyncService>();
     })
     .ConfigureOpenApi()
     .Build();

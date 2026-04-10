@@ -5,6 +5,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
+using API.Utils;
 
 namespace API.Endpoints.ProtectedAreas;
 
@@ -21,15 +22,20 @@ public class GetProtectedAreasByGrid(ProtectedAreasCollectionClient protectedAre
     [Function(nameof(GetProtectedAreasByGrid))]
     public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "protectedAreas/{x}/{y}")] HttpRequestData req, int x, int y, CancellationToken cancellationToken)
     {
-        var zoom = ParseZoom(req);
-        var protectedAreas = await protectedAreasCollectionClient.FetchByTiles([(x, y)], zoom, cancellationToken);
-        var featureCollection = new FeatureCollection(protectedAreas.Select(area => area.ToFeature()).ToList());
+        try
+        {
+            var zoom = ParseZoom(req);
+            var protectedAreas = await protectedAreasCollectionClient.FetchByTiles([(x, y)], zoom, cancellationToken);
+            var featureCollection = new FeatureCollection(protectedAreas.Select(area => area.ToFeature()).ToList());
 
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(featureCollection);
-        return response;
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            await response.WriteAsJsonAsync(featureCollection);
+            return response;
+        }
+        catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
+        {
+            return RequestCancellation.CreateCancelledResponse(req);
+        }
     }
 
     private static int ParseZoom(HttpRequestData req)

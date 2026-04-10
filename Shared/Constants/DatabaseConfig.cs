@@ -7,6 +7,7 @@ namespace Shared.Constants
         public const string SummitedPeaksContainer = "summitedPeaks";
         public const string ActivitiesContainer = "activities";
         public const string UsersContainer = "users";
+        public const string UserSyncItemsContainer = "userSyncItems";
         public const string SessionsContainer = "sessions";
         public const string VisitedPathsContainer = "visitedPaths";
         public const string VisitedAreasContainer = "visitedAreas";

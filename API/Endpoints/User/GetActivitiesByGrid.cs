@@ -6,6 +6,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
+using API.Utils;
 
 namespace API.Endpoints.User;
 
@@ -21,13 +22,19 @@ public class GetActivitiesByGrid(PathsCollectionClient _pathsCollectionClient)
         int x, int y,
         CancellationToken cancellationToken)
     {
-        var activities = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
-        var features = activities.Features.Select(f => f).ToList();
-        var featureCollection = new FeatureCollection(features);
-        cancellationToken.ThrowIfCancellationRequested();
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        response.Headers.Add("Access-Control-Allow-Credentials", "true");
-        await response.WriteAsJsonAsync(featureCollection);
-        return response;
+        try
+        {
+            var activities = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
+            var features = activities.Features.Select(f => f).ToList();
+            var featureCollection = new FeatureCollection(features);
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            response.Headers.Add("Access-Control-Allow-Credentials", "true");
+            await response.WriteAsJsonAsync(featureCollection);
+            return response;
+        }
+        catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
+        {
+            return RequestCancellation.CreateCancelledResponse(req);
+        }
     }
 }
