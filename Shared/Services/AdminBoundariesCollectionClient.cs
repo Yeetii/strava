@@ -1,5 +1,6 @@
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
+using System.Net;
 using Shared.Geo;
 using Shared.Models;
 
@@ -8,6 +9,9 @@ namespace Shared.Services;
 public class AdminBoundariesCollectionClient(Container container, ILoggerFactory loggerFactory, OverpassClient overpassClient)
     : CollectionClient<StoredFeature>(container, loggerFactory)
 {
+    private const string SimplificationStepProperty = "geometrySimplificationStep";
+    private const string SimplifiedGeometryProperty = "geometrySimplified";
+
     private readonly OverpassClient _overpassClient = overpassClient;
     private const string Kind = FeatureKinds.AdminBoundary;
 
@@ -93,7 +97,62 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             features.Add(empty);
         }
 
-        await BulkUpsert(features, cancellationToken);
+        await UpsertBoundaryDocuments(features, cancellationToken);
         return features;
+    }
+
+    private async Task UpsertBoundaryDocuments(IEnumerable<StoredFeature> documents, CancellationToken cancellationToken)
+    {
+        foreach (var document in documents)
+        {
+            await UpsertBoundaryDocument(document, cancellationToken);
+        }
+    }
+
+    private async Task UpsertBoundaryDocument(StoredFeature document, CancellationToken cancellationToken)
+    {
+        if (StoredFeature.IsPointerDocument(document) || document.Id.StartsWith("empty-", StringComparison.Ordinal))
+        {
+            await UpsertDocument(document, cancellationToken);
+            return;
+        }
+
+        var currentDocument = document;
+        foreach (var step in new[] { 1, 2, 4, 8, 16, 32 })
+        {
+            try
+            {
+                if (step > 1)
+                    currentDocument = CreateSimplifiedBoundaryDocument(document, step);
+
+                await UpsertDocument(currentDocument, cancellationToken);
+                return;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.RequestEntityTooLarge && step < 32)
+            {
+                continue;
+            }
+        }
+
+        await UpsertDocument(CreateSimplifiedBoundaryDocument(document, 64), cancellationToken);
+    }
+
+    private static StoredFeature CreateSimplifiedBoundaryDocument(StoredFeature document, int step)
+    {
+        return new StoredFeature
+        {
+            Id = document.Id,
+            FeatureId = document.FeatureId,
+            Kind = document.Kind,
+            X = document.X,
+            Y = document.Y,
+            Zoom = document.Zoom,
+            Geometry = GeometryDecimator.Decimate(document.Geometry, step),
+            Properties = new Dictionary<string, dynamic>(document.Properties)
+            {
+                [SimplifiedGeometryProperty] = true,
+                [SimplificationStepProperty] = step
+            }
+        };
     }
 }
