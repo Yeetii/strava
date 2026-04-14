@@ -9,7 +9,7 @@ namespace Backend
     public class FetchPeaks(ILogger<FetchPeaks> _logger, OverpassClient _overpassClient)
     {
         [Function("FetchPeaks")]
-        [CosmosDBOutput("%CosmosDb%", "%PeaksContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
+        [CosmosDBOutput("%CosmosDb%", "%OsmFeaturesContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
         public async Task<IEnumerable<StoredFeature>> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = "fetchPeaks/{bbox}")] HttpRequestData req, string bbox)
         {
@@ -22,7 +22,7 @@ namespace Backend
 
             var features = await _overpassClient.GetPeaks(southWest, northEast);
             _logger.LogInformation("Fetched {Count} peaks", features.Count());
-            var storedFeatures = features.Select(f => new StoredFeature(f)).ToList();
+            var storedFeatures = features.Select(f => new StoredFeature(f, FeatureKinds.Peak)).ToList();
             return storedFeatures;
         }
     }

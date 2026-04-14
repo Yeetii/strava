@@ -6,6 +6,7 @@ using Shared.Models;
 using Shared.Services;
 using BAMCIS.GeoJSON;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Backend;
 
@@ -13,7 +14,7 @@ public class VisitedPathsWorker(
     ILogger<VisitedPathsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<VisitedPath> _visitedPathsCollection,
-    PathsCollectionClient _pathsCollection)
+    [FromKeyedServices(FeatureKinds.Path)] TiledCollectionClient _pathsCollection)
 {
     private const int PathTileZoom = 11;
 
@@ -129,8 +130,8 @@ public class VisitedPathsWorker(
                 tileIndices.Add(tile);
         }
 
-        var pathCollection = await _pathsCollection.FetchByTiles(tileIndices, PathTileZoom);
-        _logger.LogInformation("Found {Count} nearby paths", pathCollection.Features.Count());
-        return pathCollection.Features;
+        var paths = (await _pathsCollection.FetchByTiles(tileIndices, PathTileZoom)).ToList();
+        _logger.LogInformation("Found {Count} nearby paths", paths.Count);
+        return paths.Select(p => p.ToFeature());
     }
 }

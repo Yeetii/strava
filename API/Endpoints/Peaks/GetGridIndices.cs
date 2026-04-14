@@ -2,13 +2,14 @@ using System.Net;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 
 namespace API.Endpoints.Peaks
 {
-    public class GetGridIndices(PeaksCollectionClient _peaksCollection)
+    public class GetGridIndices([FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection)
     {
         [OpenApiOperation(tags: ["Peaks"])]
         [OpenApiParameter(name: "peakIds", In = ParameterLocation.Query, Type = typeof(IEnumerable<string>), Required = true)]
@@ -25,7 +26,7 @@ namespace API.Endpoints.Peaks
                 return badResponse;
             }
             var peakIds = peakIdsString.Split(',');
-            var peaks = await _peaksCollection.GetByIdsAsync(peakIds);
+            var peaks = await _peaksCollection.GetByFeatureIdsAsync(peakIds);
 
             var grids = peaks.Select(x => x.X + "," + x.Y).Distinct();
 

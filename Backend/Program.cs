@@ -77,8 +77,7 @@ var host = new HostBuilder()
             .AddCollection<Activity>(DatabaseConfig.CosmosDb, DatabaseConfig.ActivitiesContainer)
             .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
             .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer)
-            .AddProtectedAreasCollection(DatabaseConfig.CosmosDb, DatabaseConfig.ProtectedAreasContainer)
-            .AddPathsCollection(DatabaseConfig.CosmosDb, DatabaseConfig.PathsContainer);
+            .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
 
         services.AddScoped(serviceProvider =>
         {

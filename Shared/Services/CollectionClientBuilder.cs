@@ -19,43 +19,41 @@ public class CollectionClientBuilder(IServiceCollection services)
         return this;
     }
 
-    public CollectionClientBuilder AddPeaksCollection(string databaseName, string containerName)
+    /// <summary>
+    /// Registers all Overpass-backed feature caches against a single shared container, keyed by
+    /// <see cref="FeatureKinds"/>. Consumers inject with <c>[FromKeyedServices(FeatureKinds.X)] TiledCollectionClient</c>.
+    /// The container must have <c>DefaultTimeToLive = 2592000</c> (30d) configured in Cosmos.
+    /// </summary>
+    public CollectionClientBuilder AddOsmFeatureCaches(string databaseName, string containerName)
     {
-        services.AddSingleton(serviceProvider =>
+        AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Peak, op => op.GetPeaks);
+        AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Path, op => op.GetPaths);
+        AddKeyedTiledClient(databaseName, containerName, FeatureKinds.ProtectedArea, op => op.GetProtectedAreas);
+
+        services.AddSingleton(sp =>
         {
-            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmosClient.GetContainer(databaseName, containerName);
-            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            var overpassClient = serviceProvider.GetRequiredService<OverpassClient>();
-            return new PeaksCollectionClient(container, loggerFactory, overpassClient);
+            var cosmos = sp.GetRequiredService<CosmosClient>();
+            var container = cosmos.GetContainer(databaseName, containerName);
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var overpass = sp.GetRequiredService<OverpassClient>();
+            return new AdminBoundariesCollectionClient(container, loggerFactory, overpass);
         });
         return this;
     }
 
-    public CollectionClientBuilder AddPathsCollection(string databaseName, string containerName)
+    private void AddKeyedTiledClient(
+        string databaseName,
+        string containerName,
+        string kind,
+        Func<OverpassClient, Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<BAMCIS.GeoJSON.Feature>>>> fetcherSelector)
     {
-        services.AddSingleton(serviceProvider =>
+        services.AddKeyedSingleton(kind, (sp, _) =>
         {
-            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmosClient.GetContainer(databaseName, containerName);
-            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            var overpassClient = serviceProvider.GetRequiredService<OverpassClient>();
-            return new PathsCollectionClient(container, loggerFactory, overpassClient);
+            var cosmos = sp.GetRequiredService<CosmosClient>();
+            var container = cosmos.GetContainer(databaseName, containerName);
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var overpass = sp.GetRequiredService<OverpassClient>();
+            return new TiledCollectionClient(container, loggerFactory, kind, fetcherSelector(overpass));
         });
-        return this;
-    }
-
-    public CollectionClientBuilder AddProtectedAreasCollection(string databaseName, string containerName)
-    {
-        services.AddSingleton(serviceProvider =>
-        {
-            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmosClient.GetContainer(databaseName, containerName);
-            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            var overpassClient = serviceProvider.GetRequiredService<OverpassClient>();
-            return new ProtectedAreasCollectionClient(container, loggerFactory, overpassClient);
-        });
-        return this;
     }
 }
-

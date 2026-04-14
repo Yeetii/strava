@@ -1,0 +1,75 @@
+using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Logging;
+using Shared.Geo;
+using Shared.Models;
+
+namespace Shared.Services;
+
+public class AdminBoundariesCollectionClient(Container container, ILoggerFactory loggerFactory, OverpassClient overpassClient)
+    : CollectionClient<StoredFeature>(container, loggerFactory)
+{
+    private readonly OverpassClient _overpassClient = overpassClient;
+    private const string Kind = FeatureKinds.AdminBoundary;
+
+    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int adminLevel, int zoom = 6, CancellationToken cancellationToken = default)
+    {
+        if (!keys.Any())
+            return [];
+
+        var docs = (await QueryByListOfKeys(keys, zoom, adminLevel, cancellationToken)).ToList();
+        var keysInDocs = new HashSet<(int x, int y)>(docs.Select(d => (d.X, d.Y)));
+        var missingTiles = keys.Where(k => !keysInDocs.Contains((k.x, k.y)));
+
+        foreach (var (x, y) in missingTiles)
+            docs.AddRange(await FetchMissingTile(x, y, zoom, adminLevel, cancellationToken));
+
+        return docs
+            .Where(d => !d.Id.StartsWith("empty-"))
+            .DistinctBy(d => d.LogicalId);
+    }
+
+    private async Task<IEnumerable<StoredFeature>> QueryByListOfKeys(IEnumerable<(int x, int y)> keys, int zoom, int adminLevel, CancellationToken cancellationToken)
+    {
+        var keyConditions = string.Join(" OR ", keys.Select((_, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
+        var queryDefinition = new QueryDefinition($"SELECT * FROM c WHERE ({keyConditions}) AND c.zoom = @zoom AND c.kind = @kind AND c.properties.adminLevel = @adminLevel")
+            .WithParameter("@zoom", zoom)
+            .WithParameter("@kind", Kind)
+            .WithParameter("@adminLevel", adminLevel.ToString());
+        int index = 0;
+        foreach (var (x, y) in keys)
+        {
+            queryDefinition = queryDefinition
+                .WithParameter($"@x{index}", x)
+                .WithParameter($"@y{index}", y);
+            index++;
+        }
+        return await ExecuteQueryAsync<StoredFeature>(queryDefinition, cancellationToken: cancellationToken);
+    }
+
+    private async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, int adminLevel, CancellationToken cancellationToken)
+    {
+        var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
+        var rawFeatures = await _overpassClient.GetAdminBoundaries(southWest, northEast, adminLevel, cancellationToken);
+
+        var features = rawFeatures
+            .Select(feature =>
+            {
+                var stored = new StoredFeature(feature, Kind, zoom);
+                // Namespace id by adminLevel so different levels don't collide on the same OSM id.
+                stored.Id = $"{Kind}:{adminLevel}:{stored.FeatureId}";
+                stored.Properties["adminLevel"] = adminLevel.ToString();
+                return stored;
+            })
+            .ToList();
+
+        var empty = new StoredFeature(Kind, x, y, zoom)
+        {
+            Id = $"empty-{Kind}-{adminLevel}-{zoom}-{x}-{y}",
+        };
+        empty.Properties["adminLevel"] = adminLevel.ToString();
+        features.Add(empty);
+
+        await BulkUpsert(features, cancellationToken);
+        return features;
+    }
+}

@@ -1,19 +1,42 @@
+using BAMCIS.GeoJSON;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
+using Shared.Geo;
 using Shared.Models;
 
 namespace Shared.Services;
 
-public abstract class TiledCollectionClient(Container container, ILoggerFactory loggerFactory, OverpassClient overpassClient)
+public class TiledCollectionClient(
+    Container container,
+    ILoggerFactory loggerFactory,
+    string kind,
+    Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> fetchFromOverpass)
     : CollectionClient<StoredFeature>(container, loggerFactory)
 {
-    protected readonly OverpassClient _overpassClient = overpassClient;
+    protected readonly string _kind = kind;
+    private readonly Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> _fetchFromOverpass = fetchFromOverpass;
 
-    protected async Task<IEnumerable<StoredFeature>> QueryByListOfKeys(IEnumerable<(int x, int y)> keys, int zoom, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int zoom = 11, CancellationToken cancellationToken = default)
     {
-        var keyConditions = string.Join(" OR ", keys.Select((key, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
-        var queryDefinition = new QueryDefinition($"SELECT * FROM c WHERE ({keyConditions}) AND c.zoom = @zoom")
-            .WithParameter("@zoom", zoom);
+        if (!keys.Any())
+            return [];
+
+        var docs = (await QueryByListOfKeys(keys, zoom, cancellationToken)).ToList();
+        var missingTiles = GetMissingTiles(docs, keys);
+        foreach (var (x, y) in missingTiles)
+            docs.AddRange(await FetchMissingTile(x, y, zoom, cancellationToken));
+
+        return docs
+            .Where(d => !d.Id.StartsWith("empty-"))
+            .DistinctBy(d => d.LogicalId);
+    }
+
+    protected virtual async Task<IEnumerable<StoredFeature>> QueryByListOfKeys(IEnumerable<(int x, int y)> keys, int zoom, CancellationToken cancellationToken = default)
+    {
+        var keyConditions = string.Join(" OR ", keys.Select((_, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
+        var queryDefinition = new QueryDefinition($"SELECT * FROM c WHERE ({keyConditions}) AND c.zoom = @zoom AND c.kind = @kind")
+            .WithParameter("@zoom", zoom)
+            .WithParameter("@kind", _kind);
         int index = 0;
         foreach (var (x, y) in keys)
         {
@@ -27,22 +50,39 @@ public abstract class TiledCollectionClient(Container container, ILoggerFactory 
 
     protected static IEnumerable<(int x, int y)> GetMissingTiles(IEnumerable<StoredFeature> documents, IEnumerable<(int x, int y)> keys)
     {
-        var keysInDocuments = new HashSet<(int x, int y)>(documents.Select(p => (p.X, p.Y)));
-        return keys.Where(p => !keysInDocuments.Contains((p.x, p.y)));
+        var keysInDocuments = new HashSet<(int x, int y)>(documents.Select(d => (d.X, d.Y)));
+        return keys.Where(k => !keysInDocuments.Contains((k.x, k.y)));
     }
 
-    protected abstract Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, CancellationToken cancellationToken = default);
-
-    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int zoom = 11, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<StoredFeature>> GetByFeatureIdsAsync(IEnumerable<string> featureIds, CancellationToken cancellationToken = default)
     {
-        if (!keys.Any())
-            return [];
+        var ids = featureIds.Select(id => $"{_kind}:{id}").ToList();
+        return await GetByIdsAsync(ids, cancellationToken);
+    }
 
-        var docs = (await QueryByListOfKeys(keys, zoom, cancellationToken)).ToList();
-        var missingTiles = GetMissingTiles(docs, keys);
-        foreach (var (x, y) in missingTiles)
-            docs.AddRange(await FetchMissingTile(x, y, zoom, cancellationToken));
+    public async Task<IEnumerable<StoredFeature>> GeoSpatialFetch(Coordinate center, int radius, CancellationToken cancellationToken = default)
+    {
+        var query = new QueryDefinition(
+            "SELECT * FROM p WHERE p.kind = @kind AND ST_DISTANCE(p.geometry, {'type': 'Point', 'coordinates':[@lng, @lat]}) < @radius")
+            .WithParameter("@kind", _kind)
+            .WithParameter("@lng", center.Lng)
+            .WithParameter("@lat", center.Lat)
+            .WithParameter("@radius", radius);
+        return await ExecuteQueryAsync<StoredFeature>(query, cancellationToken: cancellationToken);
+    }
 
-        return docs.Where(d => !d.Id.StartsWith("empty-"));
+    protected virtual async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, CancellationToken cancellationToken = default)
+    {
+        var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
+        var rawFeatures = await _fetchFromOverpass(southWest, northEast, cancellationToken);
+
+        var features = rawFeatures
+            .Select(f => new StoredFeature(f, _kind, zoom))
+            .ToList();
+
+        features.Add(new StoredFeature(_kind, x, y, zoom));
+
+        await BulkUpsert(features, cancellationToken);
+        return features;
     }
 }

@@ -3,6 +3,7 @@ using Shared.Models;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.DependencyInjection;
 using Shared.Geo;
 using Azure.Messaging.ServiceBus;
 using System.Text.Json;
@@ -16,7 +17,7 @@ namespace Backend;
 public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
-    PeaksCollectionClient _peaksCollection,
+    [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
     ServiceBusClient serviceBusClient,
     ISummitsCalculator _summitsCalculator)
 {

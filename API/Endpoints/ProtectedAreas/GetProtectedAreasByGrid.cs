@@ -3,13 +3,14 @@ using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
 using API.Utils;
 
 namespace API.Endpoints.ProtectedAreas;
 
-public class GetProtectedAreasByGrid(ProtectedAreasCollectionClient protectedAreasCollectionClient)
+public class GetProtectedAreasByGrid([FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient protectedAreasCollectionClient)
 {
     private const int DefaultZoom = 8;
 

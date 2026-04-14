@@ -7,12 +7,14 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
+using Microsoft.Extensions.DependencyInjection;
 using Shared.Services;
 using API.Utils;
 
 namespace API
 {
-    public class GetAllSummitedPeaks(PeaksCollectionClient _peaksCollection,
+    public class GetAllSummitedPeaks(
+        [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
         CollectionClient<SummitedPeak> _summitedPeakCollection,
         CollectionClient<Activity> _activityCollection,
         UserAuthenticationService _userAuthService)
@@ -51,12 +53,12 @@ namespace API
                 ? new Dictionary<string, Activity>()
                 : (await _activityCollection.GetByIdsAsync(activityIds)).ToDictionary(activity => activity.Id, activity => activity);
 
-            var peaks = await _peaksCollection.GetByIdsAsync(summitedPeaksIds);
+            var peaks = await _peaksCollection.GetByFeatureIdsAsync(summitedPeaksIds);
 
             var features = peaks.Select(x =>
             {
                 var feature = x.ToFeature();
-                var summitedPeak = summitedPeaksDict[x.Id];
+                var summitedPeak = summitedPeaksDict[x.LogicalId];
                 var ascentDates = summitedPeak.ActivityIds
                     .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
                         ? activity.StartDateLocal

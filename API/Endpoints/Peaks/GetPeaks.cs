@@ -3,6 +3,7 @@ using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
@@ -10,7 +11,7 @@ using API.Utils;
 
 namespace API
 {
-    public class GetPeaks(PeaksCollectionClient _peaksCollection)
+    public class GetPeaks([FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection)
     {
         const int MinRadiusMetres = (int)40E3;
         const int MaxRadiusMetres = (int)100E3;

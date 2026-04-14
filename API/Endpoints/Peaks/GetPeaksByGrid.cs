@@ -3,13 +3,14 @@ using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
 using API.Utils;
 
 namespace API.Endpoints.Peaks
 {
-    public class GetPeaksByGrid(PeaksCollectionClient _peaksCollection)
+    public class GetPeaksByGrid([FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection)
     {
         const int DefaultZoom = 11;
 

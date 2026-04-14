@@ -6,6 +6,7 @@ using Shared.Models;
 using Shared.Services;
 using BAMCIS.GeoJSON;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Backend;
 
@@ -13,7 +14,7 @@ public class VisitedAreasWorker(
     ILogger<VisitedAreasWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<VisitedArea> _visitedAreasCollection,
-    ProtectedAreasCollectionClient _protectedAreasCollection)
+    [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient _protectedAreasCollection)
 {
     private const int AreaTileZoom = 8;
 

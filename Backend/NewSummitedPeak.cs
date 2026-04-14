@@ -1,11 +1,13 @@
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services;
 
 namespace Backend
 {
-    public class NewSummitedPeak(PeaksCollectionClient _peaksCollection,
+    public class NewSummitedPeak(
+        [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
         UserAuthenticationService _userAuthService,
         ILogger<NewSummitedPeak> _logger)
     {
@@ -18,14 +20,14 @@ namespace Backend
             Connection = "CosmosDBConnection",
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<SummitedPeak> input)
         {
-            var peaks = await _peaksCollection.GetByIdsAsync(input.Select(x => x.PeakId));
+            var peaks = await _peaksCollection.GetByFeatureIdsAsync(input.Select(x => x.PeakId));
             var userIds = input.Select(x => x.UserId).Distinct();
             var userToSessionsDict = await GetUserToSessionsDict(userIds);
             var messages = new List<SignalRMessageAction>();
 
             foreach (var peak in peaks)
             {
-                var userId = input.First(x => x.PeakId == peak.Id).UserId;
+                var userId = input.First(x => x.PeakId == peak.LogicalId).UserId;
                 var sessions = userToSessionsDict[userId];
 
                 foreach (var sessionId in sessions)

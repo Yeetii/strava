@@ -328,6 +328,64 @@ namespace Shared.Services
             return new Polygon([new LinearRing(positions, null)], null);
         }
 
+        public async Task<IEnumerable<Feature>> GetAdminBoundaries(Coordinate southWest, Coordinate northEast, int adminLevel, CancellationToken cancellationToken = default)
+        {
+            string bbox = CreateBoundingBox(southWest, northEast);
+            var levelStr = adminLevel.ToString(CultureInfo.InvariantCulture);
+            string query = string.Join(string.Empty,
+                "[out:json][timeout:400];(",
+                $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]({bbox});",
+                $"way[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]({bbox});",
+                ");out geom;"
+            );
+            string encodedQuery = Uri.EscapeDataString(query);
+
+            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"Could not get admin boundaries, status code: {response.StatusCode}, {response.ReasonPhrase}");
+
+            string rawAreas = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(rawAreas) || !(rawAreas.TrimStart().StartsWith("{") || rawAreas.TrimStart().StartsWith("[")))
+            {
+                Console.WriteLine("Overpass response was not valid JSON:");
+                Console.WriteLine(rawAreas);
+                throw new Exception("Overpass API did not return valid JSON. Response may be HTML or an error page.");
+            }
+
+            RootProtectedAreas root = JsonConvert.DeserializeObject<RootProtectedAreas>(rawAreas)
+                ?? throw new Exception("Could not deserialize");
+            return ConvertRawAdminBoundariesToFeatures(root.Elements);
+        }
+
+        private static IEnumerable<Feature> ConvertRawAdminBoundariesToFeatures(IEnumerable<RawProtectedArea> raw)
+        {
+            foreach (var area in raw)
+            {
+                var geometry = area.Type switch
+                {
+                    "way" => BuildPolygonFromPath(area.Geometry),
+                    "relation" => BuildGeometryFromRelation(area.Members),
+                    _ => null,
+                };
+                if (geometry == null) continue;
+
+                var properties = area.Tags
+                    .Where(kvp => kvp.Value.Type == JTokenType.String)
+                    .ToDictionary(
+                        kvp => kvp.Key,
+                        kvp => (dynamic)kvp.Value.ToString()
+                    );
+                properties["osmType"] = area.Type;
+
+                yield return new Feature(
+                    geometry,
+                    properties,
+                    null,
+                    new FeatureId($"{area.Type}:{area.Id}")
+                );
+            }
+        }
+
         private static string GetProtectedAreaType(Dictionary<string, dynamic> properties)
         {
             var boundary = properties.TryGetValue("boundary", out var boundaryValue) ? boundaryValue?.ToString() : null;

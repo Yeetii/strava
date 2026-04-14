@@ -4,13 +4,14 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
 using API.Utils;
 
 namespace API.Endpoints.User;
 
-public class GetActivitiesByGrid(PathsCollectionClient _pathsCollectionClient)
+public class GetActivitiesByGrid([FromKeyedServices(FeatureKinds.Path)] TiledCollectionClient _pathsCollectionClient)
 {
     [OpenApiOperation(tags: ["Activities"])]
     [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(double), Required = true)]
@@ -25,8 +26,7 @@ public class GetActivitiesByGrid(PathsCollectionClient _pathsCollectionClient)
         try
         {
             var activities = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
-            var features = activities.Features.Select(f => f).ToList();
-            var featureCollection = new FeatureCollection(features);
+            var featureCollection = new FeatureCollection(activities.Select(a => a.ToFeature()));
             var response = req.CreateResponse(HttpStatusCode.OK);
             response.Headers.Add("Access-Control-Allow-Credentials", "true");
             await response.WriteAsJsonAsync(featureCollection);

@@ -4,13 +4,14 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
 using API.Utils;
 
 namespace API.Endpoints.Paths;
 
-public class GetPathsByGrid(PathsCollectionClient _pathsCollectionClient)
+public class GetPathsByGrid([FromKeyedServices(FeatureKinds.Path)] TiledCollectionClient _pathsCollectionClient)
 {
     [OpenApiOperation(tags: ["Paths"])]
     [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(double), Required = true)]
@@ -25,8 +26,7 @@ public class GetPathsByGrid(PathsCollectionClient _pathsCollectionClient)
         try
         {
             var paths = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
-            var features = paths.Features.Select(f => f).ToList();
-            var featureCollection = new FeatureCollection(features);
+            var featureCollection = new FeatureCollection(paths.Select(p => p.ToFeature()));
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(featureCollection);
             return response;

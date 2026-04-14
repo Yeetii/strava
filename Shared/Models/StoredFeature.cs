@@ -10,6 +10,7 @@ namespace Shared.Models
     {
         public required string Id { get; set; }
         public string? FeatureId { get; set; }
+        public string? Kind { get; set; }
         public required int X { get; set; }
         public required int Y { get; set; }
         public int Zoom { get; set; }
@@ -25,10 +26,12 @@ namespace Shared.Models
         }
 
         [SetsRequiredMembers]
-        public StoredFeature(Feature feature, int zoom = 11)
+        public StoredFeature(Feature feature, string kind, int zoom = 11)
         {
-            Id = feature.Id.Value;
-            FeatureId = feature.Id.Value;
+            var featureId = feature.Id.Value;
+            Kind = kind;
+            Id = $"{kind}:{featureId}";
+            FeatureId = featureId;
             Geometry = feature.Geometry;
             Properties = feature.Properties;
             var coordinate = GeometryCentroidHelper.GetCentroid(feature.Geometry);
@@ -40,11 +43,12 @@ namespace Shared.Models
         }
 
         [SetsRequiredMembers]
-        public StoredFeature(Feature feature, int x, int y, int zoom, bool storePerTile)
+        public StoredFeature(Feature feature, string kind, int x, int y, int zoom, bool storePerTile)
         {
             var featureId = feature.Id.Value;
 
-            Id = storePerTile ? $"{featureId}:{zoom}:{x}:{y}" : featureId;
+            Kind = kind;
+            Id = storePerTile ? $"{kind}:{featureId}:{zoom}:{x}:{y}" : $"{kind}:{featureId}";
             FeatureId = featureId;
             Geometry = feature.Geometry;
             Properties = feature.Properties;
@@ -54,15 +58,15 @@ namespace Shared.Models
         }
 
         [SetsRequiredMembers]
-        public StoredFeature(int x, int y, int zoom = 11)
+        public StoredFeature(string kind, int x, int y, int zoom = 11)
         {
+            Kind = kind;
             X = x;
             Y = y;
             Zoom = zoom;
-            Id = $"empty-{zoom}-{x}-{y}";
+            Id = $"empty-{kind}-{zoom}-{x}-{y}";
             FeatureId = Id;
-            var emptyGeometry = new Point(new Position(0, 0));
-            Geometry = emptyGeometry;
+            Geometry = new Point(new Position(0, 0));
         }
 
         public Feature ToFeature()

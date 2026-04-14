@@ -39,7 +39,7 @@ namespace Backend
     public class FetchPaths(ILogger<FetchPaths> _logger, OverpassClient _overpassClient)
     {
         [Function("FetchPaths")]
-        [CosmosDBOutput("%CosmosDb%", "%PathsContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
+        [CosmosDBOutput("%CosmosDb%", "%OsmFeaturesContainer%", Connection = "CosmosDBConnection", PartitionKey = "/id")]
         public async Task<IEnumerable<StoredFeature>> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = "fetchPaths/{bbox}")] HttpRequestData req, string bbox)
         {
@@ -52,7 +52,7 @@ namespace Backend
 
             var features = await _overpassClient.GetPaths(southWest, northEast);
             _logger.LogInformation("Fetched {Count} paths", features.Count());
-            return features.Select(f => new StoredFeature(f));
+            return features.Select(f => new StoredFeature(f, FeatureKinds.Path));
         }
     }
 }

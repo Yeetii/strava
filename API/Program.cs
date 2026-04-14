@@ -53,9 +53,7 @@ var host = new HostBuilder()
 
 
         new CollectionClientBuilder(services)
-            .AddPeaksCollection(DatabaseConfig.CosmosDb, DatabaseConfig.PeaksContainer)
-            .AddProtectedAreasCollection(DatabaseConfig.CosmosDb, DatabaseConfig.ProtectedAreasContainer)
-            .AddPathsCollection(DatabaseConfig.CosmosDb, DatabaseConfig.PathsContainer)
+            .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer)
             .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
             .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)
             .AddCollection<UserSyncItem>(DatabaseConfig.CosmosDb, DatabaseConfig.UserSyncItemsContainer)
