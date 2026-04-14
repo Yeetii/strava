@@ -44,4 +44,26 @@ public class StoredFeatureTests
 
         Assert.Equal("peak:11846352799", prefixedId);
     }
+
+    [Fact]
+    public void CreatePointer_PopulatesStoredLocationMetadata()
+    {
+        var pointer = StoredFeature.CreatePointer(
+            FeatureKinds.Path,
+            "way:123",
+            x: 10,
+            y: 20,
+            zoom: 11,
+            storedX: 12,
+            storedY: 21,
+            storedZoom: 11,
+            storedDocumentId: "path:way:123");
+
+        Assert.True(StoredFeature.IsPointerDocument(pointer));
+        Assert.Equal("path:way:123", StoredFeature.GetPointerStoredDocumentId(pointer));
+        Assert.Equal("way:123", pointer.Properties[StoredFeature.PointerFeatureIdProperty]);
+        Assert.Equal(12, pointer.Properties[StoredFeature.PointerStoredXProperty]);
+        Assert.Equal(21, pointer.Properties[StoredFeature.PointerStoredYProperty]);
+        Assert.Equal(11, pointer.Properties[StoredFeature.PointerStoredZoomProperty]);
+    }
 }

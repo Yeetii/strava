@@ -20,8 +20,8 @@ public sealed class AdminBoundaryMetricsEnricher(
     public async Task EnrichAsync(StoredFeature boundary, CancellationToken cancellationToken = default)
     {
         var candidateTiles = CalculateCandidateTiles(boundary.Geometry, AnalysisTileZoom, BorderSamplingStep);
-        var peaks = await _peaksCollection.FetchByTiles(candidateTiles, AnalysisTileZoom, cancellationToken);
-        var protectedAreas = await _protectedAreasCollection.FetchByTiles(candidateTiles, AnalysisTileZoom, cancellationToken);
+        var peaks = await _peaksCollection.FetchByTiles(candidateTiles, AnalysisTileZoom, cancellationToken: cancellationToken);
+        var protectedAreas = await _protectedAreasCollection.FetchByTiles(candidateTiles, AnalysisTileZoom, followPointers: true, cancellationToken: cancellationToken);
 
         var metrics = CalculateMetrics(boundary, peaks, protectedAreas);
         foreach (var (key, value) in metrics)

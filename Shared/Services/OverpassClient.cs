@@ -339,8 +339,12 @@ namespace Shared.Services
             }
 
             var outerSegments = members
-                .Where(member => member.Role == "outer" && member.Geometry != null && member.Geometry.Count >= 2)
-                .Select(member => member.Geometry!.Select(node => new Position(node.Lon, node.Lat)));
+                .Where(member => member.Role == "outer" && member.Geometry != null)
+                .Select(member => member.Geometry!
+                    .Where(node => node != null)
+                    .Select(node => new Position(node!.Lon, node.Lat))
+                    .ToList())
+                .Where(segment => segment.Count >= 2);
 
             var rings = PolygonRingAssembler.AssembleRings(outerSegments);
 
@@ -359,6 +363,7 @@ namespace Shared.Services
         private static Polygon? BuildPolygonFromPath(IEnumerable<PathNode>? nodes)
         {
             var positions = nodes?
+                .Where(node => node != null)
                 .Select(node => new Position(node.Lon, node.Lat))
                 .ToList();
 

@@ -145,7 +145,7 @@ public class VisitedAreasWorker(
                 tileIndices.Add(tile);
         }
 
-        var areas = await _protectedAreasCollection.FetchByTiles(tileIndices, AreaTileZoom);
+        var areas = await _protectedAreasCollection.FetchByTiles(tileIndices, AreaTileZoom, followPointers: true);
         _logger.LogInformation("Found {Count} nearby areas", areas.Count());
         return areas;
     }

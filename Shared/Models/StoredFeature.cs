@@ -9,6 +9,13 @@ namespace Shared.Models
 {
     public class StoredFeature : IStoredInGrid, IDocument
     {
+        public const string PointerFlagProperty = "isPointer";
+        public const string PointerFeatureIdProperty = "pointerFeatureId";
+        public const string PointerStoredDocumentIdProperty = "storedDocumentId";
+        public const string PointerStoredXProperty = "storedX";
+        public const string PointerStoredYProperty = "storedY";
+        public const string PointerStoredZoomProperty = "storedZoom";
+
         public required string Id { get; set; }
         public string? FeatureId { get; set; }
         public string? Kind { get; set; }
@@ -54,6 +61,69 @@ namespace Shared.Models
                 return id;
 
             return $"{kind}:{NormalizeFeatureId(kind, id)}";
+        }
+
+        public static bool IsPointerDocument(StoredFeature feature)
+        {
+            if (!feature.Properties.TryGetValue(PointerFlagProperty, out var value))
+                return false;
+
+            return bool.TryParse(value?.ToString(), out bool parsed) && parsed;
+        }
+
+        public static string? GetPointerStoredDocumentId(StoredFeature feature)
+        {
+            return feature.Properties.TryGetValue(PointerStoredDocumentIdProperty, out var value)
+                ? value?.ToString()
+                : null;
+        }
+
+        public static StoredFeature CreatePointer(
+            string kind,
+            string featureId,
+            int x,
+            int y,
+            int zoom,
+            int storedX,
+            int storedY,
+            int storedZoom,
+            string storedDocumentId,
+            IDictionary<string, dynamic>? additionalProperties = null)
+        {
+            var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
+            var center = new Point(new Position(
+                (southWest.Lng + northEast.Lng) / 2,
+                (southWest.Lat + northEast.Lat) / 2));
+
+            var properties = new Dictionary<string, dynamic>
+            {
+                [PointerFlagProperty] = true,
+                [PointerFeatureIdProperty] = featureId,
+                [PointerStoredDocumentIdProperty] = storedDocumentId,
+                [PointerStoredXProperty] = storedX,
+                [PointerStoredYProperty] = storedY,
+                [PointerStoredZoomProperty] = storedZoom
+            };
+
+            if (additionalProperties != null)
+            {
+                foreach (var (key, value) in additionalProperties)
+                {
+                    properties[key] = value;
+                }
+            }
+
+            return new StoredFeature
+            {
+                Id = $"pointer:{kind}:{zoom}:{x}:{y}:{featureId}",
+                FeatureId = featureId,
+                Kind = kind,
+                X = x,
+                Y = y,
+                Zoom = zoom,
+                Geometry = center,
+                Properties = properties
+            };
         }
 
         public StoredFeature()

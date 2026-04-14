@@ -25,6 +25,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
 
         return docs
             .Where(d => !d.Id.StartsWith("empty-"))
+            .OrderBy(d => StoredFeature.IsPointerDocument(d))
             .DistinctBy(d => d.LogicalId);
     }
 
@@ -52,22 +53,45 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         var rawFeatures = await _overpassClient.GetAdminBoundaries(southWest, northEast, adminLevel, cancellationToken);
 
         var features = rawFeatures
-            .Select(feature =>
+            .SelectMany(feature =>
             {
                 var stored = new StoredFeature(feature, Kind, zoom);
                 // Namespace id by adminLevel so different levels don't collide on the same OSM id.
                 stored.Id = $"{Kind}:{adminLevel}:{stored.FeatureId}";
                 stored.Properties["adminLevel"] = adminLevel.ToString();
-                return stored;
+                var documents = new List<StoredFeature> { stored };
+
+                if (feature.Geometry is not BAMCIS.GeoJSON.Point && (stored.X != x || stored.Y != y))
+                {
+                    documents.Add(StoredFeature.CreatePointer(
+                        Kind,
+                        stored.FeatureId ?? stored.LogicalId,
+                        x,
+                        y,
+                        zoom,
+                        stored.X,
+                        stored.Y,
+                        stored.Zoom,
+                        stored.Id,
+                        new Dictionary<string, dynamic>
+                        {
+                            ["adminLevel"] = adminLevel.ToString()
+                        }));
+                }
+
+                return documents;
             })
             .ToList();
 
-        var empty = new StoredFeature(Kind, x, y, zoom)
+        if (features.Count == 0)
         {
-            Id = $"empty-{Kind}-{adminLevel}-{zoom}-{x}-{y}",
-        };
-        empty.Properties["adminLevel"] = adminLevel.ToString();
-        features.Add(empty);
+            var empty = new StoredFeature(Kind, x, y, zoom)
+            {
+                Id = $"empty-{Kind}-{adminLevel}-{zoom}-{x}-{y}",
+            };
+            empty.Properties["adminLevel"] = adminLevel.ToString();
+            features.Add(empty);
+        }
 
         await BulkUpsert(features, cancellationToken);
         return features;

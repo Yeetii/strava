@@ -26,7 +26,7 @@ namespace API.Endpoints.Peaks
             try
             {
                 int zoom = ParseZoom(req);
-                var peaks = await _peaksCollection.FetchByTiles([(x, y)], zoom, cancellationToken);
+                var peaks = await _peaksCollection.FetchByTiles([(x, y)], zoom, cancellationToken: cancellationToken);
 
                 var features = peaks.Select(p => p.ToFeature()).ToList();
                 var featureCollection = new FeatureCollection(features);

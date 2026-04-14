@@ -26,7 +26,7 @@ public class GetProtectedAreasByGrid([FromKeyedServices(FeatureKinds.ProtectedAr
         try
         {
             var zoom = ParseZoom(req);
-            var protectedAreas = await protectedAreasCollectionClient.FetchByTiles([(x, y)], zoom, cancellationToken);
+            var protectedAreas = await protectedAreasCollectionClient.FetchByTiles([(x, y)], zoom, cancellationToken: cancellationToken);
             var featureCollection = new FeatureCollection(protectedAreas.Select(area => area.ToFeature()).ToList());
 
             var response = req.CreateResponse(HttpStatusCode.OK);

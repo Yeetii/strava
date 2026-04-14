@@ -18,7 +18,11 @@ public class TiledCollectionClient(
     private readonly Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> _fetchFromOverpass = fetchFromOverpass;
     private readonly Func<IEnumerable<string>, CancellationToken, Task<IEnumerable<Feature>>>? _fetchByIds = fetchByIds;
 
-    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int zoom = 11, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<StoredFeature>> FetchByTiles(
+        IEnumerable<(int x, int y)> keys,
+        int zoom = 11,
+        bool followPointers = false,
+        CancellationToken cancellationToken = default)
     {
         if (!keys.Any())
             return [];
@@ -28,8 +32,15 @@ public class TiledCollectionClient(
         foreach (var (x, y) in missingTiles)
             docs.AddRange(await FetchMissingTile(x, y, zoom, cancellationToken));
 
-        return docs
+        var visibleDocuments = docs
             .Where(d => !d.Id.StartsWith("empty-"))
+            .ToList();
+
+        if (followPointers)
+            visibleDocuments = (await ResolvePointers(visibleDocuments, cancellationToken)).ToList();
+
+        return visibleDocuments
+            .OrderBy(d => StoredFeature.IsPointerDocument(d))
             .DistinctBy(d => d.LogicalId);
     }
 
@@ -117,12 +128,64 @@ public class TiledCollectionClient(
         var rawFeatures = await _fetchFromOverpass(southWest, northEast, cancellationToken);
 
         var features = rawFeatures
-            .Select(f => new StoredFeature(f, _kind, zoom))
+            .SelectMany(f => CreateDocumentsForTile(f, x, y, zoom))
             .ToList();
 
-        features.Add(new StoredFeature(_kind, x, y, zoom));
+        if (features.Count == 0)
+            features.Add(new StoredFeature(_kind, x, y, zoom));
 
         await BulkUpsert(features, cancellationToken);
         return features;
+    }
+
+    protected virtual IEnumerable<StoredFeature> CreateDocumentsForTile(Feature feature, int requestedX, int requestedY, int zoom)
+    {
+        var storedFeature = new StoredFeature(feature, _kind, zoom);
+        yield return storedFeature;
+
+        if (feature.Geometry is Point || (storedFeature.X == requestedX && storedFeature.Y == requestedY))
+            yield break;
+
+        yield return StoredFeature.CreatePointer(
+            _kind,
+            storedFeature.FeatureId ?? storedFeature.LogicalId,
+            requestedX,
+            requestedY,
+            zoom,
+            storedFeature.X,
+            storedFeature.Y,
+            storedFeature.Zoom,
+            storedFeature.Id);
+    }
+
+    private async Task<IEnumerable<StoredFeature>> ResolvePointers(IEnumerable<StoredFeature> documents, CancellationToken cancellationToken)
+    {
+        var documentList = documents.ToList();
+        var pointedIds = documentList
+            .Where(StoredFeature.IsPointerDocument)
+            .Select(StoredFeature.GetPointerStoredDocumentId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (pointedIds.Count == 0)
+            return documentList;
+
+        var resolvedDocuments = (await GetByIdsAsync(pointedIds!, cancellationToken))
+            .ToDictionary(document => document.Id, StringComparer.Ordinal);
+
+        return documentList
+            .Select(document =>
+            {
+                if (!StoredFeature.IsPointerDocument(document))
+                    return document;
+
+                var storedDocumentId = StoredFeature.GetPointerStoredDocumentId(document);
+                if (storedDocumentId != null && resolvedDocuments.TryGetValue(storedDocumentId, out var resolved))
+                    return resolved;
+
+                return document;
+            })
+            .Where(document => !StoredFeature.IsPointerDocument(document));
     }
 }

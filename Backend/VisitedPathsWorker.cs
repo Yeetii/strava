@@ -130,7 +130,7 @@ public class VisitedPathsWorker(
                 tileIndices.Add(tile);
         }
 
-        var paths = (await _pathsCollection.FetchByTiles(tileIndices, PathTileZoom)).ToList();
+        var paths = (await _pathsCollection.FetchByTiles(tileIndices, PathTileZoom, followPointers: true)).ToList();
         _logger.LogInformation("Found {Count} nearby paths", paths.Count);
         return paths.Select(p => p.ToFeature());
     }
