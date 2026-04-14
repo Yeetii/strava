@@ -26,6 +26,7 @@ public class CollectionClientBuilder(IServiceCollection services)
     /// </summary>
     public CollectionClientBuilder AddOsmFeatureCaches(string databaseName, string containerName)
     {
+        AddCollection<StoredFeature>(databaseName, containerName);
         AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Peak, op => op.GetPeaks, op => op.GetPeaksByIds);
         AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Path, op => op.GetPaths);
         AddKeyedTiledClient(databaseName, containerName, FeatureKinds.ProtectedArea, op => op.GetProtectedAreas);

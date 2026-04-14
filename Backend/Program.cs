@@ -79,6 +79,8 @@ var host = new HostBuilder()
             .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer)
             .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
 
+        services.AddSingleton<AdminBoundaryMetricsEnricher>();
+
         services.AddScoped(serviceProvider =>
         {
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();

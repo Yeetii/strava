@@ -31,6 +31,30 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         return documents;
     }
 
+    public async Task<(IReadOnlyList<S> Items, string? ContinuationToken)> ExecuteQueryPageAsync<S>(
+        QueryDefinition queryDefinition,
+        int maxItemCount,
+        string? continuationToken = null,
+        QueryRequestOptions? requestOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveRequestOptions = requestOptions ?? new QueryRequestOptions();
+        effectiveRequestOptions.MaxItemCount = maxItemCount;
+
+        using var feedIterator = _container.GetItemQueryIterator<S>(
+            queryDefinition,
+            continuationToken,
+            effectiveRequestOptions);
+
+        if (!feedIterator.HasMoreResults)
+        {
+            return ([], null);
+        }
+
+        var response = await feedIterator.ReadNextAsync(cancellationToken);
+        return (response.ToList(), response.ContinuationToken);
+    }
+
     public async Task<T> GetById(string id, PartitionKey partitionKey, CancellationToken cancellationToken = default)
     {
         return await _container.ReadItemAsync<T>(id, partitionKey, cancellationToken: cancellationToken);
