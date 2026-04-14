@@ -27,14 +27,14 @@ public static class GeometryCentroidHelper
         {
             // Odd: return the middle point
             var mid = coords.ElementAt(count / 2);
-            return new Coordinate(mid.Latitude, mid.Longitude);
+            return new Coordinate(mid.Longitude, mid.Latitude);
         }
         else
         {
             // Even: average the two central points
             var mid1 = coords.ElementAt((count / 2) - 1);
             var mid2 = coords.ElementAt(count / 2);
-            return new Coordinate((mid1.Latitude + mid2.Latitude) / 2, (mid1.Longitude + mid2.Longitude) / 2);
+            return new Coordinate((mid1.Longitude + mid2.Longitude) / 2, (mid1.Latitude + mid2.Latitude) / 2);
         }
     }
 
@@ -48,6 +48,6 @@ public static class GeometryCentroidHelper
             sumLat += pos.Latitude;
             sumLng += pos.Longitude;
         }
-        return new Coordinate(sumLat / count, sumLng / count);
+        return new Coordinate(sumLng / count, sumLat / count);
     }
 }

@@ -2,6 +2,7 @@ using BAMCIS.GeoJSON;
 using Shared.Geo;
 using Shared.Services;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text.Json.Serialization;
 
 namespace Shared.Models
@@ -19,7 +20,41 @@ namespace Shared.Models
         public required Geometry Geometry { get; set; }
 
         [JsonIgnore]
-        public string LogicalId => FeatureId ?? Id;
+        public string LogicalId => !string.IsNullOrWhiteSpace(FeatureId)
+            ? FeatureId
+            : NormalizeFeatureId(Kind, Id);
+
+        public static string NormalizeFeatureId(string? kind, string id)
+        {
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(kind))
+                return id;
+
+            var prefix = $"{kind}:";
+            if (!id.StartsWith(prefix, StringComparison.Ordinal))
+                return id;
+
+            var logicalId = id[prefix.Length..];
+            if (kind == FeatureKinds.AdminBoundary)
+            {
+                var separatorIndex = logicalId.IndexOf(':');
+                if (separatorIndex > 0
+                    && int.TryParse(logicalId[..separatorIndex], CultureInfo.InvariantCulture, out _)
+                    && separatorIndex + 1 < logicalId.Length)
+                {
+                    return logicalId[(separatorIndex + 1)..];
+                }
+            }
+
+            return logicalId;
+        }
+
+        public static string EnsurePrefixedFeatureId(string kind, string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                return id;
+
+            return $"{kind}:{NormalizeFeatureId(kind, id)}";
+        }
 
         public StoredFeature()
         {

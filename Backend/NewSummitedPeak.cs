@@ -27,7 +27,7 @@ namespace Backend
 
             foreach (var peak in peaks)
             {
-                var userId = input.First(x => x.PeakId == peak.LogicalId).UserId;
+                var userId = input.First(x => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, x.PeakId) == peak.LogicalId).UserId;
                 var sessions = userToSessionsDict[userId];
 
                 foreach (var sessionId in sessions)

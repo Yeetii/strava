@@ -10,11 +10,13 @@ public class TiledCollectionClient(
     Container container,
     ILoggerFactory loggerFactory,
     string kind,
-    Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> fetchFromOverpass)
+    Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> fetchFromOverpass,
+    Func<IEnumerable<string>, CancellationToken, Task<IEnumerable<Feature>>>? fetchByIds = null)
     : CollectionClient<StoredFeature>(container, loggerFactory)
 {
     protected readonly string _kind = kind;
     private readonly Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> _fetchFromOverpass = fetchFromOverpass;
+    private readonly Func<IEnumerable<string>, CancellationToken, Task<IEnumerable<Feature>>>? _fetchByIds = fetchByIds;
 
     public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int zoom = 11, CancellationToken cancellationToken = default)
     {
@@ -56,8 +58,46 @@ public class TiledCollectionClient(
 
     public async Task<IEnumerable<StoredFeature>> GetByFeatureIdsAsync(IEnumerable<string> featureIds, CancellationToken cancellationToken = default)
     {
-        var ids = featureIds.Select(id => $"{_kind}:{id}").ToList();
-        return await GetByIdsAsync(ids, cancellationToken);
+        var normalizedIds = featureIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => StoredFeature.NormalizeFeatureId(_kind, id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var ids = normalizedIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .SelectMany(id => new[]
+            {
+                id,
+                StoredFeature.EnsurePrefixedFeatureId(_kind, id)
+            })
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var storedFeatures = (await GetByIdsAsync(ids, cancellationToken)).ToList();
+        if (_fetchByIds == null)
+            return storedFeatures;
+
+        var fetchedIds = storedFeatures
+            .Select(feature => feature.LogicalId)
+            .ToHashSet(StringComparer.Ordinal);
+        var missingIds = normalizedIds
+            .Where(id => !fetchedIds.Contains(id))
+            .ToArray();
+
+        if (missingIds.Length == 0)
+            return storedFeatures;
+
+        var missingFeatures = (await _fetchByIds(missingIds, cancellationToken))
+            .Select(feature => new StoredFeature(feature, _kind))
+            .ToList();
+
+        if (missingFeatures.Count == 0)
+            return storedFeatures;
+
+        await BulkUpsert(missingFeatures, cancellationToken);
+        storedFeatures.AddRange(missingFeatures);
+        return storedFeatures;
     }
 
     public async Task<IEnumerable<StoredFeature>> GeoSpatialFetch(Coordinate center, int radius, CancellationToken cancellationToken = default)

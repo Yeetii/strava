@@ -26,7 +26,7 @@ public class CollectionClientBuilder(IServiceCollection services)
     /// </summary>
     public CollectionClientBuilder AddOsmFeatureCaches(string databaseName, string containerName)
     {
-        AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Peak, op => op.GetPeaks);
+        AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Peak, op => op.GetPeaks, op => op.GetPeaksByIds);
         AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Path, op => op.GetPaths);
         AddKeyedTiledClient(databaseName, containerName, FeatureKinds.ProtectedArea, op => op.GetProtectedAreas);
 
@@ -45,7 +45,8 @@ public class CollectionClientBuilder(IServiceCollection services)
         string databaseName,
         string containerName,
         string kind,
-        Func<OverpassClient, Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<BAMCIS.GeoJSON.Feature>>>> fetcherSelector)
+        Func<OverpassClient, Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<BAMCIS.GeoJSON.Feature>>>> fetcherSelector,
+        Func<OverpassClient, Func<IEnumerable<string>, CancellationToken, Task<IEnumerable<BAMCIS.GeoJSON.Feature>>>>? fetchByIdsSelector = null)
     {
         services.AddKeyedSingleton(kind, (sp, _) =>
         {
@@ -53,7 +54,12 @@ public class CollectionClientBuilder(IServiceCollection services)
             var container = cosmos.GetContainer(databaseName, containerName);
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
             var overpass = sp.GetRequiredService<OverpassClient>();
-            return new TiledCollectionClient(container, loggerFactory, kind, fetcherSelector(overpass));
+            return new TiledCollectionClient(
+                container,
+                loggerFactory,
+                kind,
+                fetcherSelector(overpass),
+                fetchByIdsSelector?.Invoke(overpass));
         });
     }
 }

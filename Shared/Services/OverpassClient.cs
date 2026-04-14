@@ -156,6 +156,60 @@ namespace Shared.Services
             return ConvertRawPeaksToFeatures(rootPeaks.Elements);
         }
 
+        public async Task<IEnumerable<Feature>> GetPeaksByIds(IEnumerable<string> peakIds, CancellationToken cancellationToken = default)
+        {
+            const int maxIdsPerRequest = 100;
+            var normalizedIds = peakIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, id))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            if (normalizedIds.Length == 0)
+                return [];
+
+            var features = new List<Feature>();
+            foreach (var batch in normalizedIds.Chunk(maxIdsPerRequest))
+            {
+                string query = $"[out:json][timeout:400];node(id:{string.Join(',', batch)});out body;";
+                string encodedQuery = Uri.EscapeDataString(query);
+
+                List<RawPeaks>? rawPeaksBatch = null;
+                foreach (var mirror in mirrors)
+                {
+                    using var response = await _client.GetAsync($"{mirror}?data={encodedQuery}", cancellationToken);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        _logger.LogWarning("Overpass mirror {Mirror} returned {StatusCode} when fetching peaks by id.", mirror, (int)response.StatusCode);
+                        continue;
+                    }
+
+                    string rawPeaks = await response.Content.ReadAsStringAsync(cancellationToken);
+                    if (string.IsNullOrWhiteSpace(rawPeaks) || !(rawPeaks.TrimStart().StartsWith("{") || rawPeaks.TrimStart().StartsWith("[")))
+                    {
+                        _logger.LogWarning("Overpass mirror {Mirror} returned a non-JSON response when fetching peaks by id.", mirror);
+                        continue;
+                    }
+
+                    RootPeaks rootPeaks = JsonConvert.DeserializeObject<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
+                    rawPeaksBatch = rootPeaks.Elements
+                        .Where(p => p.Tags.TryGetValue("natural", out var natural)
+                            && string.Equals(natural.ToString(), "peak", StringComparison.Ordinal))
+                        .ToList();
+
+                    if (rawPeaksBatch.Count > 0)
+                        break;
+                }
+
+                if (rawPeaksBatch == null || rawPeaksBatch.Count == 0)
+                    continue;
+
+                features.AddRange(ConvertRawPeaksToFeatures(rawPeaksBatch));
+            }
+
+            return features;
+        }
+
         private static IEnumerable<Feature> ConvertRawPeaksToFeatures(IEnumerable<RawPeaks> rawPeaks)
         {
             foreach (var p in rawPeaks)
