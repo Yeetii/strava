@@ -121,7 +121,15 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
     public async Task UpsertDocument(T document, CancellationToken cancellationToken = default)
     {
-        await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
+        await semaphore.WaitAsync(cancellationToken);
+        try
+        {
+            await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
+        }
+        finally
+        {
+            semaphore.Release();
+        }
     }
     public async Task BulkUpsert(IEnumerable<T> documents, CancellationToken cancellationToken = default)
     {
