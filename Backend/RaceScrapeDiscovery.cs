@@ -126,6 +126,151 @@ public static partial class RaceScrapeDiscovery
         return false;
     }
 
+    // Parses the response from POST https://tracedetrail.fr/event/getEventsCalendar/all/all/all
+    // Each event has traceIDs (underscore-separated ints), distances (underscore-separated km values), nom
+    public static IReadOnlyCollection<TraceDeTrailScrapeTarget> ParseTraceDeTrailCalendarEvents(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        // Response is {"success":1,"data":[...]}
+        if (root.ValueKind == JsonValueKind.Object
+            && TryGetPropertyIgnoreCase(root, "data", out var dataEl)
+            && dataEl.ValueKind == JsonValueKind.Array)
+        {
+            root = dataEl;
+        }
+        else if (root.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var targets = new List<TraceDeTrailScrapeTarget>();
+
+        foreach (var evt in root.EnumerateArray())
+        {
+            if (evt.ValueKind != JsonValueKind.Object)
+                continue;
+
+            if (!TryGetPropertyIgnoreCase(evt, "traceIDs", out var traceIDsEl) || traceIDsEl.ValueKind != JsonValueKind.String)
+                continue;
+
+            var traceIds = (traceIDsEl.GetString() ?? string.Empty)
+                .Split('_', StringSplitOptions.RemoveEmptyEntries);
+
+            if (traceIds.Length == 0)
+                continue;
+
+            var name = FindStringValue(evt, ["nom", "name"]);
+
+            string[]? distanceParts = null;
+            if (TryGetPropertyIgnoreCase(evt, "distances", out var distancesEl) && distancesEl.ValueKind == JsonValueKind.String)
+                distanceParts = distancesEl.GetString()?.Split('_', StringSplitOptions.RemoveEmptyEntries);
+
+            for (int i = 0; i < traceIds.Length; i++)
+            {
+                if (!int.TryParse(traceIds[i], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var traceId))
+                    continue;
+
+                double? distance = null;
+                if (distanceParts != null && i < distanceParts.Length &&
+                    double.TryParse(distanceParts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+                    distance = d;
+
+                targets.Add(new TraceDeTrailScrapeTarget(traceId, name, distance));
+            }
+        }
+
+        return targets;
+    }
+
+    // Parses the response from GET https://tracedetrail.fr/trace/getTraceItra/{id}
+    // Coordinates are in EPSG:3857 (Web Mercator). Only "gpx"-tagged points are the primary route.
+    // Returns WGS84 (longitude, latitude) positions and total elevation stats from the last point.
+    public static TraceDeTrailTraceData ParseTraceDeTrailTrace(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new TraceDeTrailTraceData([], null, null);
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        // Response is {"success":1,"trace":{...},"geometry":"[{...}]"}
+        // The geometry field is a JSON-encoded string containing the points array.
+        if (root.ValueKind == JsonValueKind.Object
+            && TryGetPropertyIgnoreCase(root, "geometry", out var geometryEl)
+            && geometryEl.ValueKind == JsonValueKind.String)
+        {
+            var geometryJson = geometryEl.GetString();
+            if (string.IsNullOrWhiteSpace(geometryJson))
+                return new TraceDeTrailTraceData([], null, null);
+
+            double? distance = null;
+            double? elevationGain = null;
+            if (TryGetPropertyIgnoreCase(root, "trace", out var traceEl) && traceEl.ValueKind == JsonValueKind.Object)
+            {
+                if (TryGetPropertyIgnoreCase(traceEl, "distance", out var distEl) && distEl.ValueKind == JsonValueKind.String
+                    && double.TryParse(distEl.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+                    distance = d;
+                if (TryGetPropertyIgnoreCase(traceEl, "dev_pos", out var gainEl) && gainEl.ValueKind == JsonValueKind.String
+                    && double.TryParse(gainEl.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var g))
+                    elevationGain = g;
+            }
+
+            var traceData = ParseTracePoints(geometryJson);
+            return traceData with { TotalDistanceKm = distance ?? traceData.TotalDistanceKm, ElevationGain = elevationGain ?? traceData.ElevationGain };
+        }
+
+        // Fallback: root might already be the array
+        if (root.ValueKind == JsonValueKind.Array)
+            return ParseTracePoints(json);
+
+        return new TraceDeTrailTraceData([], null, null);
+    }
+
+    private static TraceDeTrailTraceData ParseTracePoints(string pointsJson)
+    {
+        using var doc = JsonDocument.Parse(pointsJson);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            return new TraceDeTrailTraceData([], null, null);
+
+        const double EarthHalfCircumference = 20037508.34;
+        var points = new List<(double Lng, double Lat)>();
+        double? totalDistanceKm = null;
+        double? elevationGain = null;
+
+        foreach (var point in doc.RootElement.EnumerateArray())
+        {
+            if (point.ValueKind != JsonValueKind.Object)
+                continue;
+
+            // Only primary route points
+            if (TryGetPropertyIgnoreCase(point, "o", out var tagEl) && tagEl.ValueKind == JsonValueKind.String &&
+                !string.Equals(tagEl.GetString(), "gpx", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (!TryGetPropertyIgnoreCase(point, "lon", out var lonEl) || !lonEl.TryGetDouble(out var x))
+                continue;
+            if (!TryGetPropertyIgnoreCase(point, "lat", out var latEl) || !latEl.TryGetDouble(out var y))
+                continue;
+
+            var lng = x / EarthHalfCircumference * 180.0;
+            var lat = Math.Atan(Math.Exp(y / EarthHalfCircumference * Math.PI)) * 360.0 / Math.PI - 90.0;
+            points.Add((lng, lat));
+
+            // Track cumulative stats from the last point
+            if (TryGetPropertyIgnoreCase(point, "x", out var distEl) && distEl.TryGetDouble(out var dist))
+                totalDistanceKm = dist;
+            if (TryGetPropertyIgnoreCase(point, "dp", out var gainEl) && gainEl.TryGetDouble(out var gain))
+                elevationGain = gain;
+        }
+
+        return new TraceDeTrailTraceData(points, totalDistanceKm, elevationGain);
+    }
+
     private static string UnescapeJsonSlash(string value)
     {
         return value.Replace("\\/", "/", StringComparison.Ordinal);
@@ -143,3 +288,18 @@ public static partial class RaceScrapeDiscovery
 }
 
 public record RacePageCandidate(Uri PageUrl, string? Name, double? Distance, double? ElevationGain);
+
+public record RaceScrapeTarget(
+    Uri GpxUrl,
+    Uri SourceUrl,
+    Uri CoursePageUrl,
+    string? Name,
+    double? Distance,
+    double? ElevationGain);
+
+public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance);
+
+public record TraceDeTrailTraceData(
+    IReadOnlyList<(double Lng, double Lat)> Points,
+    double? TotalDistanceKm,
+    double? ElevationGain);
