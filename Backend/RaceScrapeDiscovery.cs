@@ -100,6 +100,58 @@ public static partial class RaceScrapeDiscovery
             .ToList();
     }
 
+    // Parses the response from https://www.loppkartan.se/markers-se.json
+    // Response shape: { generatedAt, country, markers: [{ id, name, latitude, longitude, ... }] }
+    public static IReadOnlyCollection<LoppkartanScrapeTarget> ParseLoppkartanMarkers(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            return [];
+
+        if (!TryGetPropertyIgnoreCase(root, "markers", out var markersEl) || markersEl.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var targets = new List<LoppkartanScrapeTarget>();
+        foreach (var marker in markersEl.EnumerateArray())
+        {
+            if (marker.ValueKind != JsonValueKind.Object)
+                continue;
+
+            var markerId = FindStringValue(marker, ["id"]);
+            if (string.IsNullOrWhiteSpace(markerId))
+                continue;
+
+            if (!TryGetDoubleValue(marker, "latitude", out var latitude))
+                continue;
+            if (!TryGetDoubleValue(marker, "longitude", out var longitude))
+                continue;
+
+            targets.Add(new LoppkartanScrapeTarget(
+                MarkerId: markerId,
+                Name: FindStringValue(marker, ["name"]),
+                Latitude: latitude,
+                Longitude: longitude,
+                Website: FindStringValue(marker, ["website"]),
+                Location: FindStringValue(marker, ["location"]),
+                County: FindStringValue(marker, ["county"]),
+                RaceDate: FindStringValue(marker, ["race_date"]),
+                RaceType: FindStringValue(marker, ["race_type"]),
+                TypeLocal: FindStringValue(marker, ["type_local"]),
+                DomainName: FindStringValue(marker, ["domain_name"]),
+                OriginCountry: FindStringValue(marker, ["origin_country"]),
+                DistanceVerbose: FindStringValue(marker, ["distance_verbose"])));
+        }
+
+        return targets
+            .GroupBy(t => t.MarkerId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+    }
+
     private static string? FindStringValue(JsonElement element, IEnumerable<string> keys)
     {
         foreach (var key in keys)
@@ -123,6 +175,22 @@ public static partial class RaceScrapeDiscovery
         }
 
         value = default;
+        return false;
+    }
+
+    private static bool TryGetDoubleValue(JsonElement element, string key, out double value)
+    {
+        value = default;
+        if (!TryGetPropertyIgnoreCase(element, key, out var property))
+            return false;
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetDouble(out value))
+            return true;
+
+        if (property.ValueKind == JsonValueKind.String
+            && double.TryParse(property.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value))
+            return true;
+
         return false;
     }
 
@@ -298,6 +366,21 @@ public record RaceScrapeTarget(
     double? ElevationGain);
 
 public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance);
+
+public record LoppkartanScrapeTarget(
+    string MarkerId,
+    string? Name,
+    double Latitude,
+    double Longitude,
+    string? Website,
+    string? Location,
+    string? County,
+    string? RaceDate,
+    string? RaceType,
+    string? TypeLocal,
+    string? DomainName,
+    string? OriginCountry,
+    string? DistanceVerbose);
 
 public record TraceDeTrailTraceData(
     IReadOnlyList<(double Lng, double Lat)> Points,

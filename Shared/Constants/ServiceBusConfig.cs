@@ -10,5 +10,6 @@ namespace Shared.Constants
         public const string ActivityProcessed = "activityprocessed";
         public const string UpsertUtmbRace = "upsertUtmbRace";
         public const string UpsertTraceDeTrailRace = "upsertTraceDeTrailRace";
+        public const string UpsertLoppkartanRace = "upsertLoppkartanRace";
     }
 }
