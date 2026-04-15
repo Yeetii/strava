@@ -165,6 +165,27 @@ OSM hiking/cycling paths in a slippy tile (zoom 11), fetched from cache or Overp
 
 ---
 
+## Races
+
+### `GET /races/{x}/{y}`
+
+Trail running race routes indexed by slippy tile.
+
+**Path params**
+| Param | Type |
+|---|---|
+| `x` | int |
+| `y` | int |
+
+**Query params**
+| Param | Type | Default |
+|---|---|---|
+| `zoom` | int | `8` |
+
+**Response** `200 OK` — GeoJSON `FeatureCollection` of race LineStrings.
+
+---
+
 ### `GET /activities/{x}/{y}`
 
 Paths in a slippy tile (zoom 11), same data source as `/paths/{x}/{y}`.
