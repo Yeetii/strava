@@ -20,10 +20,7 @@ public class QueueScrapeLoppkartanJobs(
     {
         var httpClient = httpClientFactory.CreateClient();
         var json = await httpClient.GetStringAsync(MarkersUrl, cancellationToken);
-        var targets = RaceScrapeDiscovery.ParseLoppkartanMarkers(json)
-            .GroupBy(t => t.MarkerId, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .ToList();
+        var targets = RaceScrapeDiscovery.ParseLoppkartanMarkers(json);
 
         logger.LogInformation("Loppkartan: discovered {Count} unique markers", targets.Count);
 
