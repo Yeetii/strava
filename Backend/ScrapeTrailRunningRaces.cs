@@ -14,6 +14,7 @@ public partial class ScrapeTrailRunningRaces(
     ILogger<ScrapeTrailRunningRaces> logger)
 {
     private const int Zoom = RaceCollectionClient.DefaultZoom;
+    private static readonly Uri UtmbSearchApiUrl = new("https://api.utmb.world/search/races?lang=en&limit=400");
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly RaceCollectionClient _racesCollectionClient = racesCollectionClient;
     private readonly ILogger<ScrapeTrailRunningRaces> _logger = logger;
@@ -24,21 +25,10 @@ public partial class ScrapeTrailRunningRaces(
         [TimerTrigger("0 0 0 * * 1")] TimerInfo timerInfo,
         CancellationToken cancellationToken)
     {
-        var sourceUrls = ParseSourceUrls(Environment.GetEnvironmentVariable("RaceScrapeSourceUrls"));
-        if (sourceUrls.Count == 0)
-        {
-            _logger.LogWarning("No race sources configured. Set RaceScrapeSourceUrls to begin scraping.");
-            return;
-        }
-
         var httpClient = _httpClientFactory.CreateClient();
         var races = new List<StoredFeature>();
 
-        var scrapeTargets = new List<RaceScrapeTarget>();
-        foreach (var sourceUrl in sourceUrls)
-        {
-            scrapeTargets.AddRange(await DiscoverScrapeTargetsAsync(httpClient, sourceUrl, cancellationToken));
-        }
+        var scrapeTargets = await DiscoverScrapeTargetsAsync(httpClient, UtmbSearchApiUrl, cancellationToken);
 
         foreach (var target in scrapeTargets.GroupBy(target => target.GpxUrl.AbsoluteUri, StringComparer.OrdinalIgnoreCase).Select(group => group.First()))
         {
@@ -86,20 +76,6 @@ public partial class ScrapeTrailRunningRaces(
 
         await _racesCollectionClient.BulkUpsert(races, cancellationToken);
         _logger.LogInformation("Race scrape completed. Upserted {RaceCount} routes", races.Count);
-    }
-
-    private static List<Uri> ParseSourceUrls(string? configuredUrls)
-    {
-        if (string.IsNullOrWhiteSpace(configuredUrls))
-            return [];
-
-        return configuredUrls
-            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(text => Uri.TryCreate(text, UriKind.Absolute, out var uri) ? uri : null)
-            .Where(uri => uri is { Scheme: "http" or "https" })
-            .Cast<Uri>()
-            .Distinct()
-            .ToList();
     }
 
     private async Task<IReadOnlyCollection<RaceScrapeTarget>> DiscoverScrapeTargetsAsync(HttpClient httpClient, Uri sourceUrl, CancellationToken cancellationToken)
