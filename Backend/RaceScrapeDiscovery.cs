@@ -193,6 +193,7 @@ public static partial class RaceScrapeDiscovery
     [GeneratedRegex("href\\s*=\\s*[\"'](?<href>[^\"']+)[\"']", RegexOptions.IgnoreCase)]
     private static partial Regex HrefRegex();
 
+    // Matches both normal URLs (https://...) and JSON-escaped URLs (https:\/\/...).
     [GeneratedRegex("(?<url>https?:\\\\?/\\\\?/[^\"'\\s<>]+?\\.gpx(?:\\?[^\"'\\s<>]*)?)", RegexOptions.IgnoreCase)]
     private static partial Regex AbsoluteGpxRegex();
 
