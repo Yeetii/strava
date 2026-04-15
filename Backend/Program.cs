@@ -11,6 +11,7 @@ using Shared.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
 using Shared.Constants;
+using Microsoft.Extensions.Logging;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
@@ -78,6 +79,14 @@ var host = new HostBuilder()
             .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
             .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer)
             .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
+
+        services.AddSingleton(serviceProvider =>
+        {
+            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.RacesContainer);
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            return new RaceCollectionClient(container, loggerFactory);
+        });
 
         services.AddSingleton<AdminBoundaryMetricsEnricher>();
 

@@ -13,6 +13,7 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.SignalRService" Version="1.14.1" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="1.18.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.CosmosDB" Version="4.11.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" Version="4.3.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />

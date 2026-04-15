@@ -15,7 +15,7 @@
             "maxAutoLockRenewalDuration": "00:10:00",
             "maxConcurrentCalls": 1,
             "prefetchCount": 0,
-            "maxMessageBatchSize": 20
+            "maxMessageBatchSize": 50
         }
     }
 }

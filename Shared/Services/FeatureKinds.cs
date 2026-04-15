@@ -6,4 +6,5 @@ public static class FeatureKinds
     public const string Path = "path";
     public const string ProtectedArea = "protectedArea";
     public const string AdminBoundary = "adminBoundary";
+    public const string Race = "race";
 }
