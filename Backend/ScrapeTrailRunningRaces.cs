@@ -49,7 +49,7 @@ public partial class ScrapeTrailRunningRaces(
                         continue;
                     }
 
-                    var id = HashString(gpxUrl.AbsoluteUri);
+                    var routeId = HashString(gpxUrl.AbsoluteUri);
                     var lineString = new LineString(parsedRoute.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
                     var feature = new Feature(
                         lineString,
@@ -62,7 +62,7 @@ public partial class ScrapeTrailRunningRaces(
                             ["lastScrapedUtc"] = DateTime.UtcNow.ToString("o")
                         },
                         null,
-                        new FeatureId(id));
+                        new FeatureId(routeId));
 
                     races.Add(new StoredFeature(feature, FeatureKinds.Race, Zoom));
                 }
@@ -109,9 +109,7 @@ public partial class ScrapeTrailRunningRaces(
             .Select(href => Uri.TryCreate(sourceUrl, href, out var uri) ? uri : null)
             .Where(uri => uri is { Scheme: "http" or "https" })
             .Cast<Uri>()
-            .Where(uri =>
-                uri.AbsolutePath.EndsWith(".gpx", StringComparison.OrdinalIgnoreCase)
-                || uri.AbsoluteUri.Contains("gpx", StringComparison.OrdinalIgnoreCase))
+            .Where(uri => uri.AbsolutePath.EndsWith(".gpx", StringComparison.OrdinalIgnoreCase))
             .Distinct()
             .ToList();
 

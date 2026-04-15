@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Xml;
 using System.Xml.Linq;
 using Shared.Models;
 
@@ -6,7 +7,7 @@ namespace Shared.Services;
 
 public static class GpxParser
 {
-    public static ParsedGpxRoute? TryParseRoute(string gpxContent, string fallbackName = "Unnamed race")
+    public static ParsedGpxRoute? TryParseRoute(string gpxContent, string fallbackName = "Unnamed route")
     {
         if (string.IsNullOrWhiteSpace(gpxContent))
             return null;
@@ -14,7 +15,14 @@ public static class GpxParser
         XDocument document;
         try
         {
-            document = XDocument.Parse(gpxContent, LoadOptions.None);
+            using var stringReader = new StringReader(gpxContent);
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null
+            };
+            using var xmlReader = XmlReader.Create(stringReader, settings);
+            document = XDocument.Load(xmlReader, LoadOptions.None);
         }
         catch
         {
