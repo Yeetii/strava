@@ -5,10 +5,19 @@ namespace Backend;
 
 public static partial class RaceScrapeDiscovery
 {
-    public static bool IsUtmbSearchApi(Uri sourceUrl)
+    public const string LastScrapedUtcProperty = "lastScrapedUtc";
+
+    // Derives a stable source-scoped ID from the UTMB race page URL.
+    // e.g. https://julianalps.utmb.world/races/120K → "utmb:julianalps/120K"
+    public static string BuildUtmbFeatureId(Uri coursePageUrl)
     {
-        return string.Equals(sourceUrl.Host, "api.utmb.world", StringComparison.OrdinalIgnoreCase)
-            && sourceUrl.AbsolutePath.Contains("/search/races", StringComparison.OrdinalIgnoreCase);
+        var host = coursePageUrl.Host;
+        const string utmbSuffix = ".utmb.world";
+        var subdomain = host.EndsWith(utmbSuffix, StringComparison.OrdinalIgnoreCase)
+            ? host[..^utmbSuffix.Length]
+            : host;
+        var path = coursePageUrl.AbsolutePath.Trim('/');
+        return $"utmb:{subdomain}/{path}";
     }
 
     // Parses the response from https://api.utmb.world/search/races?lang=en&limit=400
@@ -85,10 +94,9 @@ public static partial class RaceScrapeDiscovery
         if (string.IsNullOrWhiteSpace(html))
             return [];
 
-        var matches = new List<string>();
-        matches.AddRange(HrefRegex().Matches(html).Select(match => match.Groups["href"].Value));
-        matches.AddRange(AbsoluteGpxRegex().Matches(html).Select(match => match.Groups["url"].Value));
-        matches.AddRange(RelativeGpxRegex().Matches(html).Select(match => match.Groups["url"].Value));
+        var matches = HrefRegex().Matches(html).Select(m => m.Groups["href"].Value)
+            .Concat(AbsoluteGpxRegex().Matches(html).Select(m => m.Groups["url"].Value))
+            .Concat(RelativeGpxRegex().Matches(html).Select(m => m.Groups["url"].Value));
 
         return matches
             .Select(UnescapeJsonSlash)

@@ -14,7 +14,6 @@ public class UpsertUtmbRaceWorker(
     ILogger<UpsertUtmbRaceWorker> logger)
 {
     private const int Zoom = RaceCollectionClient.DefaultZoom;
-    private const string LastScrapedUtcProperty = "lastScrapedUtc";
 
     [Function(nameof(UpsertUtmbRaceWorker))]
     public async Task Run(
@@ -49,7 +48,7 @@ public class UpsertUtmbRaceWorker(
                     continue;
                 }
 
-                var routeId = BuildUtmbFeatureId(target.CoursePageUrl);
+                var routeId = RaceScrapeDiscovery.BuildUtmbFeatureId(target.CoursePageUrl);
                 var lineString = new LineString(parsedRoute.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
                 var properties = new Dictionary<string, dynamic>
                 {
@@ -58,7 +57,7 @@ public class UpsertUtmbRaceWorker(
                     ["coursePageUrl"] = target.CoursePageUrl.AbsoluteUri,
                     ["gpxUrl"] = target.GpxUrl.AbsoluteUri,
                     ["gpx"] = gpxContent,
-                    [LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
+                    [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
                 };
 
                 if (target.Distance.HasValue)
@@ -78,18 +77,5 @@ public class UpsertUtmbRaceWorker(
         }
 
         logger.LogInformation("UTMB: upserted {Count}/{Total} races in batch", upsertedCount, messages.Length);
-    }
-
-    // Derives a stable source-scoped ID from the UTMB race page URL.
-    // e.g. https://julianalps.utmb.world/races/120K → "utmb:julianalps/120K"
-    private static string BuildUtmbFeatureId(Uri coursePageUrl)
-    {
-        var host = coursePageUrl.Host;
-        const string utmbSuffix = ".utmb.world";
-        var subdomain = host.EndsWith(utmbSuffix, StringComparison.OrdinalIgnoreCase)
-            ? host[..^utmbSuffix.Length]
-            : host;
-        var path = coursePageUrl.AbsolutePath.Trim('/');
-        return $"utmb:{subdomain}/{path}";
     }
 }

@@ -15,7 +15,6 @@ public class UpsertTraceDeTrailRaceWorker(
 {
     private const int Zoom = RaceCollectionClient.DefaultZoom;
     private const string BaseUrl = "https://tracedetrail.fr";
-    private const string LastScrapedUtcProperty = "lastScrapedUtc";
 
     [Function(nameof(UpsertTraceDeTrailRaceWorker))]
     public async Task Run(
@@ -57,7 +56,7 @@ public class UpsertTraceDeTrailRaceWorker(
                 {
                     ["name"] = target.Name ?? $"TraceDeTrail {target.TraceId}",
                     ["sourceUrl"] = url,
-                    [LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
+                    [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
                 };
 
                 var distance = target.Distance ?? traceData.TotalDistanceKm;
