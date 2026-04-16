@@ -72,7 +72,7 @@ public class GpxParserTests
     [Fact]
     public void CalculateDistanceKm_ComputesReasonableDistanceForKnownCoordinates()
     {
-        // Stockholm (59.3293, 18.0686) to Uppsala (59.8586, 17.6389) is approx 64 km.
+        // Stockholm (lng=18.0686, lat=59.3293) to Uppsala (lng=17.6389, lat=59.8586) is approx 64 km.
         var coords = new[]
         {
             new Coordinate(18.0686, 59.3293),

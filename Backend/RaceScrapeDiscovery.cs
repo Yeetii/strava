@@ -91,7 +91,7 @@ public static partial class RaceScrapeDiscovery
         if (bestToken is null)
             return null;
 
-        // Accept the match only if it is within 25 % of the GPX distance.
+        // Accept the match only if it is within 25% of the GPX distance.
         var tolerance = distanceKm * 0.25;
         return bestDelta <= tolerance ? bestToken : null;
     }

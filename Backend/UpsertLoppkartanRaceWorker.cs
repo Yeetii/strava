@@ -80,11 +80,10 @@ public class UpsertLoppkartanRaceWorker(
                     for (int i = 0; i < routes.Count; i++)
                     {
                         var (route, gpxUrl) = routes[i];
-                        var routeProps = new Dictionary<string, dynamic>(properties)
-                        {
-                            [RaceScrapeDiscovery.PropName] = route.Name,
-                            ["gpxUrl"] = gpxUrl.AbsoluteUri
-                        };
+                        var routeProps = new Dictionary<string, dynamic>(properties);
+                        if (!string.IsNullOrWhiteSpace(route.Name))
+                            routeProps[RaceScrapeDiscovery.PropName] = route.Name;
+                        routeProps["gpxUrl"] = gpxUrl.AbsoluteUri;
 
                         var gpxDistanceKm = GpxParser.CalculateDistanceKm(route.Coordinates);
                         var matchedDistance = RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxDistanceKm, target.DistanceVerbose);
