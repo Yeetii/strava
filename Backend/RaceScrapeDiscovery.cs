@@ -522,6 +522,7 @@ public static partial class RaceScrapeDiscovery
 
             var name = FindStringValue(evt, ["nom", "name"]);
             var country = FindStringValue(evt, ["country", "pays", "countryCode"]);
+            var slug = FindStringValue(evt, ["label",]);
 
             string[]? distanceParts = null;
             if (TryGetPropertyIgnoreCase(evt, "distances", out var distancesEl) && distancesEl.ValueKind == JsonValueKind.String)
@@ -537,7 +538,7 @@ public static partial class RaceScrapeDiscovery
                     double.TryParse(distanceParts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
                     distance = d;
 
-                targets.Add(new TraceDeTrailScrapeTarget(traceId, name, distance, country));
+                targets.Add(new TraceDeTrailScrapeTarget(traceId, name, distance, country, slug));
             }
         }
 
@@ -668,7 +669,7 @@ public record RaceScrapeTarget(
     IReadOnlyList<string>? RunningStones = null,
     string? ImageUrl = null);
 
-public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance, string? Country);
+public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance, string? Country, string? Slug);
 
 public record LoppkartanScrapeTarget(
     string MarkerId,

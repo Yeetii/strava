@@ -30,11 +30,11 @@ public class QueueScrapeTraceDeTrailJobs(
             {
                 var request = new HttpRequestMessage(HttpMethod.Post, CalendarUrl)
                 {
-                    Content = new FormUrlEncodedContent(new[]
-                    {
+                    Content = new FormUrlEncodedContent(
+                    [
                         new KeyValuePair<string, string>("month", date.Month.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                         new KeyValuePair<string, string>("year", date.Year.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                    }),
+                    ]),
                 };
                 request.Headers.Referrer = new Uri(CalendarReferer);
 

@@ -48,10 +48,10 @@ public class UpsertTraceDeTrailRaceWorker(
             }
 
             var lineString = new LineString(traceData.Points.Select(p => new Position(p.Lng, p.Lat)).ToList());
-            var tracePageUrl = $"{BaseUrl}/en/trace/viewTrace/{target.TraceId}";
+            var tracePageUrl = $"{BaseUrl}/en/trace/viewTrace/{target.Slug}";
             var properties = new Dictionary<string, dynamic>
             {
-                [RaceScrapeDiscovery.PropName] = target.Name ?? $"TraceDeTrail {target.TraceId}",
+                [RaceScrapeDiscovery.PropName] = target.Name ?? $"TraceDeTrail {target.Slug ?? target.TraceId.ToString()}",
                 ["sourceUrl"] = url,
                 [RaceScrapeDiscovery.PropWebsite] = tracePageUrl,
                 [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
@@ -66,7 +66,7 @@ public class UpsertTraceDeTrailRaceWorker(
             if (!string.IsNullOrWhiteSpace(normalizedCountry))
                 properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
 
-            var featureId = $"tracedetrail:{target.TraceId}";
+            var featureId = $"tracedetrail:{target.Slug ?? target.TraceId.ToString()}";
             var feature = new Feature(lineString, properties, null, new FeatureId(featureId));
             var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
             await racesCollectionClient.UpsertDocument(stored, cancellationToken);
