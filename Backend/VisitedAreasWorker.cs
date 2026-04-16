@@ -14,9 +14,12 @@ public class VisitedAreasWorker(
     ILogger<VisitedAreasWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<VisitedArea> _visitedAreasCollection,
-    [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient _protectedAreasCollection)
+    [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient _protectedAreasCollection,
+    AdminBoundariesCollectionClient _adminBoundariesCollection)
 {
     private const int AreaTileZoom = 8;
+    private const int RegionTileZoom = 6;
+    private const int AdminLevelRegion = 4;
 
     [Function(nameof(VisitedAreasWorker))]
     public async Task Run(
@@ -63,6 +66,9 @@ public class VisitedAreasWorker(
             var areaId = area.LogicalId;
             var documentId = activity.UserId + "-" + areaId;
             var partitionKey = new PartitionKey(activity.UserId);
+            var areaType = area.Kind == FeatureKinds.AdminBoundary
+                ? "region"
+                : (area.Properties.TryGetValue("areaType", out var existingAreaType) ? existingAreaType?.ToString() ?? "protected_area" : "protected_area");
             var doc = await _visitedAreasCollection.GetByIdMaybe(documentId, partitionKey)
                 ?? new VisitedArea
                 {
@@ -70,7 +76,7 @@ public class VisitedAreasWorker(
                     UserId = activity.UserId,
                     AreaId = areaId,
                     Name = area.Properties.TryGetValue("name", out var name) ? name?.ToString() ?? areaId : areaId,
-                    AreaType = area.Properties.TryGetValue("areaType", out var areaType) ? areaType?.ToString() ?? "protected_area" : "protected_area",
+                    AreaType = areaType,
                     Wikidata = area.Properties.TryGetValue("wikidata", out var wikidata) ? wikidata?.ToString() : null,
                     WikimediaCommons = area.Properties.TryGetValue("wikimedia_commons", out var wmc) ? wmc?.ToString() : null,
                     ActivityIds = []
@@ -134,19 +140,27 @@ public class VisitedAreasWorker(
 
     private async Task<IEnumerable<StoredFeature>> FetchNearbyAreas(IEnumerable<Activity> activities)
     {
-        var tileIndices = new HashSet<(int x, int y)>();
+        var areaTileIndices = new HashSet<(int x, int y)>();
+        var regionTileIndices = new HashSet<(int x, int y)>();
         foreach (var activity in activities)
         {
             var polyline = activity.SummaryPolyline ?? activity.Polyline;
             if (string.IsNullOrEmpty(polyline))
                 continue;
 
-            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyline(polyline), AreaTileZoom))
-                tileIndices.Add(tile);
+            var points = GeoSpatialFunctions.DecodePolyline(polyline);
+            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(points, AreaTileZoom))
+                areaTileIndices.Add(tile);
+            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(points, RegionTileZoom))
+                regionTileIndices.Add(tile);
         }
 
-        var areas = await _protectedAreasCollection.FetchByTiles(tileIndices, AreaTileZoom, followPointers: true);
-        _logger.LogInformation("Found {Count} nearby areas", areas.Count());
-        return areas;
+        var areasTask = _protectedAreasCollection.FetchByTiles(areaTileIndices, AreaTileZoom, followPointers: true);
+        var regionsTask = _adminBoundariesCollection.FetchByTiles(regionTileIndices, AdminLevelRegion, RegionTileZoom);
+        var (areas, regions) = (await areasTask, await regionsTask);
+
+        var allFeatures = areas.Concat(regions).ToList();
+        _logger.LogInformation("Found {Count} nearby areas and regions", allFeatures.Count);
+        return allFeatures;
     }
 }
