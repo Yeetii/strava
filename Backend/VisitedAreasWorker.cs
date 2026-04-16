@@ -156,7 +156,7 @@ public class VisitedAreasWorker(
         }
 
         var areasTask = _protectedAreasCollection.FetchByTiles(areaTileIndices, AreaTileZoom, followPointers: true);
-        var regionsTask = _adminBoundariesCollection.FetchByTiles(regionTileIndices, AdminLevelRegion, RegionTileZoom);
+        var regionsTask = _adminBoundariesCollection.FetchByTiles(regionTileIndices, AdminLevelRegion, RegionTileZoom, followPointers: true);
         var (areas, regions) = (await areasTask, await regionsTask);
 
         var allFeatures = areas.Concat(regions).ToList();
