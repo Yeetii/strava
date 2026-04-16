@@ -443,14 +443,13 @@ public static partial class RaceScrapeDiscovery
             .Concat(AbsoluteGpxRegex().Matches(html).Select(m => m.Groups["url"].Value))
             .Concat(RelativeGpxRegex().Matches(html).Select(m => m.Groups["url"].Value));
 
-        return matches
+        return [.. matches
             .Select(UnescapeJsonSlash)
             .Select(url => Uri.TryCreate(pageUrl, url, out var parsed) ? parsed : null)
             .Where(uri => uri is { Scheme: "http" or "https" })
             .Cast<Uri>()
             .Where(uri => uri.AbsolutePath.EndsWith(".gpx", StringComparison.OrdinalIgnoreCase))
-            .Distinct()
-            .ToList();
+            .Distinct()];
     }
 
     // Parses the response from https://www.loppkartan.se/markers-se.json
@@ -970,7 +969,7 @@ public static partial class RaceScrapeDiscovery
     private static partial Regex AnchorRegex();
 
     // Strips all HTML tags so anchor inner content can be inspected as plain text.
-    [GeneratedRegex(@"<[^>]+>")]
+    [GeneratedRegex(@"<[^>]+>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlTagRegex();
 
     // Matches one or more characters that are not Unicode letters, digits, or hyphens.
