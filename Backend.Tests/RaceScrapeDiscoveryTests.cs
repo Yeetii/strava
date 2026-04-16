@@ -8,74 +8,90 @@ public class RaceScrapeDiscoveryTests
     public void ParseUtmbRacePages_ExtractsRacePagesAndMetadata()
     {
         const string payload = """
+            {"races":[
             {
-              "races": [
-                {
-                  "slug": "https://utmb.world/races/utmb-mont-blanc-50k",
-                  "name": "UTMB Mont-Blanc 50K",
-                  "details": {
-                    "statsUp": [
-                      { "name": "distance", "value": 54.3 },
-                      { "name": "elevationGain", "value": 3200 }
-                    ]
-                  },
-                  "country": "FR",
-                  "city": "Chamonix",
-                  "playgrounds": [{ "name": "UTMB Mont-Blanc" }],
-                  "runningStones": [{ "name": "Finisher Stone" }],
-                  "image": "https://utmb.world/img/race.jpg"
+                "id": 133,
+                "startDate": "24th April 2026",
+                "startLocation": "Malaucène, France",
+                "raceStatus": {
+                    "open": false,
+                    "status": "registration_sold_out"
                 },
-                {
-                  "slug": "https://utmb.world/races/ccc",
-                  "name": "CCC",
-                  "details": {
+                "name": "Grand Raid Ventoux by UTMB - Ultra Géant de Provence - UGP",
+                "logo": null,
+                "eventLogo": {
+                    "publicId": "/ventoux/Logos/Logo_GRAND_RAID_VENTOUX_white_346cd68fd0.png"
+                },
+                "media": {
+                    "publicId": "ventoux/Races/2025/grv25_100_M_Collectif_Com_D_Rosso_7853_92afa1b124",
+                    "ratio": 1.5,
+                    "format": "jpg",
+                    "type": "image",
+                    "width": 1920,
+                    "height": 1280
+                },
+                "slug": "https://ventoux.utmb.world/races/GRV100M",
+                "raceLink": null,
+                "details": {
+                    "summaryUp": null,
+                    "summaryDown": null,
                     "statsUp": [
-                      { "name": "distance", "value": 101.0 },
-                      { "name": "elevationGain", "value": 6100 }
+                    {
+                        "name": "distance",
+                        "value": 125,
+                        "postfix": "km"
+                    },
+                    {
+                        "name": "elevationGain",
+                        "value": 5700,
+                        "postfix": "m"
+                    },
+                    {
+                        "name": "runningStones",
+                        "value": 4,
+                        "postfix": null
+                    },
+                    {
+                        "name": "categoryWorldSeries",
+                        "value": "100m",
+                        "postfix": null
+                    }
+                    ],
+                    "statsDown": [
+                    {
+                        "name": "startPlace",
+                        "value": "Malaucène, France",
+                        "postfix": null
+                    }
                     ]
-                  }
-                }
-              ]
+                },
+                "raceTheme": "#f42525",
+                "raceThemeIsDark": true,
+                "playgrounds": [
+                    "hikingTrail"
+                ]
             }
+            ]}
             """;
 
-        var pages = RaceScrapeDiscovery.ParseUtmbRacePages(payload);
+        var jobs = RaceScrapeDiscovery.ParseUtmbRacePages(payload);
 
-        Assert.Equal(2, pages.Count);
+        Assert.Single(jobs);
 
-        var utmb50k = Assert.Single(pages, p => p.PageUrl.AbsoluteUri == "https://utmb.world/races/utmb-mont-blanc-50k");
-        Assert.Equal(54.3, utmb50k.Distance);
-        Assert.Equal(3200, utmb50k.ElevationGain);
-        Assert.Equal("FR", utmb50k.Country);
-        Assert.Equal("Chamonix", utmb50k.Location);
-        Assert.Equal(["UTMB Mont-Blanc"], utmb50k.Playgrounds);
-        Assert.Equal(["Finisher Stone"], utmb50k.RunningStones);
-        Assert.Equal("https://utmb.world/img/race.jpg", utmb50k.ImageUrl);
-
-        var ccc = Assert.Single(pages, p => p.PageUrl.AbsoluteUri == "https://utmb.world/races/ccc");
-        Assert.Equal(101.0, ccc.Distance);
-        Assert.Equal(6100, ccc.ElevationGain);
-        Assert.Null(ccc.Playgrounds);
-    }
-
-    [Fact]
-    public void ExtractGpxUrlsFromHtml_FindsLinksFromHrefAndEscapedScriptUrls()
-    {
-        const string html = """
-            <html>
-              <body>
-                <a href="/courses/utmb-50k.gpx">Download GPX</a>
-                <script>
-                  window.courseData = {"gpx":"https:\/\/utmb.world\/downloads\/ccc-course.gpx?download=1"};
-                </script>
-              </body>
-            </html>
-            """;
-
-        var urls = RaceScrapeDiscovery.ExtractGpxUrlsFromHtml(html, new Uri("https://utmb.world/races/ccc"));
-
-        Assert.Contains(urls, uri => uri.AbsoluteUri == "https://utmb.world/courses/utmb-50k.gpx");
-        Assert.Contains(urls, uri => uri.AbsoluteUri == "https://utmb.world/downloads/ccc-course.gpx?download=1");
+        var GRV100M = Assert.Single(jobs, j => j.UtmbUrl!.AbsoluteUri == "https://ventoux.utmb.world/races/GRV100M");
+        Assert.Equal("125 km", GRV100M.Distance);
+        Assert.Equal(5700, GRV100M.ElevationGain);
+        Assert.Equal("Grand Raid Ventoux by UTMB - Ultra Géant de Provence - UGP", GRV100M.Name);
+        Assert.Equal(new Dictionary<string, string> { ["utmb"] = "133" }, GRV100M.ExternalIds);
+        Assert.Equal("2026-04-24", GRV100M.Date);
+        Assert.Equal("FR", GRV100M.Country);
+        Assert.Equal("Malaucène", GRV100M.Location);
+        Assert.Equal(false, GRV100M.RegistrationOpen);
+        Assert.Equal(["hikingTrail"], GRV100M.Playgrounds);
+        Assert.Equal(4, GRV100M.RunningStones);
+        Assert.Equal("100m", GRV100M.UtmbWorldSeriesCategory);
+        Assert.Equal("https://res.cloudinary.com/utmb-world/image/upload/ventoux/Races/2025/grv25_100_M_Collectif_Com_D_Rosso_7853_92afa1b124", GRV100M.ImageUrl);
+        Assert.Equal("https://res.cloudinary.com/utmb-world/image/upload/ventoux/Logos/Logo_GRAND_RAID_VENTOUX_white_346cd68fd0.png", GRV100M.LogoUrl);
     }
 
     [Fact]
@@ -118,15 +134,14 @@ public class RaceScrapeDiscoveryTests
         var markers = RaceScrapeDiscovery.ParseLoppkartanMarkers(payload);
 
         var marker = Assert.Single(markers);
-        Assert.Equal("eb3555a8-38ab-43df-b094-ff01d8d27000", marker.MarkerId);
+        Assert.Equal("https://www.vmxtreme.se/", marker.WebsiteUrl!.AbsoluteUri);
         Assert.Equal("Vånga Mountain Xtreme - VMX", marker.Name);
         Assert.Equal(56.1774298686757, marker.Latitude);
         Assert.Equal(14.3645238871977, marker.Longitude);
-        Assert.Equal("https://www.vmxtreme.se/", marker.Website);
-        Assert.Equal("20250914", marker.RaceDate);
+        Assert.Equal("20250914", marker.Date);
         Assert.Equal("trail", marker.RaceType);
         Assert.Equal("Trail", marker.TypeLocal);
-        Assert.Equal("vanga_mountain_xtreme", marker.DomainName);
+        Assert.Equal("Skåne", marker.County);
     }
 
     // ── NormalizeDateToYyyyMmDd ────────────────────────────────────────────────
@@ -282,119 +297,6 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal(expected, RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxKm, verbose));
     }
 
-    // ── ExtractCourseLinksFromHtml ────────────────────────────────────────────
-
-    [Fact]
-    public void ExtractCourseLinksFromHtml_FindsLinksByHrefKeyword()
-    {
-        const string html = """
-            <html>
-              <body>
-                <a href="/course/info">Race information</a>
-                <a href="/about">About us</a>
-                <a href="/lopp/10k">10K race</a>
-              </body>
-            </html>
-            """;
-
-        var links = RaceScrapeDiscovery.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
-
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/course/info");
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/10k");
-        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("about"));
-    }
-
-    [Fact]
-    public void ExtractCourseLinksFromHtml_FindsLinksByLinkText()
-    {
-        const string html = """
-            <html>
-              <body>
-                <a href="/page1">Läs mer om loppet</a>
-                <a href="/page2">See more info</a>
-                <a href="/page3">Contact us</a>
-                <a href="/page4">Info om banan</a>
-              </body>
-            </html>
-            """;
-
-        var links = RaceScrapeDiscovery.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
-
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/page1");
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/page2");
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/page4");
-        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("page3"));
-    }
-
-    [Fact]
-    public void ExtractCourseLinksFromHtml_ReturnsEmptyForBlankInput()
-    {
-        Assert.Empty(RaceScrapeDiscovery.ExtractCourseLinksFromHtml("", new Uri("https://example.com/")));
-    }
-
-    // ── ExtractGpxLinksFromHtml ───────────────────────────────────────────────
-
-    [Fact]
-    public void ExtractGpxLinksFromHtml_FindsGpxByExtensionAndByLinkText()
-    {
-        const string html = """
-            <html>
-              <body>
-                <a href="/routes/race.gpx">Download route</a>
-                <a href="/download">Download GPX file</a>
-                <a href="/info">Race information</a>
-              </body>
-            </html>
-            """;
-
-        var links = RaceScrapeDiscovery.ExtractGpxLinksFromHtml(html, new Uri("https://example.com/"));
-
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/routes/race.gpx");
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/download");
-        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("info"));
-    }
-
-    [Fact]
-    public void ExtractGpxLinksFromHtml_DeduplicatesResults()
-    {
-        const string html = """
-            <html>
-              <body>
-                <a href="/race.gpx">Download GPX</a>
-                <a href="/race.gpx">GPX fil</a>
-              </body>
-            </html>
-            """;
-
-        var links = RaceScrapeDiscovery.ExtractGpxLinksFromHtml(html, new Uri("https://example.com/"));
-
-        Assert.Single(links, u => u.AbsoluteUri == "https://example.com/race.gpx");
-    }
-
-    // ── ExtractDownloadLinksFromHtml ──────────────────────────────────────────
-
-    [Fact]
-    public void ExtractDownloadLinksFromHtml_FindsSwedishAndEnglishDownloadLinks()
-    {
-        const string html = """
-            <html>
-              <body>
-                <a href="/dl1">Ladda ner</a>
-                <a href="/dl2">Hämta filen</a>
-                <a href="/dl3">Download file</a>
-                <a href="/about">About us</a>
-              </body>
-            </html>
-            """;
-
-        var links = RaceScrapeDiscovery.ExtractDownloadLinksFromHtml(html, new Uri("https://example.com/"));
-
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/dl1");
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/dl2");
-        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/dl3");
-        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("about"));
-    }
-
     // ── AssignDistancesToRoutes ───────────────────────────────────────────────
 
     [Fact]
@@ -455,4 +357,127 @@ public class RaceScrapeDiscoveryTests
 
         Assert.Empty(assignments);
     }
+
+    // ── ParseTraceDeTrailCalendarEvents ───────────────────────────────────────
+
+    [Fact]
+    public void ParseTraceDeTrailCalendarEvents_EmitsOneJobPerTraceWithBothUrls()
+    {
+        const string payload = """
+            {
+              "success": 1,
+              "data": [
+                {
+                  "nom": "Ultra Tour 4 Massifs",
+                  "traceIDs": "12345_67890",
+                  "distances": "50_100",
+                  "country": "FR",
+                  "label": "ultra-tour-4-massifs",
+                  "sports": "trail",
+                  "img": "race.jpg",
+                  "logo": null
+                },
+                {
+                  "nom": "Another Race",
+                  "traceIDs": "11111",
+                  "distances": "42",
+                  "country": "IT",
+                  "label": "another-race",
+                  "sports": "trail running",
+                  "img": null,
+                  "logo": "logo.jpg"
+                },
+                {
+                    "evtID": "7562",
+                    "itraEvtID": "16686",
+                    "orgaID": null,
+                    "nom": "Ultra Trail Gazelles Sahara 5.0",
+                    "logo": "LogoEvent7562_7444.jpg",
+                    "img": "ImgEvent7562_7444.jpg",
+                    "label": "ultra-trail-gazelles-sahara-5-0-2026",
+                    "localite": "Hazoua",
+                    "country": "TN",
+                    "depcode": "TN",
+                    "dateDeb": "2026-01-10",
+                    "dateFin": "2026-01-10",
+                    "tags": "",
+                    "distances": "110.39_69.16_36.69",
+                    "sports": "randotrail_randotrail_randotrail",
+                    "traceIDs": "300613_300614_300615"
+                }
+              ]
+            }
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(payload);
+
+        // One job per event (not per trace ID).
+        Assert.Equal(3, jobs.Count);
+
+        var ultra4m = Assert.Single(jobs, j => j.Name == "Ultra Tour 4 Massifs");
+        Assert.Equal(2, ultra4m.TraceDeTrailItraUrls!.Count);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/12345", ultra4m.TraceDeTrailItraUrls[0].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/67890", ultra4m.TraceDeTrailItraUrls[1].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", ultra4m.TraceDeTrailEventUrl!.AbsoluteUri);
+        Assert.Equal("50 km, 100 km", ultra4m.Distance);
+        Assert.Equal("FR", ultra4m.Country);
+        Assert.Equal("https://tracedetrail.fr/events/race.jpg", ultra4m.ImageUrl);
+
+        var another = Assert.Single(jobs, j => j.Name == "Another Race");
+        Assert.Single(another.TraceDeTrailItraUrls!);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", another.TraceDeTrailItraUrls[0].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/en/event/another-race", another.TraceDeTrailEventUrl!.AbsoluteUri);
+        Assert.Equal("42 km", another.Distance);
+        Assert.Equal("trail, trail running", another.RaceType);
+        // logo fallback when img is null
+        Assert.Equal("https://tracedetrail.fr/events/logo.jpg", another.ImageUrl);
+        Assert.Equal("https://tracedetrail.fr/events/logo.jpg", another.LogoUrl);
+
+        var sahara = Assert.Single(jobs, j => j.Name == "Ultra Trail Gazelles Sahara 5.0");
+        Assert.Equal(3, sahara.TraceDeTrailItraUrls!.Count);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/300613", sahara.TraceDeTrailItraUrls[0].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/300614", sahara.TraceDeTrailItraUrls[1].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/300615", sahara.TraceDeTrailItraUrls[2].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/en/event/ultra-trail-gazelles-sahara-5-0-2026", sahara.TraceDeTrailEventUrl!.AbsoluteUri);
+        Assert.Equal(new Dictionary<string, string> { ["tracedetrailEventId"] = "7562", ["itraEventId"] = "16686" }, sahara.ExternalIds);
+        Assert.Equal("Ultra Trail Gazelles Sahara 5.0", sahara.Name);
+        Assert.Equal("https://tracedetrail.fr/events/ImgEvent7562_7444.jpg", sahara.ImageUrl);
+        Assert.Equal("https://tracedetrail.fr/events/LogoEvent7562_7444.jpg", sahara.LogoUrl);
+        Assert.Equal("trail, randotrail", sahara.RaceType);
+        Assert.Equal("2026-01-10", sahara.Date);
+        Assert.Equal("110.4 km, 69.2 km, 36.7 km", sahara.Distance);
+        Assert.Equal("TN", sahara.Country);
+    }
+
+    [Fact]
+    public void ParseTraceDeTrailCalendarEvents_ReturnsEmptyForBlankInput()
+    {
+        Assert.Empty(RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(""));
+        Assert.Empty(RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents("{}"));
+    }
+
+    // ── BuildFeatureId (URL overload) ─────────────────────────────────────────
+
+    [Theory]
+    [InlineData("https://julianalps.utmb.world/races/120K", null, "julianalps.utmb.world-races-120K")]
+    [InlineData("https://www.vmxtreme.se/", null, "vmxtreme.se")]
+    [InlineData("https://tracedetrail.fr/trace/getTraceItra/12345", null, "tracedetrail.fr-trace-getTraceItra-12345")]
+    [InlineData("https://julianalps.utmb.world/races/120K", 0, "julianalps.utmb.world-races-120K-0")]
+    [InlineData("https://julianalps.utmb.world/races/120K", 1, "julianalps.utmb.world-races-120K-1")]
+    public void BuildFeatureId_FromUrl_BuildsCosmosId(string url, int? routeIndex, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.BuildFeatureId(new Uri(url), routeIndex));
+    }
+
+    // ── BuildFeatureId (name+distance overload) ───────────────────────────────
+
+    [Theory]
+    [InlineData("Race Name", "50 km", "race-name-50-km")]
+    [InlineData("Race Name", null, "race-name")]
+    [InlineData(null, "50 km", "50-km")]
+    public void BuildFeatureId_FromNameAndDistance_BuildsSlug(string? name, string? distance, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.BuildFeatureId(name, distance));
+    }
+
 }
