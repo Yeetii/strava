@@ -25,7 +25,11 @@ public class QueueScrapeLoppkartanJobs(
         logger.LogInformation("Loppkartan: discovered {Count} unique markers", targets.Count);
 
         var messages = targets
-            .Select(t => new ServiceBusMessage(BinaryData.FromObjectAsJson(t)) { ContentType = "application/json" })
+            .Select((t, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(t))
+            {
+                ContentType = "application/json",
+                ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 10)
+            })
             .ToList();
 
         const int ChunkSize = 100;

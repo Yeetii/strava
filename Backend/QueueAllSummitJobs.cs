@@ -1,3 +1,4 @@
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
@@ -5,15 +6,22 @@ using Shared.Services;
 
 namespace Backend
 {
-    public class QueueAllSummitJobs(CollectionClient<Activity> _cosmosClient)
+    public class QueueAllSummitJobs(CollectionClient<Activity> _cosmosClient, ServiceBusClient serviceBusClient)
     {
-        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.CalculateSummitsJobs, Connection = "ServicebusConnection")]
         [Function(nameof(QueueAllSummitJobs))]
-        public async Task<IEnumerable<string>> Run(
+        public async Task Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
         {
             var activities = await _cosmosClient.FetchWholeCollection();
-            return activities.Select(x => x.Id);
+            var sender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.CalculateSummitsJobs);
+            var activitiesList = activities.ToList();
+            for (int i = 0; i < activitiesList.Count; i++)
+            {
+                await sender.SendMessageAsync(new ServiceBusMessage(activitiesList[i].Id)
+                {
+                    ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 10)
+                });
+            }
         }
     }
 }

@@ -28,7 +28,11 @@ public class QueueScrapeUtmbJobs(
         logger.LogInformation("UTMB: discovered {Count} unique GPX targets", targets.Count);
 
         var messages = targets
-            .Select(t => new ServiceBusMessage(BinaryData.FromObjectAsJson(t)) { ContentType = "application/json" })
+            .Select((t, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(t))
+            {
+                ContentType = "application/json",
+                ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 10)
+            })
             .ToList();
 
         const int ChunkSize = 100;

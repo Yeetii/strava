@@ -59,7 +59,11 @@ public class QueueScrapeTraceDeTrailJobs(
         logger.LogInformation("TraceDeTrail: discovered {Count} unique traces from calendar", targets.Count);
 
         var messages = targets.Values
-            .Select(t => new ServiceBusMessage(BinaryData.FromObjectAsJson(t)) { ContentType = "application/json" })
+            .Select((t, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(t))
+            {
+                ContentType = "application/json",
+                ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 10)
+            })
             .ToList();
 
         const int ChunkSize = 100;
