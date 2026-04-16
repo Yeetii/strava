@@ -184,8 +184,8 @@ public static partial class RaceScrapeDiscovery
         return null;
     }
 
-    // Normalises a race type string. If any segment contains the word "trail", the token "trail" is
-    // prepended. All segments are lower-cased and deduplicated, then joined with ", ".
+    // Normalises a race type string. Splits on common separators, maps known Norwegian/Swedish/French
+    // terms to English categories, deduplicates, and joins with ", ".
     // Returns null for blank input.
     public static string? NormalizeRaceType(string? raceType)
     {
@@ -195,9 +195,11 @@ public static partial class RaceScrapeDiscovery
         var parts = raceType
             .Split([',', ';', '/', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => p.ToLowerInvariant())
+            .Select(p => RaceTypeAliases.TryGetValue(p, out var mapped) ? mapped : p)
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
+        // If any remaining token contains "trail" as a substring but "trail" isn't already a standalone token, prepend it.
         var hasTrailToken = parts.Contains("trail", StringComparer.Ordinal);
         var hasTrailWord = !hasTrailToken && parts.Any(p => p.Contains("trail", StringComparison.OrdinalIgnoreCase));
         if (hasTrailWord)
@@ -207,6 +209,18 @@ public static partial class RaceScrapeDiscovery
 
         return parts.Count > 0 ? string.Join(", ", parts) : null;
     }
+
+    private static readonly Dictionary<string, string> RaceTypeAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["stiløp"] = "trail", ["stig"] = "trail",
+        ["terreng"] = "cross country", ["terräng"] = "cross country", ["terrain"] = "cross country",
+        ["asfalt"] = "road", ["landsväg"] = "road", ["gateløp"] = "road",
+        ["grus"] = "gravel",
+        ["stafett"] = "relay",
+        ["motbakke"] = "uphill", ["vertical"] = "uphill", ["vertikal"] = "uphill",
+        ["trappeløp"] = "stairs", ["trappor"] = "stairs",
+        ["hinderløp"] = "obstacle course", ["ocr"] = "obstacle course",
+    };
 
     // ISO 3166-1 alpha-3 → alpha-2 mappings for common trail-running countries.
     private static readonly Dictionary<string, string> Iso3ToIso2 = new(StringComparer.OrdinalIgnoreCase)

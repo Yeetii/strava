@@ -14,5 +14,4 @@ public record ScrapedRoute(
     string? Name = null,
     string? Distance = null,
     double? ElevationGain = null,
-    Uri? GpxUrl = null,
-    string? GpxContent = null);
+    Uri? GpxUrl = null);

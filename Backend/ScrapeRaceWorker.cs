@@ -117,8 +117,6 @@ public class ScrapeRaceWorker
                 properties[RaceScrapeDiscovery.PropElevationGain] = route.ElevationGain.Value;
             if (route.GpxUrl is not null)
                 properties["gpxUrl"] = route.GpxUrl.AbsoluteUri;
-            if (route.GpxContent is not null)
-                properties["gpx"] = route.GpxContent;
 
             var lineString = new LineString(route.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
             var feature = new Feature(lineString, properties, null, new FeatureId(featureId));
@@ -212,7 +210,8 @@ public class ScrapeRaceWorker
         if (job.UtmbUrl is not null) sources.Add("utmb");
         if (job.TraceDeTrailItraUrls is { Count: > 0 } || job.TraceDeTrailEventUrl is not null) sources.Add("tracedetrail");
         if (job.RunagainUrl is not null) sources.Add("runagain");
-        if (job.WebsiteUrl is not null) sources.Add("loppkartan");
+        if (job.WebsiteUrl is not null && job.RunagainUrl is null 
+            && job.TraceDeTrailItraUrls is { Count: 0 } && job.TraceDeTrailEventUrl is null) sources.Add("loppkartan");
         if (sources.Count > 0)
             properties[RaceScrapeDiscovery.PropSources] = sources;
 
