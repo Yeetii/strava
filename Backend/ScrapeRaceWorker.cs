@@ -211,6 +211,8 @@ public class ScrapeRaceWorker(
         int? routeIndex,
         CancellationToken cancellationToken)
     {
+        if (job.Url is null) return;
+
         try
         {
             var gpxContent = await httpClient.GetStringAsync(gpxUrl, cancellationToken);
@@ -221,14 +223,14 @@ public class ScrapeRaceWorker(
                 return;
             }
 
-            var featureId = RaceScrapeDiscovery.BuildFeatureId(job.Url!, routeIndex);
+            var featureId = RaceScrapeDiscovery.BuildFeatureId(job.Url, routeIndex);
             var lineString = new LineString(parsedRoute.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
             var properties = new Dictionary<string, dynamic>
             {
                 [RaceScrapeDiscovery.PropName] = parsedRoute.Name,
                 ["gpxUrl"] = gpxUrl.AbsoluteUri,
                 ["gpx"] = gpxContent,
-                [RaceScrapeDiscovery.PropWebsite] = job.Url!.AbsoluteUri,
+                [RaceScrapeDiscovery.PropWebsite] = job.Url.AbsoluteUri,
                 [RaceScrapeDiscovery.PropRaceType] = "trail",
                 [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
             };
