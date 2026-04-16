@@ -43,7 +43,7 @@ public class RaceScrapeDiscoveryTests
 
         Assert.Equal(2, jobs.Count);
 
-        var utmb50k = Assert.Single(jobs, j => j.Url!.AbsoluteUri == "https://utmb.world/races/utmb-mont-blanc-50k");
+        var utmb50k = Assert.Single(jobs, j => j.UtmbUrl!.AbsoluteUri == "https://utmb.world/races/utmb-mont-blanc-50k");
         Assert.Equal("54.3 km", utmb50k.Distance);
         Assert.Equal(3200, utmb50k.ElevationGain);
         Assert.Equal("FR", utmb50k.Country);
@@ -52,7 +52,7 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal(["Finisher Stone"], utmb50k.RunningStones);
         Assert.Equal("https://utmb.world/img/race.jpg", utmb50k.ImageUrl);
 
-        var ccc = Assert.Single(jobs, j => j.Url!.AbsoluteUri == "https://utmb.world/races/ccc");
+        var ccc = Assert.Single(jobs, j => j.UtmbUrl!.AbsoluteUri == "https://utmb.world/races/ccc");
         Assert.Equal("101 km", ccc.Distance);
         Assert.Equal(6100, ccc.ElevationGain);
         Assert.Null(ccc.Playgrounds);
@@ -98,7 +98,7 @@ public class RaceScrapeDiscoveryTests
         var markers = RaceScrapeDiscovery.ParseLoppkartanMarkers(payload);
 
         var marker = Assert.Single(markers);
-        Assert.Equal("https://www.vmxtreme.se/", marker.Url!.AbsoluteUri);
+        Assert.Equal("https://www.vmxtreme.se/", marker.WebsiteUrl!.AbsoluteUri);
         Assert.Equal("Vånga Mountain Xtreme - VMX", marker.Name);
         Assert.Equal(56.1774298686757, marker.Latitude);
         Assert.Equal(14.3645238871977, marker.Longitude);
@@ -325,7 +325,7 @@ public class RaceScrapeDiscoveryTests
     // ── ParseTraceDeTrailCalendarEvents ───────────────────────────────────────
 
     [Fact]
-    public void ParseTraceDeTrailCalendarEvents_EmitsItraJobsAndEventPageJobs()
+    public void ParseTraceDeTrailCalendarEvents_EmitsOneJobPerTraceWithBothUrls()
     {
         const string payload = """
             {
@@ -357,38 +357,29 @@ public class RaceScrapeDiscoveryTests
 
         var jobs = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(payload);
 
-        // ITRA jobs: one per trace ID
-        var itraJobs = jobs.Where(j => j.Url!.AbsoluteUri.Contains("/trace/getTraceItra/")).ToList();
-        Assert.Equal(3, itraJobs.Count);
+        // Three jobs total — one per trace ID (not one per event).
+        Assert.Equal(3, jobs.Count);
 
-        var trace12345 = Assert.Single(itraJobs, j => j.Url!.AbsoluteUri.EndsWith("/12345"));
-        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/12345", trace12345.Url!.AbsoluteUri);
+        var trace12345 = Assert.Single(jobs, j => j.TraceDeTrailItraUrl!.AbsoluteUri.EndsWith("/12345"));
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/12345", trace12345.TraceDeTrailItraUrl!.AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", trace12345.TraceDeTrailEventUrl!.AbsoluteUri);
         Assert.Equal("50 km", trace12345.Distance);
         Assert.Equal("Ultra Tour 4 Massifs", trace12345.Name);
         Assert.Equal("FR", trace12345.Country);
         Assert.Equal("https://tracedetrail.fr/events/race.jpg", trace12345.ImageUrl);
 
-        var trace67890 = Assert.Single(itraJobs, j => j.Url!.AbsoluteUri.EndsWith("/67890"));
-        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/67890", trace67890.Url!.AbsoluteUri);
+        var trace67890 = Assert.Single(jobs, j => j.TraceDeTrailItraUrl!.AbsoluteUri.EndsWith("/67890"));
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/67890", trace67890.TraceDeTrailItraUrl!.AbsoluteUri);
+        // Both traces for the same event share the same event page URL.
+        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", trace67890.TraceDeTrailEventUrl!.AbsoluteUri);
         Assert.Equal("100 km", trace67890.Distance);
 
-        var trace11111 = Assert.Single(itraJobs, j => j.Url!.AbsoluteUri.EndsWith("/11111"));
-        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", trace11111.Url!.AbsoluteUri);
+        var trace11111 = Assert.Single(jobs, j => j.TraceDeTrailItraUrl!.AbsoluteUri.EndsWith("/11111"));
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", trace11111.TraceDeTrailItraUrl!.AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/en/event/another-race", trace11111.TraceDeTrailEventUrl!.AbsoluteUri);
         Assert.Equal("42 km", trace11111.Distance);
         // logo fallback when img is null
         Assert.Equal("https://tracedetrail.fr/events/logo.jpg", trace11111.ImageUrl);
-
-        // Event page jobs: one per unique slug
-        var eventPageJobs = jobs.Where(j => j.Url!.AbsoluteUri.Contains("/en/event/")).ToList();
-        Assert.Equal(2, eventPageJobs.Count);
-
-        var eventJob1 = Assert.Single(eventPageJobs, j => j.Url!.AbsoluteUri.Contains("ultra-tour-4-massifs"));
-        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", eventJob1.Url!.AbsoluteUri);
-        Assert.Equal("50 km, 100 km", eventJob1.Distance);
-
-        var eventJob2 = Assert.Single(eventPageJobs, j => j.Url!.AbsoluteUri.Contains("another-race"));
-        Assert.Equal("https://tracedetrail.fr/en/event/another-race", eventJob2.Url!.AbsoluteUri);
-        Assert.Equal("42 km", eventJob2.Distance);
     }
 
     [Fact]

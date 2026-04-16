@@ -402,12 +402,13 @@ public static partial class RaceScrapeDiscovery
             var imageUrl = FindStringValue(race, ["image", "imageUrl", "thumbnail", "picture"]);
             var distance = distanceKm.HasValue ? FormatDistanceKm(distanceKm.Value) : null;
 
-            jobs.Add(new ScrapeJob(pageUri, name, distance, elevationGain, country, location,
+            jobs.Add(new ScrapeJob(UtmbUrl: pageUri, Name: name, Distance: distance, ElevationGain: elevationGain,
+                Country: country, Location: location,
                 RaceType: "trail", ImageUrl: imageUrl, Playgrounds: playgrounds, RunningStones: runningStones));
         }
 
         return jobs
-            .GroupBy(j => j.Url!.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(j => j.UtmbUrl!.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
     }
@@ -456,7 +457,7 @@ public static partial class RaceScrapeDiscovery
             var distance = ParseDistanceVerbose(distanceVerbose);
 
             jobsByMarkerId[markerId] = new ScrapeJob(
-                Url: websiteUri,
+                WebsiteUrl: websiteUri,
                 Name: FindStringValue(marker, ["name"]),
                 Distance: distance,
                 Latitude: latitude,
@@ -516,9 +517,9 @@ public static partial class RaceScrapeDiscovery
 
     // Parses the response from POST https://tracedetrail.fr/event/getEventsCalendar/all/all/all
     // Each event has traceIDs (underscore-separated ints), distances (underscore-separated km values), nom
-    // Returns two job kinds per event:
-    //   - One ITRA job per trace ID: Url = https://tracedetrail.fr/trace/getTraceItra/{id}
-    //   - One event page job per unique slug: Url = https://tracedetrail.fr/en/event/{slug}
+    // Returns one ScrapeJob per trace ID.  Each job carries:
+    //   TraceDeTrailItraUrl  – ITRA JSON endpoint for the specific trace (primary route source)
+    //   TraceDeTrailEventUrl – event page used as fallback when the ITRA endpoint yields nothing
     public static IReadOnlyCollection<ScrapeJob> ParseTraceDeTrailCalendarEvents(string json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -571,7 +572,9 @@ public static partial class RaceScrapeDiscovery
             if (TryGetPropertyIgnoreCase(evt, "distances", out var distancesEl) && distancesEl.ValueKind == JsonValueKind.String)
                 distanceParts = distancesEl.GetString()?.Split('_', StringSplitOptions.RemoveEmptyEntries);
 
-            var allDistancesFormatted = new List<string>();
+            Uri? eventUrl = null;
+            if (!string.IsNullOrWhiteSpace(slug))
+                eventUrl = new Uri($"https://tracedetrail.fr/en/event/{slug}");
 
             for (int i = 0; i < traceIds.Length; i++)
             {
@@ -581,21 +584,17 @@ public static partial class RaceScrapeDiscovery
                 string? distanceFormatted = null;
                 if (distanceParts != null && i < distanceParts.Length &&
                     double.TryParse(distanceParts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                {
                     distanceFormatted = FormatDistanceKm(d);
-                    allDistancesFormatted.Add(distanceFormatted);
-                }
 
                 var itraUrl = new Uri($"https://tracedetrail.fr/trace/getTraceItra/{traceId}");
-                jobs.Add(new ScrapeJob(itraUrl, name, distanceFormatted, Country: country, RaceType: sports, ImageUrl: imageUrl));
-            }
-
-            // One event page job per unique slug
-            if (!string.IsNullOrWhiteSpace(slug))
-            {
-                var eventUrl = new Uri($"https://tracedetrail.fr/en/event/{slug}");
-                var allDistances = allDistancesFormatted.Count > 0 ? string.Join(", ", allDistancesFormatted) : null;
-                jobs.Add(new ScrapeJob(eventUrl, name, allDistances, Country: country, RaceType: sports, ImageUrl: imageUrl));
+                jobs.Add(new ScrapeJob(
+                    TraceDeTrailItraUrl: itraUrl,
+                    TraceDeTrailEventUrl: eventUrl,
+                    Name: name,
+                    Distance: distanceFormatted,
+                    Country: country,
+                    RaceType: sports,
+                    ImageUrl: imageUrl));
             }
         }
 
@@ -734,9 +733,10 @@ public static partial class RaceScrapeDiscovery
 }
 
 // Flat message enqueued onto the unified scrapeRace service bus queue.
-// The Url field alone determines which scraper strategy the worker uses.
+// Each source has its own typed URL field; the worker tries scrapers in priority order
+// (UTMB → ITRA/TraceDeTrail → Runagain → BFS/Loppkartan) and uses the first result.
+// Any combination of source URLs may be set; all null → point fallback using lat/lng.
 public record ScrapeJob(
-    Uri? Url,
     string? Name = null,
     string? Distance = null,     // pre-formatted, e.g. "50 km" or "50 km, 25 km"
     double? ElevationGain = null,
@@ -750,7 +750,13 @@ public record ScrapeJob(
     IReadOnlyList<string>? Playgrounds = null,
     IReadOnlyList<string>? RunningStones = null,
     string? County = null,
-    string? TypeLocal = null);
+    string? TypeLocal = null,
+    // Per-source URLs (null = source not available for this race).
+    Uri? UtmbUrl = null,
+    Uri? TraceDeTrailItraUrl = null,
+    Uri? TraceDeTrailEventUrl = null,
+    Uri? RunagainUrl = null,
+    Uri? WebsiteUrl = null);         // generic race website (e.g. from Loppkartan)
 
 public record TraceDeTrailTraceData(
     IReadOnlyList<(double Lng, double Lat)> Points,
