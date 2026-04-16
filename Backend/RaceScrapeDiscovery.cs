@@ -57,7 +57,7 @@ public static partial class RaceScrapeDiscovery
     {
         return distanceKm == Math.Floor(distanceKm)
             ? $"{(long)distanceKm} km"
-            : $"{distanceKm:0.#} km";
+            : string.Create(CultureInfo.InvariantCulture, $"{distanceKm:0.#} km");
     }
 
     // Matches a computed GPX distance (km) to the closest entry in a verbose distance string
@@ -188,7 +188,7 @@ public static partial class RaceScrapeDiscovery
             return null;
 
         var parts = raceType
-            .Split([',', ';', '/'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Split([',', ';', '/', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => p.ToLowerInvariant())
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -341,12 +341,14 @@ public static partial class RaceScrapeDiscovery
             var name = FindStringValue(race, ["name", "title"]);
 
             // Extract external ID
-            string? externalId = null;
+            IReadOnlyDictionary<string, string>? externalIds = null;
             if (TryGetPropertyIgnoreCase(race, "id", out var idEl))
             {
-                externalId = idEl.ValueKind == JsonValueKind.Number
+                var idStr = idEl.ValueKind == JsonValueKind.Number
                     ? idEl.GetRawText()
                     : idEl.ValueKind == JsonValueKind.String ? idEl.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(idStr))
+                    externalIds = new Dictionary<string, string> { ["utmb"] = idStr! };
             }
 
             // Extract and normalise date
@@ -456,7 +458,7 @@ public static partial class RaceScrapeDiscovery
 
             var distance = distanceKm.HasValue ? FormatDistanceKm(distanceKm.Value) : null;
 
-            jobs.Add(new ScrapeJob(UtmbUrl: pageUri, Name: name, ExternalId: externalId,
+            jobs.Add(new ScrapeJob(UtmbUrl: pageUri, Name: name, ExternalIds: externalIds,
                 Distance: distance, ElevationGain: elevationGain, Date: date,
                 Country: country, Location: location, RegistrationOpen: registrationOpen,
                 RaceType: "trail", ImageUrl: imageUrl, LogoUrl: logoUrl,
@@ -615,47 +617,73 @@ public static partial class RaceScrapeDiscovery
             var name = FindStringValue(evt, ["nom", "name"]);
             var country = FindStringValue(evt, ["country", "pays", "countryCode"]);
             var slug = FindStringValue(evt, ["label"]);
-            var sports = FindStringValue(evt, ["sports", "sport"]);
+            var sports = NormalizeRaceType(FindStringValue(evt, ["sports", "sport"]));
+            var date = NormalizeDateToYyyyMmDd(FindStringValue(evt, ["dateDeb", "date", "startDate"]));
+
+            // Build ExternalIds from evtID / itraEvtID
+            Dictionary<string, string>? externalIds = null;
+            var evtId = FindStringValue(evt, ["evtID"]);
+            var itraEvtId = FindStringValue(evt, ["itraEvtID"]);
+            if (!string.IsNullOrWhiteSpace(evtId) || !string.IsNullOrWhiteSpace(itraEvtId))
+            {
+                externalIds = new(StringComparer.Ordinal);
+                if (!string.IsNullOrWhiteSpace(evtId)) externalIds["tracedetrailEventId"] = evtId!;
+                if (!string.IsNullOrWhiteSpace(itraEvtId)) externalIds["itraEventId"] = itraEvtId!;
+            }
 
             var imageBaseUrl = "https://tracedetrail.fr/events/";
             var imageName = FindStringValue(evt, ["img", "image", "imageUrl"]);
             var logoName = FindStringValue(evt, ["logo"]);
-            var imageUrl = !string.IsNullOrWhiteSpace(imageName) ? $"{imageBaseUrl}{imageName}"
-                         : !string.IsNullOrWhiteSpace(logoName) ? $"{imageBaseUrl}{logoName}"
-                         : null;
+            var imageUrl = !string.IsNullOrWhiteSpace(imageName) ? $"{imageBaseUrl}{imageName}" : null;
+            var logoUrl = !string.IsNullOrWhiteSpace(logoName) ? $"{imageBaseUrl}{logoName}" : null;
+            // Fallback: if no image, use logo as image
+            imageUrl ??= logoUrl;
 
-            string[]? distanceParts = null;
+            string[]? distances = null;
             if (TryGetPropertyIgnoreCase(evt, "distances", out var distancesEl) && distancesEl.ValueKind == JsonValueKind.String)
-                distanceParts = distancesEl.GetString()?.Split('_', StringSplitOptions.RemoveEmptyEntries);
+                distances = distancesEl.GetString()?.Split('_', StringSplitOptions.RemoveEmptyEntries);
 
             Uri? eventUrl = null;
             if (!string.IsNullOrWhiteSpace(slug))
                 eventUrl = new Uri($"https://tracedetrail.fr/en/event/{slug}");
+
+            // Build all ITRA URLs and combine distances
+            var itraUrls = new List<Uri>();
+            var distanceParts = new List<string>();
 
             for (int i = 0; i < traceIds.Length; i++)
             {
                 if (!int.TryParse(traceIds[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out var traceId))
                     continue;
 
-                string? distanceFormatted = null;
-                if (distanceParts != null && i < distanceParts.Length &&
-                    double.TryParse(distanceParts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                    distanceFormatted = FormatDistanceKm(d);
+                itraUrls.Add(new Uri($"https://tracedetrail.fr/trace/getTraceItra/{traceId}"));
 
-                var itraUrl = new Uri($"https://tracedetrail.fr/trace/getTraceItra/{traceId}");
-                jobs.Add(new ScrapeJob(
-                    TraceDeTrailItraUrl: itraUrl,
-                    TraceDeTrailEventUrl: eventUrl,
-                    Name: name,
-                    Distance: distanceFormatted,
-                    Country: country,
-                    RaceType: sports,
-                    ImageUrl: imageUrl));
+                if (distances != null && i < distances.Length &&
+                    double.TryParse(distances[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+                    distanceParts.Add(FormatDistanceKm(d));
             }
+
+            if (itraUrls.Count == 0)
+                continue;
+
+            var distance = distanceParts.Count > 0 ? string.Join(", ", distanceParts) : null;
+
+            jobs.Add(new ScrapeJob(
+                TraceDeTrailItraUrls: itraUrls,
+                TraceDeTrailEventUrl: eventUrl,
+                Name: name,
+                ExternalIds: externalIds,
+                Distance: distance,
+                Country: country,
+                Date: date,
+                RaceType: sports,
+                ImageUrl: imageUrl,
+                LogoUrl: logoUrl));
         }
 
         return jobs;
     }
+
 
     // Returns true if the token is a marathon keyword and sets km to the corresponding distance.
     // "marathon" → 42 km, "halvmarathon" / "half marathon" / "half-marathon" → 21 km.
@@ -794,7 +822,7 @@ public static partial class RaceScrapeDiscovery
 // Any combination of source URLs may be set; all null → point fallback using lat/lng.
 public record ScrapeJob(
     string? Name = null,
-    string? ExternalId = null, // optional opaque ID from the source system (e.g. TraceDeTrail traceID or Loppkartan marker ID)
+    IReadOnlyDictionary<string, string>? ExternalIds = null, // issuer/authority → opaque ID (e.g. "utmb" → "133", "tracedetrail" → "12345")
     string? Distance = null,     // pre-formatted, e.g. "50 km" or "50 km, 25 km"
     double? ElevationGain = null,
     string? Country = null,
@@ -813,7 +841,7 @@ public record ScrapeJob(
     string? TypeLocal = null,
     // Per-source URLs (null = source not available for this race).
     Uri? UtmbUrl = null,
-    Uri? TraceDeTrailItraUrl = null,
+    IReadOnlyList<Uri>? TraceDeTrailItraUrls = null,
     Uri? TraceDeTrailEventUrl = null,
     Uri? RunagainUrl = null,
     Uri? WebsiteUrl = null);         // generic race website (e.g. from Loppkartan)

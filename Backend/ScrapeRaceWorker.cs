@@ -82,7 +82,7 @@ public class ScrapeRaceWorker
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "ScrapeRaceWorker: failed to process job (UTMB={Utmb}, ITRA={Itra}, Event={Event}, Website={Web})",
-                job.UtmbUrl, job.TraceDeTrailItraUrl, job.TraceDeTrailEventUrl, job.WebsiteUrl);
+                job.UtmbUrl, job.TraceDeTrailItraUrls, job.TraceDeTrailEventUrl, job.WebsiteUrl);
         }
     }
 
@@ -97,7 +97,7 @@ public class ScrapeRaceWorker
         {
             var route = routes[i];
             var sourceUrl = route.SourceUrl
-                ?? job.UtmbUrl ?? job.TraceDeTrailItraUrl ?? job.WebsiteUrl;
+                ?? job.UtmbUrl ?? job.TraceDeTrailItraUrls?.FirstOrDefault() ?? job.WebsiteUrl;
             var routeIndex = routes.Count > 1 ? i : (int?)null;
 
             var featureId = sourceUrl is not null
@@ -137,7 +137,7 @@ public class ScrapeRaceWorker
             return;
         }
 
-        var sourceUrl = job.WebsiteUrl ?? job.UtmbUrl ?? job.TraceDeTrailItraUrl;
+        var sourceUrl = job.WebsiteUrl ?? job.UtmbUrl ?? job.TraceDeTrailItraUrls?.FirstOrDefault();
         var featureId = sourceUrl is not null
             ? RaceScrapeDiscovery.BuildFeatureId(sourceUrl)
             : RaceScrapeDiscovery.BuildFeatureId(job.Name, job.Distance);

@@ -82,7 +82,7 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal("125 km", GRV100M.Distance);
         Assert.Equal(5700, GRV100M.ElevationGain);
         Assert.Equal("Grand Raid Ventoux by UTMB - Ultra Géant de Provence - UGP", GRV100M.Name);
-        Assert.Equal("133", GRV100M.ExternalId);
+        Assert.Equal(new Dictionary<string, string> { ["utmb"] = "133" }, GRV100M.ExternalIds);
         Assert.Equal("2026-04-24", GRV100M.Date);
         Assert.Equal("FR", GRV100M.Country);
         Assert.Equal("Malaucène", GRV100M.Location);
@@ -386,6 +386,24 @@ public class RaceScrapeDiscoveryTests
                   "sports": "trail running",
                   "img": null,
                   "logo": "logo.jpg"
+                },
+                {
+                    "evtID": "7562",
+                    "itraEvtID": "16686",
+                    "orgaID": null,
+                    "nom": "Ultra Trail Gazelles Sahara 5.0",
+                    "logo": "LogoEvent7562_7444.jpg",
+                    "img": "ImgEvent7562_7444.jpg",
+                    "label": "ultra-trail-gazelles-sahara-5-0-2026",
+                    "localite": "Hazoua",
+                    "country": "TN",
+                    "depcode": "TN",
+                    "dateDeb": "2026-01-10",
+                    "dateFin": "2026-01-10",
+                    "tags": "",
+                    "distances": "110.39_69.16_36.69",
+                    "sports": "randotrail_randotrail_randotrail",
+                    "traceIDs": "300613_300614_300615"
                 }
               ]
             }
@@ -393,29 +411,42 @@ public class RaceScrapeDiscoveryTests
 
         var jobs = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(payload);
 
-        // Three jobs total — one per trace ID (not one per event).
+        // One job per event (not per trace ID).
         Assert.Equal(3, jobs.Count);
 
-        var trace12345 = Assert.Single(jobs, j => j.TraceDeTrailItraUrl!.AbsoluteUri.EndsWith("/12345"));
-        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/12345", trace12345.TraceDeTrailItraUrl!.AbsoluteUri);
-        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", trace12345.TraceDeTrailEventUrl!.AbsoluteUri);
-        Assert.Equal("50 km", trace12345.Distance);
-        Assert.Equal("Ultra Tour 4 Massifs", trace12345.Name);
-        Assert.Equal("FR", trace12345.Country);
-        Assert.Equal("https://tracedetrail.fr/events/race.jpg", trace12345.ImageUrl);
+        var ultra4m = Assert.Single(jobs, j => j.Name == "Ultra Tour 4 Massifs");
+        Assert.Equal(2, ultra4m.TraceDeTrailItraUrls!.Count);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/12345", ultra4m.TraceDeTrailItraUrls[0].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/67890", ultra4m.TraceDeTrailItraUrls[1].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", ultra4m.TraceDeTrailEventUrl!.AbsoluteUri);
+        Assert.Equal("50 km, 100 km", ultra4m.Distance);
+        Assert.Equal("FR", ultra4m.Country);
+        Assert.Equal("https://tracedetrail.fr/events/race.jpg", ultra4m.ImageUrl);
 
-        var trace67890 = Assert.Single(jobs, j => j.TraceDeTrailItraUrl!.AbsoluteUri.EndsWith("/67890"));
-        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/67890", trace67890.TraceDeTrailItraUrl!.AbsoluteUri);
-        // Both traces for the same event share the same event page URL.
-        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", trace67890.TraceDeTrailEventUrl!.AbsoluteUri);
-        Assert.Equal("100 km", trace67890.Distance);
-
-        var trace11111 = Assert.Single(jobs, j => j.TraceDeTrailItraUrl!.AbsoluteUri.EndsWith("/11111"));
-        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", trace11111.TraceDeTrailItraUrl!.AbsoluteUri);
-        Assert.Equal("https://tracedetrail.fr/en/event/another-race", trace11111.TraceDeTrailEventUrl!.AbsoluteUri);
-        Assert.Equal("42 km", trace11111.Distance);
+        var another = Assert.Single(jobs, j => j.Name == "Another Race");
+        Assert.Single(another.TraceDeTrailItraUrls!);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", another.TraceDeTrailItraUrls[0].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/en/event/another-race", another.TraceDeTrailEventUrl!.AbsoluteUri);
+        Assert.Equal("42 km", another.Distance);
+        Assert.Equal("trail, trail running", another.RaceType);
         // logo fallback when img is null
-        Assert.Equal("https://tracedetrail.fr/events/logo.jpg", trace11111.ImageUrl);
+        Assert.Equal("https://tracedetrail.fr/events/logo.jpg", another.ImageUrl);
+        Assert.Equal("https://tracedetrail.fr/events/logo.jpg", another.LogoUrl);
+
+        var sahara = Assert.Single(jobs, j => j.Name == "Ultra Trail Gazelles Sahara 5.0");
+        Assert.Equal(3, sahara.TraceDeTrailItraUrls!.Count);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/300613", sahara.TraceDeTrailItraUrls[0].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/300614", sahara.TraceDeTrailItraUrls[1].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/300615", sahara.TraceDeTrailItraUrls[2].AbsoluteUri);
+        Assert.Equal("https://tracedetrail.fr/en/event/ultra-trail-gazelles-sahara-5-0-2026", sahara.TraceDeTrailEventUrl!.AbsoluteUri);
+        Assert.Equal(new Dictionary<string, string> { ["tracedetrailEventId"] = "7562", ["itraEventId"] = "16686" }, sahara.ExternalIds);
+        Assert.Equal("Ultra Trail Gazelles Sahara 5.0", sahara.Name);
+        Assert.Equal("https://tracedetrail.fr/events/ImgEvent7562_7444.jpg", sahara.ImageUrl);
+        Assert.Equal("https://tracedetrail.fr/events/LogoEvent7562_7444.jpg", sahara.LogoUrl);
+        Assert.Equal("trail, randotrail", sahara.RaceType);
+        Assert.Equal("2026-01-10", sahara.Date);
+        Assert.Equal("110.4 km, 69.2 km, 36.7 km", sahara.Distance);
+        Assert.Equal("TN", sahara.Country);
     }
 
     [Fact]

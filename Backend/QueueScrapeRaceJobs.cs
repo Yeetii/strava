@@ -33,10 +33,10 @@ public class QueueScrapeRaceJobs(
         var all = new List<ScrapeJob>();
 
         // Fetch all sources (TraceDeTrail is sequential across months; others are single requests).
-        all.AddRange(await FetchUtmbJobsAsync(httpClient, cancellationToken));
-        all.AddRange(await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken));
+        // all.AddRange(await FetchUtmbJobsAsync(httpClient, cancellationToken));
+        // all.AddRange(await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken));
         all.AddRange(await FetchRunagainJobsAsync(httpClient, cancellationToken));
-        all.AddRange(await FetchLoppkartanJobsAsync(httpClient, cancellationToken));
+        // all.AddRange(await FetchLoppkartanJobsAsync(httpClient, cancellationToken));
 
         logger.LogInformation("QueueScrapeRaceJobs: {Count} total jobs discovered across all sources", all.Count);
 
@@ -104,7 +104,7 @@ public class QueueScrapeRaceJobs(
                 foreach (var job in RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(json))
                 {
                     // Deduplicate by ITRA URL (primary key for TraceDeTrail jobs).
-                    var key = job.TraceDeTrailItraUrl?.AbsoluteUri ?? job.TraceDeTrailEventUrl?.AbsoluteUri;
+                    var key = job.TraceDeTrailItraUrls?.FirstOrDefault()?.AbsoluteUri ?? job.TraceDeTrailEventUrl?.AbsoluteUri;
                     if (key is not null)
                         jobsByUrl.TryAdd(key, job);
                 }
