@@ -176,6 +176,29 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal(expected, RaceScrapeDiscovery.ParseDistanceVerbose(input));
     }
 
+    [Theory]
+    [InlineData("Marathon", "42 km")]
+    [InlineData("marathon", "42 km")]
+    [InlineData("MARATHON", "42 km")]
+    [InlineData("Halvmarathon", "21 km")]
+    [InlineData("halvmarathon", "21 km")]
+    [InlineData("Half marathon", "21 km")]
+    [InlineData("half marathon", "21 km")]
+    [InlineData("Half-marathon", "21 km")]
+    public void ParseDistanceVerbose_TranslatesMarathonKeywords(string input, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.ParseDistanceVerbose(input));
+    }
+
+    [Theory]
+    [InlineData("10K, Marathon", "10 km, 42 km")]
+    [InlineData("Halvmarathon, 10k", "21 km, 10 km")]
+    [InlineData("Half marathon, Marathon", "21 km, 42 km")]
+    public void ParseDistanceVerbose_TranslatesMarathonKeywordsInCombinedString(string input, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.ParseDistanceVerbose(input));
+    }
+
     // ── NormalizeCountryToIso2 ────────────────────────────────────────────────
 
     [Theory]
@@ -245,5 +268,191 @@ public class RaceScrapeDiscoveryTests
     {
         // 50 km GPX vs 100 km verbose — 50 % difference, exceeds 25 % tolerance.
         Assert.Null(RaceScrapeDiscovery.MatchDistanceKmToVerbose(50.0, "100 km"));
+    }
+
+    [Theory]
+    [InlineData(42.0, "Marathon", "42 km")]     // exact marathon match
+    [InlineData(42.2, "Marathon", "42 km")]     // slightly over marathon distance (within 25%)
+    [InlineData(21.0, "Halvmarathon", "21 km")] // halvmarathon
+    [InlineData(21.1, "Half marathon", "21 km")]// half marathon
+    [InlineData(42.0, "10 km, Marathon", "42 km")]  // marathon in multi-distance list
+    [InlineData(10.0, "10 km, Marathon", "10 km")]  // picks shorter distance from same list
+    public void MatchDistanceKmToVerbose_HandlesMarathonKeywords(double gpxKm, string verbose, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxKm, verbose));
+    }
+
+    // ── ExtractCourseLinksFromHtml ────────────────────────────────────────────
+
+    [Fact]
+    public void ExtractCourseLinksFromHtml_FindsLinksByHrefKeyword()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/course/info">Race information</a>
+                <a href="/about">About us</a>
+                <a href="/lopp/10k">10K race</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceScrapeDiscovery.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
+
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/course/info");
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/10k");
+        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("about"));
+    }
+
+    [Fact]
+    public void ExtractCourseLinksFromHtml_FindsLinksByLinkText()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/page1">Läs mer om loppet</a>
+                <a href="/page2">See more info</a>
+                <a href="/page3">Contact us</a>
+                <a href="/page4">Info om banan</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceScrapeDiscovery.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
+
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/page1");
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/page2");
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/page4");
+        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("page3"));
+    }
+
+    [Fact]
+    public void ExtractCourseLinksFromHtml_ReturnsEmptyForBlankInput()
+    {
+        Assert.Empty(RaceScrapeDiscovery.ExtractCourseLinksFromHtml("", new Uri("https://example.com/")));
+    }
+
+    // ── ExtractGpxLinksFromHtml ───────────────────────────────────────────────
+
+    [Fact]
+    public void ExtractGpxLinksFromHtml_FindsGpxByExtensionAndByLinkText()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/routes/race.gpx">Download route</a>
+                <a href="/download">Download GPX file</a>
+                <a href="/info">Race information</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceScrapeDiscovery.ExtractGpxLinksFromHtml(html, new Uri("https://example.com/"));
+
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/routes/race.gpx");
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/download");
+        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("info"));
+    }
+
+    [Fact]
+    public void ExtractGpxLinksFromHtml_DeduplicatesResults()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/race.gpx">Download GPX</a>
+                <a href="/race.gpx">GPX fil</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceScrapeDiscovery.ExtractGpxLinksFromHtml(html, new Uri("https://example.com/"));
+
+        Assert.Single(links, u => u.AbsoluteUri == "https://example.com/race.gpx");
+    }
+
+    // ── ExtractDownloadLinksFromHtml ──────────────────────────────────────────
+
+    [Fact]
+    public void ExtractDownloadLinksFromHtml_FindsSwedishAndEnglishDownloadLinks()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/dl1">Ladda ner</a>
+                <a href="/dl2">Hämta filen</a>
+                <a href="/dl3">Download file</a>
+                <a href="/about">About us</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceScrapeDiscovery.ExtractDownloadLinksFromHtml(html, new Uri("https://example.com/"));
+
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/dl1");
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/dl2");
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/dl3");
+        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("about"));
+    }
+
+    // ── AssignDistancesToRoutes ───────────────────────────────────────────────
+
+    [Fact]
+    public void AssignDistancesToRoutes_MatchesEachRouteToClosestVerboseDistance()
+    {
+        var assignments = RaceScrapeDiscovery.AssignDistancesToRoutes([10.3, 40.1], "10 km, 40 km");
+
+        Assert.Equal(2, assignments.Count);
+        Assert.Equal(["10 km"], assignments[0]);
+        Assert.Equal(["40 km"], assignments[1]);
+    }
+
+    [Fact]
+    public void AssignDistancesToRoutes_AssignsUnmatchedDistancesToClosestRoute()
+    {
+        // Routes at ~10 km and ~40 km; verbose distances are 10, 20, 40 km.
+        // 20 km is unmatched (outside 25% tolerance of both routes), so it goes to the closest: 10 km route.
+        var assignments = RaceScrapeDiscovery.AssignDistancesToRoutes([10.3, 40.1], "10 km, 20 km, 40 km");
+
+        Assert.Equal(2, assignments.Count);
+        Assert.Contains("10 km", assignments[0]);
+        Assert.Contains("20 km", assignments[0]);
+        Assert.Equal(["40 km"], assignments[1]);
+    }
+
+    [Fact]
+    public void AssignDistancesToRoutes_PrimaryDistancesAppearFirst()
+    {
+        // Route at ~10 km — "10 km" is primary (within tolerance), "20 km" is overflow.
+        var assignments = RaceScrapeDiscovery.AssignDistancesToRoutes([10.3, 40.1], "10 km, 20 km, 40 km");
+
+        Assert.Equal("10 km", assignments[0][0]);
+        Assert.Equal("20 km", assignments[0][1]);
+    }
+
+    [Fact]
+    public void AssignDistancesToRoutes_ReturnsEmptyListsForNullVerbose()
+    {
+        var assignments = RaceScrapeDiscovery.AssignDistancesToRoutes([10.0, 40.0], null);
+
+        Assert.All(assignments, list => Assert.Empty(list));
+    }
+
+    [Fact]
+    public void AssignDistancesToRoutes_HandlesMarathonKeyword()
+    {
+        // Route at ~42 km should match "Marathon" verbose distance.
+        var assignments = RaceScrapeDiscovery.AssignDistancesToRoutes([42.1, 10.0], "Marathon, 10 km");
+
+        Assert.Contains("42 km", assignments[0]);
+        Assert.Contains("10 km", assignments[1]);
+    }
+
+    [Fact]
+    public void AssignDistancesToRoutes_ReturnsEmptyListsForEmptyRoutes()
+    {
+        var assignments = RaceScrapeDiscovery.AssignDistancesToRoutes([], "10 km, 20 km");
+
+        Assert.Empty(assignments);
     }
 }
