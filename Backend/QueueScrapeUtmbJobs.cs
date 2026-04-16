@@ -19,16 +19,13 @@ public class QueueScrapeUtmbJobs(
         CancellationToken cancellationToken)
     {
         var httpClient = httpClientFactory.CreateClient();
-        var scrapeTargets = await DiscoverScrapeTargetsAsync(httpClient, cancellationToken);
-        var targets = scrapeTargets
-            .GroupBy(t => t.GpxUrl.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .ToList();
+        var json = await httpClient.GetStringAsync(UtmbSearchApiUrl, cancellationToken);
+        var pages = RaceScrapeDiscovery.ParseUtmbRacePages(json);
 
-        logger.LogInformation("UTMB: discovered {Count} unique GPX targets", targets.Count);
+        logger.LogInformation("UTMB: discovered {Count} race pages", pages.Count);
 
-        var messages = targets
-            .Select((t, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(t))
+        var messages = pages
+            .Select((p, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(p))
             {
                 ContentType = "application/json",
                 ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 5)
@@ -39,31 +36,7 @@ public class QueueScrapeUtmbJobs(
         for (int i = 0; i < messages.Count; i += ChunkSize)
             await _upsertSender.SendMessagesAsync(messages.Skip(i).Take(ChunkSize), cancellationToken);
 
-        logger.LogInformation("UTMB: enqueued {Count} race messages", messages.Count);
-    }
-
-    private async Task<IReadOnlyCollection<RaceScrapeTarget>> DiscoverScrapeTargetsAsync(HttpClient httpClient, CancellationToken cancellationToken)
-    {
-        var json = await httpClient.GetStringAsync(UtmbSearchApiUrl, cancellationToken);
-        var pages = RaceScrapeDiscovery.ParseUtmbRacePages(json);
-        var targets = new List<RaceScrapeTarget>();
-
-        foreach (var page in pages)
-        {
-            try
-            {
-                var html = await httpClient.GetStringAsync(page.PageUrl, cancellationToken);
-                var gpxUrls = RaceScrapeDiscovery.ExtractGpxUrlsFromHtml(html, page.PageUrl);
-                targets.AddRange(gpxUrls.Select(gpxUrl =>
-                    new RaceScrapeTarget(gpxUrl, UtmbSearchApiUrl, page.PageUrl, page.Name, page.Distance, page.ElevationGain, page.Country, page.Location, page.Playgrounds, page.RunningStones, page.ImageUrl)));
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Failed to discover GPX links from race page {RacePageUrl}", page.PageUrl);
-            }
-        }
-
-        return targets;
+        logger.LogInformation("UTMB: enqueued {Count} race page messages", messages.Count);
     }
 }
 
