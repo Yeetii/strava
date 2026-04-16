@@ -39,10 +39,13 @@ public static partial class RaceScrapeDiscovery
         if (trimmed.Length == 8 && trimmed.All(char.IsDigit))
             return $"{trimmed[..4]}-{trimmed[4..6]}-{trimmed[6..8]}";
 
-        if (DateOnly.TryParse(trimmed, CultureInfo.InvariantCulture, out var dateOnly))
+        // Strip ordinal suffixes (1st, 2nd, 3rd, 4th, etc.) before parsing
+        var cleaned = OrdinalSuffixRegex().Replace(trimmed, "$1");
+
+        if (DateOnly.TryParse(cleaned, CultureInfo.InvariantCulture, out var dateOnly))
             return dateOnly.ToString("yyyy-MM-dd");
 
-        if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture,
+        if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture,
             DateTimeStyles.None, out var dt))
             return dt.ToString("yyyy-MM-dd");
 
@@ -263,6 +266,9 @@ public static partial class RaceScrapeDiscovery
     [GeneratedRegex(@"(?i)(km|k|mi|m)\s*$")]
     private static partial Regex DistanceSuffixRegex();
 
+    [GeneratedRegex(@"(\d+)(?:st|nd|rd|th)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex OrdinalSuffixRegex();
+
     // Derives a Cosmos-safe feature ID from a URL.
     // Strips "www." prefix, replaces path separators with "-".
     // e.g. https://julianalps.utmb.world/races/120K → "julianalps.utmb.world-races-120K"
@@ -334,8 +340,56 @@ public static partial class RaceScrapeDiscovery
 
             var name = FindStringValue(race, ["name", "title"]);
 
+            // Extract external ID
+            string? externalId = null;
+            if (TryGetPropertyIgnoreCase(race, "id", out var idEl))
+            {
+                externalId = idEl.ValueKind == JsonValueKind.Number
+                    ? idEl.GetRawText()
+                    : idEl.ValueKind == JsonValueKind.String ? idEl.GetString() : null;
+            }
+
+            // Extract and normalise date
+            var startDate = FindStringValue(race, ["startDate", "start_date", "date"]);
+            var date = NormalizeDateToYyyyMmDd(startDate);
+
+            // Extract country and location from "City, Country" in startLocation
+            var startLocation = FindStringValue(race, ["startLocation", "start_location"]);
+            string? country = null;
+            string? location = null;
+            if (!string.IsNullOrWhiteSpace(startLocation))
+            {
+                var locParts = startLocation.Split(',', 2, StringSplitOptions.TrimEntries);
+                if (locParts.Length >= 2)
+                {
+                    location = locParts[0];
+                    country = NormalizeCountryToIso2(locParts[^1]);
+                }
+                else
+                {
+                    location = locParts[0];
+                }
+            }
+            country ??= NormalizeCountryToIso2(FindStringValue(race, ["country", "countryCode", "country_code"]));
+            location ??= FindStringValue(race, ["city", "location", "venue", "cityName"]);
+
+            // Extract registration status
+            bool? registrationOpen = null;
+            if (TryGetPropertyIgnoreCase(race, "raceStatus", out var raceStatus) && raceStatus.ValueKind == JsonValueKind.Object
+                && TryGetPropertyIgnoreCase(raceStatus, "open", out var openEl))
+            {
+                registrationOpen = openEl.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => null
+                };
+            }
+
             double? distanceKm = null;
             double? elevationGain = null;
+            int? runningStones = null;
+            string? utmbWorldSeriesCategory = null;
 
             if (TryGetPropertyIgnoreCase(race, "details", out var details) && details.ValueKind == JsonValueKind.Object
                 && TryGetPropertyIgnoreCase(details, "statsUp", out var statsUp) && statsUp.ValueKind == JsonValueKind.Array)
@@ -358,11 +412,12 @@ public static partial class RaceScrapeDiscovery
                         distanceKm = parsed;
                     else if (string.Equals(key, "elevationGain", StringComparison.OrdinalIgnoreCase))
                         elevationGain = parsed;
+                    else if (string.Equals(key, "runningStones", StringComparison.OrdinalIgnoreCase))
+                        runningStones = statValue.ValueKind == JsonValueKind.Number && statValue.TryGetInt32(out var s) ? s : null;
+                    else if (string.Equals(key, "categoryWorldSeries", StringComparison.OrdinalIgnoreCase))
+                        utmbWorldSeriesCategory = statValue.ValueKind == JsonValueKind.String ? statValue.GetString() : null;
                 }
             }
-
-            var country = FindStringValue(race, ["country", "countryCode", "country_code"]);
-            var location = FindStringValue(race, ["city", "location", "venue", "cityName"]);
 
             // Extract playgrounds (UTMB World Series event groups)
             IReadOnlyList<string>? playgrounds = null;
@@ -381,36 +436,37 @@ public static partial class RaceScrapeDiscovery
                     playgrounds = names;
             }
 
-            // Extract running stones
-            IReadOnlyList<string>? runningStones = null;
-            if (TryGetPropertyIgnoreCase(race, "runningStones", out var stonesEl) && stonesEl.ValueKind == JsonValueKind.Array)
+            // Extract image URL from media (Cloudinary)
+            string? imageUrl = null;
+            if (TryGetPropertyIgnoreCase(race, "media", out var mediaEl) && mediaEl.ValueKind == JsonValueKind.Object)
             {
-                var stones = new List<string>();
-                foreach (var stone in stonesEl.EnumerateArray())
-                {
-                    var stoneName = stone.ValueKind == JsonValueKind.String
-                        ? stone.GetString()
-                        : stone.ValueKind == JsonValueKind.Object ? FindStringValue(stone, ["name", "title", "slug"]) : null;
-                    if (!string.IsNullOrWhiteSpace(stoneName))
-                        stones.Add(stoneName!);
-                }
-                if (stones.Count > 0)
-                    runningStones = stones;
+                var publicId = FindStringValue(mediaEl, ["publicId"]);
+                if (!string.IsNullOrWhiteSpace(publicId))
+                    imageUrl = $"https://res.cloudinary.com/utmb-world/image/upload/{publicId.TrimStart('/')}";
             }
 
-            // Extract image URL
-            var imageUrl = FindStringValue(race, ["image", "imageUrl", "thumbnail", "picture"]);
+            // Extract logo URL from eventLogo (Cloudinary)
+            string? logoUrl = null;
+            if (TryGetPropertyIgnoreCase(race, "eventLogo", out var logoEl) && logoEl.ValueKind == JsonValueKind.Object)
+            {
+                var publicId = FindStringValue(logoEl, ["publicId"]);
+                if (!string.IsNullOrWhiteSpace(publicId))
+                    logoUrl = $"https://res.cloudinary.com/utmb-world/image/upload/{publicId.TrimStart('/')}";
+            }
+
             var distance = distanceKm.HasValue ? FormatDistanceKm(distanceKm.Value) : null;
 
-            jobs.Add(new ScrapeJob(UtmbUrl: pageUri, Name: name, Distance: distance, ElevationGain: elevationGain,
-                Country: country, Location: location,
-                RaceType: "trail", ImageUrl: imageUrl, Playgrounds: playgrounds, RunningStones: runningStones));
+            jobs.Add(new ScrapeJob(UtmbUrl: pageUri, Name: name, ExternalId: externalId,
+                Distance: distance, ElevationGain: elevationGain, Date: date,
+                Country: country, Location: location, RegistrationOpen: registrationOpen,
+                RaceType: "trail", ImageUrl: imageUrl, LogoUrl: logoUrl,
+                Playgrounds: playgrounds, RunningStones: runningStones,
+                UtmbWorldSeriesCategory: utmbWorldSeriesCategory));
         }
 
-        return jobs
+        return [.. jobs
             .GroupBy(j => j.UtmbUrl!.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .ToList();
+            .Select(g => g.First())];
     }
 
     // Parses the response from https://www.loppkartan.se/markers-se.json
@@ -738,17 +794,21 @@ public static partial class RaceScrapeDiscovery
 // Any combination of source URLs may be set; all null → point fallback using lat/lng.
 public record ScrapeJob(
     string? Name = null,
+    string? ExternalId = null, // optional opaque ID from the source system (e.g. TraceDeTrail traceID or Loppkartan marker ID)
     string? Distance = null,     // pre-formatted, e.g. "50 km" or "50 km, 25 km"
     double? ElevationGain = null,
     string? Country = null,
     string? Location = null,
     string? RaceType = null,
+    bool? RegistrationOpen = null,
     string? Date = null,
     string? ImageUrl = null,
+    string? LogoUrl = null,
     double? Latitude = null,
     double? Longitude = null,
     IReadOnlyList<string>? Playgrounds = null,
-    IReadOnlyList<string>? RunningStones = null,
+    int? RunningStones = null,
+    string? UtmbWorldSeriesCategory = null,
     string? County = null,
     string? TypeLocal = null,
     // Per-source URLs (null = source not available for this race).

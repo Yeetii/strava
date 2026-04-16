@@ -190,7 +190,7 @@ public class ScrapeRaceWorker
             properties[RaceScrapeDiscovery.PropImage] = job.ImageUrl;
         if (job.Playgrounds is { Count: > 0 })
             properties[RaceScrapeDiscovery.PropPlaygrounds] = job.Playgrounds;
-        if (job.RunningStones is { Count: > 0 })
+        if (job.RunningStones > 0)
             properties[RaceScrapeDiscovery.PropRunningStones] = job.RunningStones;
         if (job.ElevationGain.HasValue)
             properties[RaceScrapeDiscovery.PropElevationGain] = job.ElevationGain.Value;

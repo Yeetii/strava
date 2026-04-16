@@ -8,54 +8,90 @@ public class RaceScrapeDiscoveryTests
     public void ParseUtmbRacePages_ExtractsRacePagesAndMetadata()
     {
         const string payload = """
+            {"races":[
             {
-              "races": [
-                {
-                  "slug": "https://utmb.world/races/utmb-mont-blanc-50k",
-                  "name": "UTMB Mont-Blanc 50K",
-                  "details": {
-                    "statsUp": [
-                      { "name": "distance", "value": 54.3 },
-                      { "name": "elevationGain", "value": 3200 }
-                    ]
-                  },
-                  "country": "FR",
-                  "city": "Chamonix",
-                  "playgrounds": [{ "name": "UTMB Mont-Blanc" }],
-                  "runningStones": [{ "name": "Finisher Stone" }],
-                  "image": "https://utmb.world/img/race.jpg"
+                "id": 133,
+                "startDate": "24th April 2026",
+                "startLocation": "Malaucène, France",
+                "raceStatus": {
+                    "open": false,
+                    "status": "registration_sold_out"
                 },
-                {
-                  "slug": "https://utmb.world/races/ccc",
-                  "name": "CCC",
-                  "details": {
+                "name": "Grand Raid Ventoux by UTMB - Ultra Géant de Provence - UGP",
+                "logo": null,
+                "eventLogo": {
+                    "publicId": "/ventoux/Logos/Logo_GRAND_RAID_VENTOUX_white_346cd68fd0.png"
+                },
+                "media": {
+                    "publicId": "ventoux/Races/2025/grv25_100_M_Collectif_Com_D_Rosso_7853_92afa1b124",
+                    "ratio": 1.5,
+                    "format": "jpg",
+                    "type": "image",
+                    "width": 1920,
+                    "height": 1280
+                },
+                "slug": "https://ventoux.utmb.world/races/GRV100M",
+                "raceLink": null,
+                "details": {
+                    "summaryUp": null,
+                    "summaryDown": null,
                     "statsUp": [
-                      { "name": "distance", "value": 101.0 },
-                      { "name": "elevationGain", "value": 6100 }
+                    {
+                        "name": "distance",
+                        "value": 125,
+                        "postfix": "km"
+                    },
+                    {
+                        "name": "elevationGain",
+                        "value": 5700,
+                        "postfix": "m"
+                    },
+                    {
+                        "name": "runningStones",
+                        "value": 4,
+                        "postfix": null
+                    },
+                    {
+                        "name": "categoryWorldSeries",
+                        "value": "100m",
+                        "postfix": null
+                    }
+                    ],
+                    "statsDown": [
+                    {
+                        "name": "startPlace",
+                        "value": "Malaucène, France",
+                        "postfix": null
+                    }
                     ]
-                  }
-                }
-              ]
+                },
+                "raceTheme": "#f42525",
+                "raceThemeIsDark": true,
+                "playgrounds": [
+                    "hikingTrail"
+                ]
             }
+            ]}
             """;
 
         var jobs = RaceScrapeDiscovery.ParseUtmbRacePages(payload);
 
-        Assert.Equal(2, jobs.Count);
+        Assert.Single(jobs);
 
-        var utmb50k = Assert.Single(jobs, j => j.UtmbUrl!.AbsoluteUri == "https://utmb.world/races/utmb-mont-blanc-50k");
-        Assert.Equal("54.3 km", utmb50k.Distance);
-        Assert.Equal(3200, utmb50k.ElevationGain);
-        Assert.Equal("FR", utmb50k.Country);
-        Assert.Equal("Chamonix", utmb50k.Location);
-        Assert.Equal(["UTMB Mont-Blanc"], utmb50k.Playgrounds);
-        Assert.Equal(["Finisher Stone"], utmb50k.RunningStones);
-        Assert.Equal("https://utmb.world/img/race.jpg", utmb50k.ImageUrl);
-
-        var ccc = Assert.Single(jobs, j => j.UtmbUrl!.AbsoluteUri == "https://utmb.world/races/ccc");
-        Assert.Equal("101 km", ccc.Distance);
-        Assert.Equal(6100, ccc.ElevationGain);
-        Assert.Null(ccc.Playgrounds);
+        var GRV100M = Assert.Single(jobs, j => j.UtmbUrl!.AbsoluteUri == "https://ventoux.utmb.world/races/GRV100M");
+        Assert.Equal("125 km", GRV100M.Distance);
+        Assert.Equal(5700, GRV100M.ElevationGain);
+        Assert.Equal("Grand Raid Ventoux by UTMB - Ultra Géant de Provence - UGP", GRV100M.Name);
+        Assert.Equal("133", GRV100M.ExternalId);
+        Assert.Equal("2026-04-24", GRV100M.Date);
+        Assert.Equal("FR", GRV100M.Country);
+        Assert.Equal("Malaucène", GRV100M.Location);
+        Assert.Equal(false, GRV100M.RegistrationOpen);
+        Assert.Equal(["hikingTrail"], GRV100M.Playgrounds);
+        Assert.Equal(4, GRV100M.RunningStones);
+        Assert.Equal("100m", GRV100M.UtmbWorldSeriesCategory);
+        Assert.Equal("https://res.cloudinary.com/utmb-world/image/upload/ventoux/Races/2025/grv25_100_M_Collectif_Com_D_Rosso_7853_92afa1b124", GRV100M.ImageUrl);
+        Assert.Equal("https://res.cloudinary.com/utmb-world/image/upload/ventoux/Logos/Logo_GRAND_RAID_VENTOUX_white_346cd68fd0.png", GRV100M.LogoUrl);
     }
 
     [Fact]
