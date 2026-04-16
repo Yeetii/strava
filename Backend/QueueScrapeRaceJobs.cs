@@ -116,7 +116,8 @@ public class QueueScrapeRaceJobs(
         return [.. jobsByUrl.Values];
     }
 
-    // TODO: implement Runagain discovery once the API endpoint and response format are known.
+    // Placeholder: returns no jobs until the Runagain API endpoint and response format are known.
+    // TODO: implement discovery once Runagain integration is scoped (see RunagainScraper.cs).
     private static IReadOnlyCollection<ScrapeJob> FetchRunagainJobs() => [];
 
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchLoppkartanJobsAsync(HttpClient httpClient, CancellationToken cancellationToken)
