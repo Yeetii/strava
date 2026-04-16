@@ -17,6 +17,192 @@ public static partial class RaceScrapeDiscovery
     public const string PropDescription = "description";
     public const string PropCountry = "country";
     public const string PropLocation = "location";
+    public const string PropImage = "image";
+    public const string PropPlaygrounds = "playgrounds";
+    public const string PropRunningStones = "runningStones";
+
+    // Converts various date formats to YYYY-MM-DD, e.g. "20250914" → "2025-09-14".
+    // Returns null if the date cannot be parsed.
+    public static string? NormalizeDateToYyyyMmDd(string? date)
+    {
+        if (string.IsNullOrWhiteSpace(date))
+            return null;
+
+        var trimmed = date.Trim();
+
+        // Already YYYY-MM-DD
+        if (trimmed.Length == 10 && trimmed[4] == '-' && trimmed[7] == '-')
+            return trimmed;
+
+        // Compact YYYYMMDD (e.g. Loppkartan: "20250914")
+        if (trimmed.Length == 8 && trimmed.All(char.IsDigit))
+            return $"{trimmed[..4]}-{trimmed[4..6]}-{trimmed[6..8]}";
+
+        if (DateOnly.TryParse(trimmed, System.Globalization.CultureInfo.InvariantCulture, out var dateOnly))
+            return dateOnly.ToString("yyyy-MM-dd");
+
+        if (DateTime.TryParse(trimmed, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var dt))
+            return dt.ToString("yyyy-MM-dd");
+
+        return null;
+    }
+
+    // Formats a numeric distance in km to a human-readable string, e.g. 10.1 → "10.1 km", 5.0 → "5 km".
+    public static string FormatDistanceKm(double distanceKm)
+    {
+        return distanceKm == Math.Floor(distanceKm)
+            ? $"{(long)distanceKm} km"
+            : $"{distanceKm:0.#} km";
+    }
+
+    // Normalises a verbose distance string (e.g. "100K, 50K") to the standard form ("100 km, 50 km").
+    // Individual tokens that cannot be parsed are passed through unchanged.
+    public static string? ParseDistanceVerbose(string? distanceVerbose)
+    {
+        if (string.IsNullOrWhiteSpace(distanceVerbose))
+            return null;
+
+        var parts = distanceVerbose
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var formatted = new List<string>(parts.Length);
+        foreach (var part in parts)
+        {
+            // Strip trailing 'K', 'KM', 'km', 'm', 'mi' (case-insensitive) before numeric parse
+            var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
+            var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
+
+            if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
+            {
+                // Treat "mi" as miles → convert to km
+                var km = suffix == "mi" ? value * 1.60934 : value;
+                formatted.Add(FormatDistanceKm(km));
+            }
+            else
+            {
+                formatted.Add(part); // pass through as-is
+            }
+        }
+
+        return string.Join(", ", formatted);
+    }
+
+    // Normalises a country string to an ISO 3166-1 alpha-2 code (e.g. "france" → "FR", "SWE" → "SE").
+    // Returns null if the country cannot be identified.
+    public static string? NormalizeCountryToIso2(string? country)
+    {
+        if (string.IsNullOrWhiteSpace(country))
+            return null;
+
+        var trimmed = country.Trim();
+
+        if (trimmed.Length == 2)
+        {
+            var upper = trimmed.ToUpperInvariant();
+            try { return new System.Globalization.RegionInfo(upper).TwoLetterISORegionName; }
+            catch { return null; }
+        }
+
+        if (trimmed.Length == 3)
+        {
+            if (Iso3ToIso2.TryGetValue(trimmed.ToUpperInvariant(), out var from3))
+                return from3;
+        }
+
+        if (CountryNameToIso2.TryGetValue(trimmed.ToLowerInvariant(), out var fromName))
+            return fromName;
+
+        return null;
+    }
+
+    // Normalises a race type string. If any segment contains the word "trail", the token "trail" is
+    // prepended. All segments are lower-cased and deduplicated, then joined with ", ".
+    // Returns null for blank input.
+    public static string? NormalizeRaceType(string? raceType)
+    {
+        if (string.IsNullOrWhiteSpace(raceType))
+            return null;
+
+        var parts = raceType
+            .Split([',', ';', '/'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => p.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var hasTrailToken = parts.Contains("trail", StringComparer.Ordinal);
+        var hasTrailWord = !hasTrailToken && parts.Any(p => p.Contains("trail", StringComparison.OrdinalIgnoreCase));
+        if (hasTrailWord)
+        {
+            parts.Insert(0, "trail");
+        }
+
+        return parts.Count > 0 ? string.Join(", ", parts) : null;
+    }
+
+    // ISO 3166-1 alpha-3 → alpha-2 mappings for common trail-running countries.
+    private static readonly Dictionary<string, string> Iso3ToIso2 = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["AND"] = "AD", ["ALB"] = "AL", ["AUT"] = "AT", ["BEL"] = "BE", ["BGR"] = "BG",
+        ["BIH"] = "BA", ["BLR"] = "BY", ["CHE"] = "CH", ["CYP"] = "CY", ["CZE"] = "CZ",
+        ["DEU"] = "DE", ["DNK"] = "DK", ["ESP"] = "ES", ["EST"] = "EE", ["FIN"] = "FI",
+        ["FRA"] = "FR", ["GBR"] = "GB", ["GRC"] = "GR", ["HRV"] = "HR", ["HUN"] = "HU",
+        ["IRL"] = "IE", ["ISL"] = "IS", ["ITA"] = "IT", ["KOS"] = "XK", ["LIE"] = "LI",
+        ["LTU"] = "LT", ["LUX"] = "LU", ["LVA"] = "LV", ["MDA"] = "MD", ["MKD"] = "MK",
+        ["MLT"] = "MT", ["MNE"] = "ME", ["NLD"] = "NL", ["NOR"] = "NO", ["POL"] = "PL",
+        ["PRT"] = "PT", ["ROU"] = "RO", ["RUS"] = "RU", ["SRB"] = "RS", ["SVK"] = "SK",
+        ["SVN"] = "SI", ["SWE"] = "SE", ["TUR"] = "TR", ["UKR"] = "UA",
+        ["AUS"] = "AU", ["BRA"] = "BR", ["CAN"] = "CA", ["CHN"] = "CN", ["HKG"] = "HK",
+        ["IDN"] = "ID", ["IND"] = "IN", ["JPN"] = "JP", ["KOR"] = "KR", ["MEX"] = "MX",
+        ["MYS"] = "MY", ["NZL"] = "NZ", ["PHL"] = "PH", ["SGP"] = "SG", ["THA"] = "TH",
+        ["USA"] = "US", ["ZAF"] = "ZA",
+    };
+
+    // Common country name (lower-case) → ISO 3166-1 alpha-2 code.
+    private static readonly Dictionary<string, string> CountryNameToIso2 = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // English names
+        ["andorra"] = "AD", ["albania"] = "AL", ["austria"] = "AT", ["belgium"] = "BE",
+        ["bulgaria"] = "BG", ["bosnia and herzegovina"] = "BA", ["bosnia"] = "BA",
+        ["belarus"] = "BY", ["switzerland"] = "CH", ["cyprus"] = "CY", ["czechia"] = "CZ",
+        ["czech republic"] = "CZ", ["germany"] = "DE", ["denmark"] = "DK", ["spain"] = "ES",
+        ["estonia"] = "EE", ["finland"] = "FI", ["france"] = "FR", ["united kingdom"] = "GB",
+        ["uk"] = "GB", ["great britain"] = "GB", ["greece"] = "GR", ["croatia"] = "HR",
+        ["hungary"] = "HU", ["ireland"] = "IE", ["iceland"] = "IS", ["italy"] = "IT",
+        ["kosovo"] = "XK", ["liechtenstein"] = "LI", ["lithuania"] = "LT",
+        ["luxembourg"] = "LU", ["latvia"] = "LV", ["moldova"] = "MD",
+        ["north macedonia"] = "MK", ["malta"] = "MT", ["montenegro"] = "ME",
+        ["netherlands"] = "NL", ["norway"] = "NO", ["poland"] = "PL", ["portugal"] = "PT",
+        ["romania"] = "RO", ["russia"] = "RU", ["serbia"] = "RS", ["slovakia"] = "SK",
+        ["slovenia"] = "SI", ["sweden"] = "SE", ["turkey"] = "TR", ["ukraine"] = "UA",
+        ["australia"] = "AU", ["brazil"] = "BR", ["canada"] = "CA", ["china"] = "CN",
+        ["hong kong"] = "HK", ["indonesia"] = "ID", ["india"] = "IN", ["japan"] = "JP",
+        ["south korea"] = "KR", ["korea"] = "KR", ["mexico"] = "MX", ["malaysia"] = "MY",
+        ["new zealand"] = "NZ", ["philippines"] = "PH", ["singapore"] = "SG",
+        ["thailand"] = "TH", ["united states"] = "US", ["usa"] = "US",
+        ["south africa"] = "ZA",
+        // French names (TraceDeTrail is a French site)
+        ["allemagne"] = "DE", ["autriche"] = "AT", ["belgique"] = "BE", ["bulgarie"] = "BG",
+        ["croatie"] = "HR", ["danemark"] = "DK", ["espagne"] = "ES", ["finlande"] = "FI",
+        ["grèce"] = "GR", ["grece"] = "GR", ["hongrie"] = "HU", ["irlande"] = "IE",
+        ["islande"] = "IS", ["italie"] = "IT", ["lettonie"] = "LV", ["lituanie"] = "LT",
+        ["macédoine du nord"] = "MK", ["macedoine du nord"] = "MK", ["malte"] = "MT",
+        ["moldavie"] = "MD", ["monténégro"] = "ME", ["montenegro"] = "ME",
+        ["norvège"] = "NO", ["norvege"] = "NO", ["pays-bas"] = "NL", ["pays bas"] = "NL",
+        ["pologne"] = "PL", ["portugal"] = "PT", ["roumanie"] = "RO", ["russie"] = "RU",
+        ["serbie"] = "RS", ["slovaquie"] = "SK", ["slovénie"] = "SI", ["slovenie"] = "SI",
+        ["suède"] = "SE", ["suede"] = "SE", ["suisse"] = "CH", ["tchéquie"] = "CZ",
+        ["tcheque"] = "CZ", ["turquie"] = "TR", ["ukraine"] = "UA",
+        ["australie"] = "AU", ["brésil"] = "BR", ["bresil"] = "BR", ["canada"] = "CA",
+        ["chine"] = "CN", ["japon"] = "JP", ["mexique"] = "MX", ["nouvelle-zélande"] = "NZ",
+        ["nouvelle zelande"] = "NZ", ["afrique du sud"] = "ZA",
+        ["royaume-uni"] = "GB", ["royaume uni"] = "GB",
+        ["états-unis"] = "US", ["etats-unis"] = "US", ["etats unis"] = "US",
+    };
+
+    [GeneratedRegex(@"(?i)(km|k|mi|m)\s*$")]
+    private static partial Regex DistanceSuffixRegex();
 
     // Derives a stable source-scoped ID from the UTMB race page URL.
     // e.g. https://julianalps.utmb.world/races/120K → "utmb:julianalps/120K"
@@ -33,9 +219,12 @@ public static partial class RaceScrapeDiscovery
 
     // Parses the response from https://api.utmb.world/search/races?lang=en&limit=400
     // Each race object has:
-    //   slug        – the race page URL, e.g. "https://julianalps.utmb.world/races/120K"
-    //   name        – race name
+    //   slug            – the race page URL, e.g. "https://julianalps.utmb.world/races/120K"
+    //   name            – race name
     //   details.statsUp – array of { name, value, postfix } where name in {"distance","elevationGain"}
+    //   playgrounds     – array of playground objects (name of each UTMB World Series location)
+    //   runningStones   – array of running stone objects
+    //   image / imageUrl / thumbnail – optional image URL
     public static IReadOnlyCollection<RacePageCandidate> ParseUtmbRacePages(string jsonPayload)
     {
         if (string.IsNullOrWhiteSpace(jsonPayload))
@@ -44,7 +233,7 @@ public static partial class RaceScrapeDiscovery
         using var document = JsonDocument.Parse(jsonPayload);
         var root = document.RootElement;
 
-        if (!root.TryGetProperty("races", out var racesElement) || racesElement.ValueKind != JsonValueKind.Array)
+        if (!TryGetPropertyIgnoreCase(root, "races", out var racesElement) || racesElement.ValueKind != JsonValueKind.Array)
             return [];
 
         var pageCandidates = new List<RacePageCandidate>();
@@ -94,7 +283,44 @@ public static partial class RaceScrapeDiscovery
             var country = FindStringValue(race, ["country", "countryCode", "country_code"]);
             var location = FindStringValue(race, ["city", "location", "venue", "cityName"]);
 
-            pageCandidates.Add(new RacePageCandidate(pageUri, name, distance, elevationGain, country, location));
+            // Extract playgrounds (UTMB World Series event groups)
+            IReadOnlyList<string>? playgrounds = null;
+            if (TryGetPropertyIgnoreCase(race, "playgrounds", out var playgroundsEl) && playgroundsEl.ValueKind == JsonValueKind.Array)
+            {
+                var names = new List<string>();
+                foreach (var pg in playgroundsEl.EnumerateArray())
+                {
+                    var pgName = pg.ValueKind == JsonValueKind.String
+                        ? pg.GetString()
+                        : pg.ValueKind == JsonValueKind.Object ? FindStringValue(pg, ["name", "title", "slug"]) : null;
+                    if (!string.IsNullOrWhiteSpace(pgName))
+                        names.Add(pgName!);
+                }
+                if (names.Count > 0)
+                    playgrounds = names;
+            }
+
+            // Extract running stones
+            IReadOnlyList<string>? runningStones = null;
+            if (TryGetPropertyIgnoreCase(race, "runningStones", out var stonesEl) && stonesEl.ValueKind == JsonValueKind.Array)
+            {
+                var stones = new List<string>();
+                foreach (var stone in stonesEl.EnumerateArray())
+                {
+                    var stoneName = stone.ValueKind == JsonValueKind.String
+                        ? stone.GetString()
+                        : stone.ValueKind == JsonValueKind.Object ? FindStringValue(stone, ["name", "title", "slug"]) : null;
+                    if (!string.IsNullOrWhiteSpace(stoneName))
+                        stones.Add(stoneName!);
+                }
+                if (stones.Count > 0)
+                    runningStones = stones;
+            }
+
+            // Extract image URL
+            var imageUrl = FindStringValue(race, ["image", "imageUrl", "thumbnail", "picture"]);
+
+            pageCandidates.Add(new RacePageCandidate(pageUri, name, distance, elevationGain, country, location, playgrounds, runningStones, imageUrl));
         }
 
         return pageCandidates
@@ -378,7 +604,16 @@ public static partial class RaceScrapeDiscovery
     private static partial Regex RelativeGpxRegex();
 }
 
-public record RacePageCandidate(Uri PageUrl, string? Name, double? Distance, double? ElevationGain, string? Country, string? Location);
+public record RacePageCandidate(
+    Uri PageUrl,
+    string? Name,
+    double? Distance,
+    double? ElevationGain,
+    string? Country,
+    string? Location,
+    IReadOnlyList<string>? Playgrounds = null,
+    IReadOnlyList<string>? RunningStones = null,
+    string? ImageUrl = null);
 
 public record RaceScrapeTarget(
     Uri GpxUrl,
@@ -388,7 +623,10 @@ public record RaceScrapeTarget(
     double? Distance,
     double? ElevationGain,
     string? Country,
-    string? Location);
+    string? Location,
+    IReadOnlyList<string>? Playgrounds = null,
+    IReadOnlyList<string>? RunningStones = null,
+    string? ImageUrl = null);
 
 public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance, string? Country);
 

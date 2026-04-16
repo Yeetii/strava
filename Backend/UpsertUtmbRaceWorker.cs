@@ -58,17 +58,25 @@ public class UpsertUtmbRaceWorker(
                     ["gpxUrl"] = target.GpxUrl.AbsoluteUri,
                     ["gpx"] = gpxContent,
                     [RaceScrapeDiscovery.PropWebsite] = target.CoursePageUrl.AbsoluteUri,
+                    [RaceScrapeDiscovery.PropRaceType] = "trail",
                     [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
                 };
 
                 if (target.Distance.HasValue)
-                    properties[RaceScrapeDiscovery.PropDistance] = target.Distance.Value;
+                    properties[RaceScrapeDiscovery.PropDistance] = RaceScrapeDiscovery.FormatDistanceKm(target.Distance.Value);
                 if (target.ElevationGain.HasValue)
                     properties[RaceScrapeDiscovery.PropElevationGain] = target.ElevationGain.Value;
-                if (!string.IsNullOrWhiteSpace(target.Country))
-                    properties[RaceScrapeDiscovery.PropCountry] = target.Country;
+                var normalizedCountry = RaceScrapeDiscovery.NormalizeCountryToIso2(target.Country);
+                if (!string.IsNullOrWhiteSpace(normalizedCountry))
+                    properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
                 if (!string.IsNullOrWhiteSpace(target.Location))
                     properties[RaceScrapeDiscovery.PropLocation] = target.Location;
+                if (target.Playgrounds is { Count: > 0 })
+                    properties[RaceScrapeDiscovery.PropPlaygrounds] = target.Playgrounds;
+                if (target.RunningStones is { Count: > 0 })
+                    properties[RaceScrapeDiscovery.PropRunningStones] = target.RunningStones;
+                if (!string.IsNullOrWhiteSpace(target.ImageUrl))
+                    properties[RaceScrapeDiscovery.PropImage] = target.ImageUrl;
 
                 var feature = new Feature(lineString, properties, null, new FeatureId(routeId));
                 var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);

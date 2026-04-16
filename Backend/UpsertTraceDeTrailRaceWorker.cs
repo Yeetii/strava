@@ -63,11 +63,12 @@ public class UpsertTraceDeTrailRaceWorker(
 
                 var distance = target.Distance ?? traceData.TotalDistanceKm;
                 if (distance.HasValue)
-                    properties[RaceScrapeDiscovery.PropDistance] = distance.Value;
+                    properties[RaceScrapeDiscovery.PropDistance] = RaceScrapeDiscovery.FormatDistanceKm(distance.Value);
                 if (traceData.ElevationGain.HasValue)
                     properties[RaceScrapeDiscovery.PropElevationGain] = traceData.ElevationGain.Value;
-                if (!string.IsNullOrWhiteSpace(target.Country))
-                    properties[RaceScrapeDiscovery.PropCountry] = target.Country;
+                var normalizedCountry = RaceScrapeDiscovery.NormalizeCountryToIso2(target.Country);
+                if (!string.IsNullOrWhiteSpace(normalizedCountry))
+                    properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
 
                 var featureId = $"tracedetrail:{target.TraceId}";
                 var feature = new Feature(lineString, properties, null, new FeatureId(featureId));
