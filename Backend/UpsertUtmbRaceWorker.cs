@@ -17,78 +17,71 @@ public class UpsertUtmbRaceWorker(
 
     [Function(nameof(UpsertUtmbRaceWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.UpsertUtmbRace, Connection = "ServicebusConnection", IsBatched = true)] ServiceBusReceivedMessage[] messages,
+        [ServiceBusTrigger(ServiceBusConfig.UpsertUtmbRace, Connection = "ServicebusConnection")] ServiceBusReceivedMessage message,
         CancellationToken cancellationToken)
     {
-        var httpClient = httpClientFactory.CreateClient();
-        var upsertedCount = 0;
-
-        foreach (var message in messages)
+        RaceScrapeTarget? target;
+        try
         {
-            RaceScrapeTarget? target;
-            try
-            {
-                target = message.Body.ToObjectFromJson<RaceScrapeTarget>();
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to deserialize UTMB race message");
-                continue;
-            }
-
-            if (target is null) continue;
-
-            try
-            {
-                var gpxContent = await httpClient.GetStringAsync(target.GpxUrl, cancellationToken);
-                var parsedRoute = GpxParser.TryParseRoute(gpxContent, target.Name ?? "Unnamed route");
-                if (parsedRoute is null)
-                {
-                    logger.LogWarning("Skipping GPX {GpxUrl}: failed to parse route points", target.GpxUrl);
-                    continue;
-                }
-
-                var routeId = RaceScrapeDiscovery.BuildUtmbFeatureId(target.CoursePageUrl);
-                var lineString = new LineString(parsedRoute.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
-                var properties = new Dictionary<string, dynamic>
-                {
-                    [RaceScrapeDiscovery.PropName] = parsedRoute.Name,
-                    ["sourceUrl"] = target.SourceUrl.AbsoluteUri,
-                    ["coursePageUrl"] = target.CoursePageUrl.AbsoluteUri,
-                    ["gpxUrl"] = target.GpxUrl.AbsoluteUri,
-                    ["gpx"] = gpxContent,
-                    [RaceScrapeDiscovery.PropWebsite] = target.CoursePageUrl.AbsoluteUri,
-                    [RaceScrapeDiscovery.PropRaceType] = "trail",
-                    [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
-                };
-
-                if (target.Distance.HasValue)
-                    properties[RaceScrapeDiscovery.PropDistance] = RaceScrapeDiscovery.FormatDistanceKm(target.Distance.Value);
-                if (target.ElevationGain.HasValue)
-                    properties[RaceScrapeDiscovery.PropElevationGain] = target.ElevationGain.Value;
-                var normalizedCountry = RaceScrapeDiscovery.NormalizeCountryToIso2(target.Country);
-                if (!string.IsNullOrWhiteSpace(normalizedCountry))
-                    properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
-                if (!string.IsNullOrWhiteSpace(target.Location))
-                    properties[RaceScrapeDiscovery.PropLocation] = target.Location;
-                if (target.Playgrounds is { Count: > 0 })
-                    properties[RaceScrapeDiscovery.PropPlaygrounds] = target.Playgrounds;
-                if (target.RunningStones is { Count: > 0 })
-                    properties[RaceScrapeDiscovery.PropRunningStones] = target.RunningStones;
-                if (!string.IsNullOrWhiteSpace(target.ImageUrl))
-                    properties[RaceScrapeDiscovery.PropImage] = target.ImageUrl;
-
-                var feature = new Feature(lineString, properties, null, new FeatureId(routeId));
-                var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
-                await racesCollectionClient.UpsertDocument(stored, cancellationToken);
-                upsertedCount++;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Failed to fetch or parse GPX from {GpxUrl}", target.GpxUrl);
-            }
+            target = message.Body.ToObjectFromJson<RaceScrapeTarget>();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to deserialize UTMB race message");
+            return;
         }
 
-        logger.LogInformation("UTMB: upserted {Count}/{Total} races in batch", upsertedCount, messages.Length);
+        if (target is null) return;
+
+        try
+        {
+            var httpClient = httpClientFactory.CreateClient();
+            var gpxContent = await httpClient.GetStringAsync(target.GpxUrl, cancellationToken);
+            var parsedRoute = GpxParser.TryParseRoute(gpxContent, target.Name ?? "Unnamed route");
+            if (parsedRoute is null)
+            {
+                logger.LogWarning("Skipping GPX {GpxUrl}: failed to parse route points", target.GpxUrl);
+                return;
+            }
+
+            var routeId = RaceScrapeDiscovery.BuildUtmbFeatureId(target.CoursePageUrl);
+            var lineString = new LineString(parsedRoute.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
+            var properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropName] = parsedRoute.Name,
+                ["sourceUrl"] = target.SourceUrl.AbsoluteUri,
+                ["coursePageUrl"] = target.CoursePageUrl.AbsoluteUri,
+                ["gpxUrl"] = target.GpxUrl.AbsoluteUri,
+                ["gpx"] = gpxContent,
+                [RaceScrapeDiscovery.PropWebsite] = target.CoursePageUrl.AbsoluteUri,
+                [RaceScrapeDiscovery.PropRaceType] = "trail",
+                [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
+            };
+
+            if (target.Distance.HasValue)
+                properties[RaceScrapeDiscovery.PropDistance] = RaceScrapeDiscovery.FormatDistanceKm(target.Distance.Value);
+            if (target.ElevationGain.HasValue)
+                properties[RaceScrapeDiscovery.PropElevationGain] = target.ElevationGain.Value;
+            var normalizedCountry = RaceScrapeDiscovery.NormalizeCountryToIso2(target.Country);
+            if (!string.IsNullOrWhiteSpace(normalizedCountry))
+                properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
+            if (!string.IsNullOrWhiteSpace(target.Location))
+                properties[RaceScrapeDiscovery.PropLocation] = target.Location;
+            if (target.Playgrounds is { Count: > 0 })
+                properties[RaceScrapeDiscovery.PropPlaygrounds] = target.Playgrounds;
+            if (target.RunningStones is { Count: > 0 })
+                properties[RaceScrapeDiscovery.PropRunningStones] = target.RunningStones;
+            if (!string.IsNullOrWhiteSpace(target.ImageUrl))
+                properties[RaceScrapeDiscovery.PropImage] = target.ImageUrl;
+
+            var feature = new Feature(lineString, properties, null, new FeatureId(routeId));
+            var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
+            await racesCollectionClient.UpsertDocument(stored, cancellationToken);
+            logger.LogInformation("UTMB: upserted race {RouteId}", routeId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to fetch or parse GPX from {GpxUrl}", target.GpxUrl);
+        }
     }
 }

@@ -18,70 +18,63 @@ public class UpsertTraceDeTrailRaceWorker(
 
     [Function(nameof(UpsertTraceDeTrailRaceWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.UpsertTraceDeTrailRace, Connection = "ServicebusConnection", IsBatched = true)] ServiceBusReceivedMessage[] messages,
+        [ServiceBusTrigger(ServiceBusConfig.UpsertTraceDeTrailRace, Connection = "ServicebusConnection")] ServiceBusReceivedMessage message,
         CancellationToken cancellationToken)
     {
-        var httpClient = httpClientFactory.CreateClient();
-        var upsertedCount = 0;
-
-        foreach (var message in messages)
+        TraceDeTrailScrapeTarget? target;
+        try
         {
-            TraceDeTrailScrapeTarget? target;
-            try
-            {
-                target = message.Body.ToObjectFromJson<TraceDeTrailScrapeTarget>();
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to deserialize TraceDeTrail trace message");
-                continue;
-            }
-
-            if (target is null) continue;
-
-            try
-            {
-                var url = $"{BaseUrl}/trace/getTraceItra/{target.TraceId}";
-                var json = await httpClient.GetStringAsync(url, cancellationToken);
-                var traceData = RaceScrapeDiscovery.ParseTraceDeTrailTrace(json);
-
-                if (traceData.Points.Count < 2)
-                {
-                    logger.LogWarning("TraceDeTrail trace {TraceId} returned fewer than 2 points, skipping", target.TraceId);
-                    continue;
-                }
-
-                var lineString = new LineString(traceData.Points.Select(p => new Position(p.Lng, p.Lat)).ToList());
-                var tracePageUrl = $"{BaseUrl}/en/trace/viewTrace/{target.TraceId}";
-                var properties = new Dictionary<string, dynamic>
-                {
-                    [RaceScrapeDiscovery.PropName] = target.Name ?? $"TraceDeTrail {target.TraceId}",
-                    ["sourceUrl"] = url,
-                    [RaceScrapeDiscovery.PropWebsite] = tracePageUrl,
-                    [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
-                };
-
-                var distance = target.Distance ?? traceData.TotalDistanceKm;
-                if (distance.HasValue)
-                    properties[RaceScrapeDiscovery.PropDistance] = RaceScrapeDiscovery.FormatDistanceKm(distance.Value);
-                if (traceData.ElevationGain.HasValue)
-                    properties[RaceScrapeDiscovery.PropElevationGain] = traceData.ElevationGain.Value;
-                var normalizedCountry = RaceScrapeDiscovery.NormalizeCountryToIso2(target.Country);
-                if (!string.IsNullOrWhiteSpace(normalizedCountry))
-                    properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
-
-                var featureId = $"tracedetrail:{target.TraceId}";
-                var feature = new Feature(lineString, properties, null, new FeatureId(featureId));
-                var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
-                await racesCollectionClient.UpsertDocument(stored, cancellationToken);
-                upsertedCount++;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Failed to fetch or parse TraceDeTrail trace {TraceId}", target.TraceId);
-            }
+            target = message.Body.ToObjectFromJson<TraceDeTrailScrapeTarget>();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to deserialize TraceDeTrail trace message");
+            return;
         }
 
-        logger.LogInformation("TraceDeTrail: upserted {Count}/{Total} traces in batch", upsertedCount, messages.Length);
+        if (target is null) return;
+
+        try
+        {
+            var httpClient = httpClientFactory.CreateClient();
+            var url = $"{BaseUrl}/trace/getTraceItra/{target.TraceId}";
+            var json = await httpClient.GetStringAsync(url, cancellationToken);
+            var traceData = RaceScrapeDiscovery.ParseTraceDeTrailTrace(json);
+
+            if (traceData.Points.Count < 2)
+            {
+                logger.LogWarning("TraceDeTrail trace {TraceId} returned fewer than 2 points, skipping", target.TraceId);
+                return;
+            }
+
+            var lineString = new LineString(traceData.Points.Select(p => new Position(p.Lng, p.Lat)).ToList());
+            var tracePageUrl = $"{BaseUrl}/en/trace/viewTrace/{target.TraceId}";
+            var properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropName] = target.Name ?? $"TraceDeTrail {target.TraceId}",
+                ["sourceUrl"] = url,
+                [RaceScrapeDiscovery.PropWebsite] = tracePageUrl,
+                [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
+            };
+
+            var distance = target.Distance ?? traceData.TotalDistanceKm;
+            if (distance.HasValue)
+                properties[RaceScrapeDiscovery.PropDistance] = RaceScrapeDiscovery.FormatDistanceKm(distance.Value);
+            if (traceData.ElevationGain.HasValue)
+                properties[RaceScrapeDiscovery.PropElevationGain] = traceData.ElevationGain.Value;
+            var normalizedCountry = RaceScrapeDiscovery.NormalizeCountryToIso2(target.Country);
+            if (!string.IsNullOrWhiteSpace(normalizedCountry))
+                properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
+
+            var featureId = $"tracedetrail:{target.TraceId}";
+            var feature = new Feature(lineString, properties, null, new FeatureId(featureId));
+            var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
+            await racesCollectionClient.UpsertDocument(stored, cancellationToken);
+            logger.LogInformation("TraceDeTrail: upserted trace {FeatureId}", featureId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to fetch or parse TraceDeTrail trace {TraceId}", target.TraceId);
+        }
     }
 }

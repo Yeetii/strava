@@ -14,9 +14,13 @@ namespace Backend
         {
             var activities = await _cosmosClient.FetchWholeCollection();
             var sender = serviceBusClient.CreateSender("calculateVisitedPathsJobs");
-            foreach (var activity in activities)
+            var activitiesList = activities.ToList();
+            for (int index = 0; index < activitiesList.Count; index++)
             {
-                await sender.SendMessageAsync(new ServiceBusMessage(activity.Id));
+                await sender.SendMessageAsync(new ServiceBusMessage(activitiesList[index].Id)
+                {
+                    ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(index * 5)
+                });
             }
         }
     }
