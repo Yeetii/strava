@@ -7,6 +7,17 @@ public static partial class RaceScrapeDiscovery
 {
     public const string LastScrapedUtcProperty = "lastScrapedUtc";
 
+    // Shared Cosmos property name constants — use these in all race upsert workers.
+    public const string PropName = "name";
+    public const string PropDate = "date";
+    public const string PropWebsite = "website";
+    public const string PropDistance = "distance";
+    public const string PropElevationGain = "elevationGain";
+    public const string PropRaceType = "raceType";
+    public const string PropDescription = "description";
+    public const string PropCountry = "country";
+    public const string PropLocation = "location";
+
     // Derives a stable source-scoped ID from the UTMB race page URL.
     // e.g. https://julianalps.utmb.world/races/120K → "utmb:julianalps/120K"
     public static string BuildUtmbFeatureId(Uri coursePageUrl)
@@ -80,7 +91,10 @@ public static partial class RaceScrapeDiscovery
                 }
             }
 
-            pageCandidates.Add(new RacePageCandidate(pageUri, name, distance, elevationGain));
+            var country = FindStringValue(race, ["country", "countryCode", "country_code"]);
+            var location = FindStringValue(race, ["city", "location", "venue", "cityName"]);
+
+            pageCandidates.Add(new RacePageCandidate(pageUri, name, distance, elevationGain, country, location));
         }
 
         return pageCandidates
@@ -241,6 +255,7 @@ public static partial class RaceScrapeDiscovery
                 continue;
 
             var name = FindStringValue(evt, ["nom", "name"]);
+            var country = FindStringValue(evt, ["country", "pays", "countryCode"]);
 
             string[]? distanceParts = null;
             if (TryGetPropertyIgnoreCase(evt, "distances", out var distancesEl) && distancesEl.ValueKind == JsonValueKind.String)
@@ -256,7 +271,7 @@ public static partial class RaceScrapeDiscovery
                     double.TryParse(distanceParts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
                     distance = d;
 
-                targets.Add(new TraceDeTrailScrapeTarget(traceId, name, distance));
+                targets.Add(new TraceDeTrailScrapeTarget(traceId, name, distance, country));
             }
         }
 
@@ -363,7 +378,7 @@ public static partial class RaceScrapeDiscovery
     private static partial Regex RelativeGpxRegex();
 }
 
-public record RacePageCandidate(Uri PageUrl, string? Name, double? Distance, double? ElevationGain);
+public record RacePageCandidate(Uri PageUrl, string? Name, double? Distance, double? ElevationGain, string? Country, string? Location);
 
 public record RaceScrapeTarget(
     Uri GpxUrl,
@@ -371,9 +386,11 @@ public record RaceScrapeTarget(
     Uri CoursePageUrl,
     string? Name,
     double? Distance,
-    double? ElevationGain);
+    double? ElevationGain,
+    string? Country,
+    string? Location);
 
-public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance);
+public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance, string? Country);
 
 public record LoppkartanScrapeTarget(
     string MarkerId,

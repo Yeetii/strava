@@ -52,18 +52,23 @@ public class UpsertUtmbRaceWorker(
                 var lineString = new LineString(parsedRoute.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
                 var properties = new Dictionary<string, dynamic>
                 {
-                    ["name"] = parsedRoute.Name,
+                    [RaceScrapeDiscovery.PropName] = parsedRoute.Name,
                     ["sourceUrl"] = target.SourceUrl.AbsoluteUri,
                     ["coursePageUrl"] = target.CoursePageUrl.AbsoluteUri,
                     ["gpxUrl"] = target.GpxUrl.AbsoluteUri,
                     ["gpx"] = gpxContent,
+                    [RaceScrapeDiscovery.PropWebsite] = target.CoursePageUrl.AbsoluteUri,
                     [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
                 };
 
                 if (target.Distance.HasValue)
-                    properties["distance"] = target.Distance.Value;
+                    properties[RaceScrapeDiscovery.PropDistance] = target.Distance.Value;
                 if (target.ElevationGain.HasValue)
-                    properties["elevationGain"] = target.ElevationGain.Value;
+                    properties[RaceScrapeDiscovery.PropElevationGain] = target.ElevationGain.Value;
+                if (!string.IsNullOrWhiteSpace(target.Country))
+                    properties[RaceScrapeDiscovery.PropCountry] = target.Country;
+                if (!string.IsNullOrWhiteSpace(target.Location))
+                    properties[RaceScrapeDiscovery.PropLocation] = target.Location;
 
                 var feature = new Feature(lineString, properties, null, new FeatureId(routeId));
                 var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);

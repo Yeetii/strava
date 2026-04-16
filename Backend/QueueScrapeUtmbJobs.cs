@@ -51,7 +51,7 @@ public class QueueScrapeUtmbJobs(
                 var html = await httpClient.GetStringAsync(page.PageUrl, cancellationToken);
                 var gpxUrls = RaceScrapeDiscovery.ExtractGpxUrlsFromHtml(html, page.PageUrl);
                 targets.AddRange(gpxUrls.Select(gpxUrl =>
-                    new RaceScrapeTarget(gpxUrl, UtmbSearchApiUrl, page.PageUrl, page.Name, page.Distance, page.ElevationGain)));
+                    new RaceScrapeTarget(gpxUrl, UtmbSearchApiUrl, page.PageUrl, page.Name, page.Distance, page.ElevationGain, page.Country, page.Location)));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

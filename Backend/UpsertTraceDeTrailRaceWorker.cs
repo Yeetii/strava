@@ -52,18 +52,22 @@ public class UpsertTraceDeTrailRaceWorker(
                 }
 
                 var lineString = new LineString(traceData.Points.Select(p => new Position(p.Lng, p.Lat)).ToList());
+                var tracePageUrl = $"{BaseUrl}/en/trace/viewTrace/{target.TraceId}";
                 var properties = new Dictionary<string, dynamic>
                 {
-                    ["name"] = target.Name ?? $"TraceDeTrail {target.TraceId}",
+                    [RaceScrapeDiscovery.PropName] = target.Name ?? $"TraceDeTrail {target.TraceId}",
                     ["sourceUrl"] = url,
+                    [RaceScrapeDiscovery.PropWebsite] = tracePageUrl,
                     [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
                 };
 
                 var distance = target.Distance ?? traceData.TotalDistanceKm;
                 if (distance.HasValue)
-                    properties["distance"] = distance.Value;
+                    properties[RaceScrapeDiscovery.PropDistance] = distance.Value;
                 if (traceData.ElevationGain.HasValue)
-                    properties["elevationGain"] = traceData.ElevationGain.Value;
+                    properties[RaceScrapeDiscovery.PropElevationGain] = traceData.ElevationGain.Value;
+                if (!string.IsNullOrWhiteSpace(target.Country))
+                    properties[RaceScrapeDiscovery.PropCountry] = target.Country;
 
                 var featureId = $"tracedetrail:{target.TraceId}";
                 var feature = new Feature(lineString, properties, null, new FeatureId(featureId));

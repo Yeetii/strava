@@ -13,7 +13,6 @@ public class UpsertLoppkartanRaceWorker(
     ILogger<UpsertLoppkartanRaceWorker> logger)
 {
     private const int Zoom = RaceCollectionClient.DefaultZoom;
-    private const string LastScrapedUtcProperty = "lastScrapedUtc";
     private static readonly Uri SourceUrl = new("https://www.loppkartan.se/markers-se.json");
 
     [Function(nameof(UpsertLoppkartanRaceWorker))]
@@ -44,27 +43,27 @@ public class UpsertLoppkartanRaceWorker(
                 var point = new Point(new Position(target.Longitude, target.Latitude));
                 var properties = new Dictionary<string, dynamic>
                 {
-                    ["name"] = target.Name ?? target.Location ?? $"Loppkartan {target.MarkerId}",
+                    [RaceScrapeDiscovery.PropName] = target.Name ?? target.Location ?? $"Loppkartan {target.MarkerId}",
                     ["sourceUrl"] = SourceUrl.AbsoluteUri,
-                    [LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
+                    [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
                 };
 
                 if (!string.IsNullOrWhiteSpace(target.Website))
-                    properties["website"] = target.Website;
+                    properties[RaceScrapeDiscovery.PropWebsite] = target.Website;
                 if (!string.IsNullOrWhiteSpace(target.Location))
-                    properties["location"] = target.Location;
+                    properties[RaceScrapeDiscovery.PropLocation] = target.Location;
                 if (!string.IsNullOrWhiteSpace(target.County))
                     properties["county"] = target.County;
                 if (!string.IsNullOrWhiteSpace(target.RaceDate))
-                    properties["raceDate"] = target.RaceDate;
+                    properties[RaceScrapeDiscovery.PropDate] = target.RaceDate;
                 if (!string.IsNullOrWhiteSpace(target.RaceType))
-                    properties["raceType"] = target.RaceType;
+                    properties[RaceScrapeDiscovery.PropRaceType] = target.RaceType;
                 if (!string.IsNullOrWhiteSpace(target.TypeLocal))
                     properties["typeLocal"] = target.TypeLocal;
                 if (!string.IsNullOrWhiteSpace(target.DomainName))
                     properties["domainName"] = target.DomainName;
                 if (!string.IsNullOrWhiteSpace(target.OriginCountry))
-                    properties["originCountry"] = target.OriginCountry;
+                    properties[RaceScrapeDiscovery.PropCountry] = target.OriginCountry;
                 if (!string.IsNullOrWhiteSpace(target.DistanceVerbose))
                     properties["distanceVerbose"] = target.DistanceVerbose;
 
