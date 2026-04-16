@@ -15,7 +15,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
     private readonly OverpassClient _overpassClient = overpassClient;
     private const string Kind = FeatureKinds.AdminBoundary;
 
-    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int adminLevel, int zoom = 6, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int adminLevel, int zoom = 6, bool followPointers = false, CancellationToken cancellationToken = default)
     {
         if (!keys.Any())
             return [];
@@ -27,8 +27,14 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         foreach (var (x, y) in missingTiles)
             docs.AddRange(await FetchMissingTile(x, y, zoom, adminLevel, cancellationToken));
 
-        return docs
+        var visibleDocuments = docs
             .Where(d => !d.Id.StartsWith("empty-"))
+            .ToList();
+
+        if (followPointers)
+            visibleDocuments = (await ResolvePointers(visibleDocuments, cancellationToken)).ToList();
+
+        return visibleDocuments
             .OrderBy(d => StoredFeature.IsPointerDocument(d))
             .DistinctBy(d => d.LogicalId);
     }
@@ -135,6 +141,37 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         }
 
         await UpsertDocument(CreateSimplifiedBoundaryDocument(document, 64), cancellationToken);
+    }
+
+    private async Task<IEnumerable<StoredFeature>> ResolvePointers(IEnumerable<StoredFeature> documents, CancellationToken cancellationToken)
+    {
+        var documentList = documents.ToList();
+        var pointedIds = documentList
+            .Where(StoredFeature.IsPointerDocument)
+            .Select(StoredFeature.GetPointerStoredDocumentId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (pointedIds.Count == 0)
+            return documentList;
+
+        var resolvedDocuments = (await GetByIdsAsync(pointedIds!, cancellationToken))
+            .ToDictionary(document => document.Id, StringComparer.Ordinal);
+
+        return documentList
+            .Select(document =>
+            {
+                if (!StoredFeature.IsPointerDocument(document))
+                    return document;
+
+                var storedDocumentId = StoredFeature.GetPointerStoredDocumentId(document);
+                if (storedDocumentId != null && resolvedDocuments.TryGetValue(storedDocumentId, out var resolved))
+                    return resolved;
+
+                return document;
+            })
+            .Where(document => !StoredFeature.IsPointerDocument(document));
     }
 
     private static StoredFeature CreateSimplifiedBoundaryDocument(StoredFeature document, int step)
