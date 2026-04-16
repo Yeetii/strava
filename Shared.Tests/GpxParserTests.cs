@@ -1,3 +1,4 @@
+using Shared.Models;
 using Shared.Services;
 
 namespace Shared.Tests;
@@ -51,5 +52,33 @@ public class GpxParserTests
     {
         var parsed = GpxParser.TryParseRoute("<not-gpx>");
         Assert.Null(parsed);
+    }
+
+    // ── CalculateDistanceKm ───────────────────────────────────────────────────
+
+    [Fact]
+    public void CalculateDistanceKm_ReturnsZeroForSinglePoint()
+    {
+        var coords = new[] { new Coordinate(6.8694, 45.9237) };
+        Assert.Equal(0, GpxParser.CalculateDistanceKm(coords));
+    }
+
+    [Fact]
+    public void CalculateDistanceKm_ReturnsZeroForEmptyList()
+    {
+        Assert.Equal(0, GpxParser.CalculateDistanceKm([]));
+    }
+
+    [Fact]
+    public void CalculateDistanceKm_ComputesReasonableDistanceForKnownCoordinates()
+    {
+        // Stockholm (lng=18.0686, lat=59.3293) to Uppsala (lng=17.6389, lat=59.8586) is approx 64 km.
+        var coords = new[]
+        {
+            new Coordinate(18.0686, 59.3293),
+            new Coordinate(17.6389, 59.8586),
+        };
+        var distance = GpxParser.CalculateDistanceKm(coords);
+        Assert.InRange(distance, 60, 70);
     }
 }

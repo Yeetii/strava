@@ -56,6 +56,46 @@ public static partial class RaceScrapeDiscovery
             : $"{distanceKm:0.#} km";
     }
 
+    // Matches a computed GPX distance (km) to the closest entry in a verbose distance string
+    // (e.g. "34.2 km, 12.9 km") within a 25% relative tolerance. Returns the formatted match
+    // (e.g. "34.2 km") or null when no distance list was provided or no close match is found.
+    public static string? MatchDistanceKmToVerbose(double distanceKm, string? distanceVerbose)
+    {
+        if (string.IsNullOrWhiteSpace(distanceVerbose) || distanceKm <= 0)
+            return null;
+
+        var parts = distanceVerbose
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        string? bestToken = null;
+        double bestDelta = double.MaxValue;
+
+        foreach (var part in parts)
+        {
+            var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
+            var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
+
+            if (!double.TryParse(stripped, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
+                continue;
+
+            var km = suffix == "mi" ? value * 1.60934 : value;
+            var delta = Math.Abs(km - distanceKm);
+            if (delta < bestDelta)
+            {
+                bestDelta = delta;
+                bestToken = FormatDistanceKm(km);
+            }
+        }
+
+        if (bestToken is null)
+            return null;
+
+        // Accept the match only if it is within 25% of the GPX distance.
+        var tolerance = distanceKm * 0.25;
+        return bestDelta <= tolerance ? bestToken : null;
+    }
+
     // Normalises a verbose distance string (e.g. "100K, 50K") to the standard form ("100 km, 50 km").
     // Individual tokens that cannot be parsed are passed through unchanged.
     public static string? ParseDistanceVerbose(string? distanceVerbose)
