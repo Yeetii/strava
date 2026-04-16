@@ -31,7 +31,7 @@ public class QueueScrapeUtmbJobs(
             .Select((t, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(t))
             {
                 ContentType = "application/json",
-                ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 10)
+                ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 5)
             })
             .ToList();
 

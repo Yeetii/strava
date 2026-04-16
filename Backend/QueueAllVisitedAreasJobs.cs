@@ -19,7 +19,7 @@ namespace Backend
             {
                 await sender.SendMessageAsync(new ServiceBusMessage(activitiesList[index].Id)
                 {
-                    ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(index * 10)
+                    ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(index * 5)
                 });
             }
         }
