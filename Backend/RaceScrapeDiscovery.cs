@@ -913,18 +913,6 @@ public record RacePageCandidate(
     IReadOnlyList<string>? RunningStones = null,
     string? ImageUrl = null);
 
-public record RaceScrapeTarget(
-    Uri GpxUrl,
-    Uri SourceUrl,
-    Uri CoursePageUrl,
-    string? Name,
-    double? Distance,
-    double? ElevationGain,
-    string? Country,
-    string? Location,
-    IReadOnlyList<string>? Playgrounds = null,
-    IReadOnlyList<string>? RunningStones = null,
-    string? ImageUrl = null);
 
 public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance, string? Country, string? Slug, string? Sports, string? ImageUrl, string? LogoUrl);
 
