@@ -23,6 +23,8 @@ public class QueueScrapeRaceJobs(
     private static readonly Uri LoppkartanMarkersUrl = new("https://www.loppkartan.se/markers-se.json");
 
     private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);
+
+    [Function(nameof(QueueScrapeRaceJobs))]
     public async Task Run(
         [TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo,
         CancellationToken cancellationToken)
@@ -140,22 +142,16 @@ public class QueueScrapeRaceJobs(
                     break;
                 }
 
-                var eventLinks = RaceHtmlScraper.ExtractRunagainEventLinks(html, RunagainBaseUrl);
+                var eventLinks = RaceHtmlScraper.ExtractRunagainEventLinks(html, listingUrl);
+                // Empty page means we've gone past the last page — stop paginating.
                 if (eventLinks.Count == 0)
                     break;
 
-                var added = 0;
                 foreach (var eventUrl in eventLinks)
                 {
                     if (seenUrls.Add(eventUrl.AbsoluteUri))
-                    {
                         jobs.Add(new ScrapeJob(RunagainUrl: eventUrl));
-                        added++;
-                    }
                 }
-
-                // No new events on this page — stop paginating this race type.
-                if (added == 0) break;
             }
         }
 
