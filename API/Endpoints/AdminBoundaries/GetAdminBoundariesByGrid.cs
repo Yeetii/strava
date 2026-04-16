@@ -29,7 +29,7 @@ public class GetAdminBoundariesByGrid(AdminBoundariesCollectionClient adminBound
         {
             var zoom = ParseIntQuery(req, "zoom", DefaultZoom);
             var adminLevel = ParseIntQuery(req, "adminLevel", DefaultAdminLevel);
-            var boundaries = await adminBoundariesCollectionClient.FetchByTiles([(x, y)], adminLevel, zoom, cancellationToken);
+            var boundaries = await adminBoundariesCollectionClient.FetchByTiles([(x, y)], adminLevel, zoom, false, cancellationToken);
             var featureCollection = new FeatureCollection(boundaries.Select(b => b.ToFeature()).ToList());
 
             var response = req.CreateResponse(HttpStatusCode.OK);
