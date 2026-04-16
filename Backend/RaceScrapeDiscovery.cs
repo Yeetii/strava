@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -38,11 +39,11 @@ public static partial class RaceScrapeDiscovery
         if (trimmed.Length == 8 && trimmed.All(char.IsDigit))
             return $"{trimmed[..4]}-{trimmed[4..6]}-{trimmed[6..8]}";
 
-        if (DateOnly.TryParse(trimmed, System.Globalization.CultureInfo.InvariantCulture, out var dateOnly))
+        if (DateOnly.TryParse(trimmed, CultureInfo.InvariantCulture, out var dateOnly))
             return dateOnly.ToString("yyyy-MM-dd");
 
-        if (DateTime.TryParse(trimmed, System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.None, out var dt))
+        if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var dt))
             return dt.ToString("yyyy-MM-dd");
 
         return null;
@@ -57,8 +58,8 @@ public static partial class RaceScrapeDiscovery
     }
 
     // Matches a computed GPX distance (km) to the closest entry in a verbose distance string
-    // (e.g. "34.2 km, 12.9 km") within a 25% relative tolerance. Returns the formatted match
-    // (e.g. "34.2 km") or null when no distance list was provided or no close match is found.
+    // (e.g. "34.2 km, 12.9 km, Marathon") within a 25% relative tolerance. Returns the formatted match
+    // (e.g. "34.2 km" or "42 km") or null when no distance list was provided or no close match is found.
     public static string? MatchDistanceKmToVerbose(double distanceKm, string? distanceVerbose)
     {
         if (string.IsNullOrWhiteSpace(distanceVerbose) || distanceKm <= 0)
@@ -72,19 +73,31 @@ public static partial class RaceScrapeDiscovery
 
         foreach (var part in parts)
         {
-            var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
-            var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
+            double km;
+            string formatted;
 
-            if (!double.TryParse(stripped, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var value))
-                continue;
+            if (TryParseMarathonKeyword(part, out var marathonKm))
+            {
+                km = marathonKm;
+                formatted = FormatDistanceKm(km);
+            }
+            else
+            {
+                var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
+                var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
 
-            var km = suffix == "mi" ? value * 1.60934 : value;
+                if (!double.TryParse(stripped, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                    continue;
+
+                km = suffix == "mi" ? value * 1.60934 : value;
+                formatted = FormatDistanceKm(km);
+            }
+
             var delta = Math.Abs(km - distanceKm);
             if (delta < bestDelta)
             {
                 bestDelta = delta;
-                bestToken = FormatDistanceKm(km);
+                bestToken = formatted;
             }
         }
 
@@ -96,7 +109,8 @@ public static partial class RaceScrapeDiscovery
         return bestDelta <= tolerance ? bestToken : null;
     }
 
-    // Normalises a verbose distance string (e.g. "100K, 50K") to the standard form ("100 km, 50 km").
+    // Normalises a verbose distance string (e.g. "100K, 50K, Marathon") to the standard form ("100 km, 50 km, 42 km").
+    // Recognises "marathon" → 42 km, "halvmarathon" / "half marathon" → 21 km.
     // Individual tokens that cannot be parsed are passed through unchanged.
     public static string? ParseDistanceVerbose(string? distanceVerbose)
     {
@@ -109,12 +123,17 @@ public static partial class RaceScrapeDiscovery
         var formatted = new List<string>(parts.Length);
         foreach (var part in parts)
         {
+            if (TryParseMarathonKeyword(part, out var marathonKm))
+            {
+                formatted.Add(FormatDistanceKm(marathonKm));
+                continue;
+            }
+
             // Strip trailing 'K', 'KM', 'km', 'm', 'mi' (case-insensitive) before numeric parse
             var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
             var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
 
-            if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var value))
+            if (double.TryParse(stripped, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
             {
                 // Treat "mi" as miles → convert to km
                 var km = suffix == "mi" ? value * 1.60934 : value;
@@ -141,7 +160,7 @@ public static partial class RaceScrapeDiscovery
         if (trimmed.Length == 2)
         {
             var upper = trimmed.ToUpperInvariant();
-            try { return new System.Globalization.RegionInfo(upper).TwoLetterISORegionName; }
+            try { return new RegionInfo(upper).TwoLetterISORegionName; }
             catch { return null; }
         }
 
@@ -476,7 +495,7 @@ public static partial class RaceScrapeDiscovery
             return true;
 
         if (property.ValueKind == JsonValueKind.String
-            && double.TryParse(property.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value))
+            && double.TryParse(property.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out value))
             return true;
 
         return false;
@@ -537,12 +556,12 @@ public static partial class RaceScrapeDiscovery
 
             for (int i = 0; i < traceIds.Length; i++)
             {
-                if (!int.TryParse(traceIds[i], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var traceId))
+                if (!int.TryParse(traceIds[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out var traceId))
                     continue;
 
                 double? distance = null;
                 if (distanceParts != null && i < distanceParts.Length &&
-                    double.TryParse(distanceParts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+                    double.TryParse(distanceParts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
                     distance = d;
 
                 targets.Add(new TraceDeTrailScrapeTarget(traceId, name, distance, country, slug, sports, imageUrl, logoUrl));
@@ -578,10 +597,10 @@ public static partial class RaceScrapeDiscovery
             if (TryGetPropertyIgnoreCase(root, "trace", out var traceEl) && traceEl.ValueKind == JsonValueKind.Object)
             {
                 if (TryGetPropertyIgnoreCase(traceEl, "distance", out var distEl) && distEl.ValueKind == JsonValueKind.String
-                    && double.TryParse(distEl.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+                    && double.TryParse(distEl.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
                     distance = d;
                 if (TryGetPropertyIgnoreCase(traceEl, "dev_pos", out var gainEl) && gainEl.ValueKind == JsonValueKind.String
-                    && double.TryParse(gainEl.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var g))
+                    && double.TryParse(gainEl.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var g))
                     elevationGain = g;
             }
 
@@ -641,6 +660,229 @@ public static partial class RaceScrapeDiscovery
         return value.Replace("\\/", "/", StringComparison.Ordinal);
     }
 
+    // Returns true if the token is a marathon keyword and sets km to the corresponding distance.
+    // "marathon" → 42 km, "halvmarathon" / "half marathon" / "half-marathon" → 21 km.
+    private static bool TryParseMarathonKeyword(string token, out double km)
+    {
+        if (token.Equals("marathon", StringComparison.OrdinalIgnoreCase))
+        {
+            km = 42.0;
+            return true;
+        }
+
+        if (token.Equals("halvmarathon", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("half marathon", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("half-marathon", StringComparison.OrdinalIgnoreCase))
+        {
+            km = 21.0;
+            return true;
+        }
+
+        km = 0;
+        return false;
+    }
+
+    // Parses a verbose distance string into a list of (km, formatted) pairs.
+    // Marathon keywords are translated; non-parseable tokens are skipped.
+    private static IReadOnlyList<(double Km, string Formatted)> ParseVerboseDistanceParts(string distanceVerbose)
+    {
+        var parts = distanceVerbose
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var result = new List<(double, string)>(parts.Length);
+        foreach (var part in parts)
+        {
+            if (TryParseMarathonKeyword(part, out var marathonKm))
+            {
+                result.Add((marathonKm, FormatDistanceKm(marathonKm)));
+                continue;
+            }
+
+            var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
+            var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
+
+            if (double.TryParse(stripped, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            {
+                var km = suffix == "mi" ? value * 1.60934 : value;
+                result.Add((km, FormatDistanceKm(km)));
+            }
+        }
+
+        return result;
+    }
+
+    // Keywords used to identify links to course/route pages.
+    private static readonly string[] CourseKeywords = ["course", "bana", "lopp", "läs mer", "see more"];
+
+    // Keywords used to identify generic download links.
+    private static readonly string[] DownloadKeywords = ["ladda ner", "hämta", "download"];
+
+    // Extracts links that are likely to lead to course/route detail pages.
+    // A link matches if its href path or visible link text contains any of the course keywords
+    // (case-insensitive partial match).
+    public static IReadOnlyCollection<Uri> ExtractCourseLinksFromHtml(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<Uri>();
+
+        foreach (Match match in AnchorRegex().Matches(html))
+        {
+            var href = match.Groups["href"].Value;
+            var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
+
+            var isMatch = CourseKeywords.Any(kw =>
+                href.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                text.Contains(kw, StringComparison.OrdinalIgnoreCase));
+
+            if (!isMatch) continue;
+            if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
+            if (uri.Scheme is not ("http" or "https")) continue;
+            if (seen.Add(uri.AbsoluteUri))
+                results.Add(uri);
+        }
+
+        return results;
+    }
+
+    // Extracts GPX file links from an HTML page.
+    // A link matches if its href ends with ".gpx" (with optional query string) OR
+    // the visible link text contains the word "gpx" (case-insensitive).
+    public static IReadOnlyCollection<Uri> ExtractGpxLinksFromHtml(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<Uri>();
+
+        // Existing: hrefs ending in .gpx (href attributes and script-embedded URLs)
+        foreach (var uri in ExtractGpxUrlsFromHtml(html, pageUrl))
+        {
+            if (seen.Add(uri.AbsoluteUri))
+                results.Add(uri);
+        }
+
+        // Extended: anchors where the visible text contains "gpx"
+        foreach (Match match in AnchorRegex().Matches(html))
+        {
+            var href = match.Groups["href"].Value;
+            var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
+
+            if (!text.Contains("gpx", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
+            if (uri.Scheme is not ("http" or "https")) continue;
+            if (seen.Add(uri.AbsoluteUri))
+                results.Add(uri);
+        }
+
+        return results;
+    }
+
+    // Extracts download links based on well-known download keywords in the visible link text.
+    // Keywords: "Ladda ner", "Hämta", "Download" (case-insensitive partial match).
+    public static IReadOnlyCollection<Uri> ExtractDownloadLinksFromHtml(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<Uri>();
+
+        foreach (Match match in AnchorRegex().Matches(html))
+        {
+            var href = match.Groups["href"].Value;
+            var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
+
+            var isMatch = DownloadKeywords.Any(kw =>
+                text.Contains(kw, StringComparison.OrdinalIgnoreCase));
+
+            if (!isMatch) continue;
+            if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
+            if (uri.Scheme is not ("http" or "https")) continue;
+            if (seen.Add(uri.AbsoluteUri))
+                results.Add(uri);
+        }
+
+        return results;
+    }
+
+    // Assigns verbose distances to GPX routes.
+    //
+    // Step 1 – primary matching: each verbose distance is matched to the closest route whose
+    //   computed distance is within 25% tolerance. The first/closest match wins.
+    // Step 2 – overflow: verbose distances that did not find a primary match are appended to the
+    //   assignment list of the absolutely closest route (no tolerance restriction).
+    //
+    // Returns one list per route; the first element in each sub-list is the primary distance.
+    public static IReadOnlyList<IReadOnlyList<string>> AssignDistancesToRoutes(
+        IReadOnlyList<double> routeDistancesKm,
+        string? distanceVerbose)
+    {
+        var assignments = Enumerable.Range(0, routeDistancesKm.Count)
+            .Select(_ => new List<string>())
+            .ToList();
+
+        if (routeDistancesKm.Count == 0 || string.IsNullOrWhiteSpace(distanceVerbose))
+            return assignments.Cast<IReadOnlyList<string>>().ToList();
+
+        var verboseParts = ParseVerboseDistanceParts(distanceVerbose);
+        if (verboseParts.Count == 0)
+            return assignments.Cast<IReadOnlyList<string>>().ToList();
+
+        var matched = new bool[verboseParts.Count];
+
+        // Step 1: primary matching within 25% tolerance
+        for (int j = 0; j < verboseParts.Count; j++)
+        {
+            var (verboseKm, verboseFormatted) = verboseParts[j];
+            int bestIdx = -1;
+            double bestDelta = double.MaxValue;
+
+            for (int i = 0; i < routeDistancesKm.Count; i++)
+            {
+                var delta = Math.Abs(routeDistancesKm[i] - verboseKm);
+                if (delta <= verboseKm * 0.25 && delta < bestDelta)
+                {
+                    bestDelta = delta;
+                    bestIdx = i;
+                }
+            }
+
+            if (bestIdx >= 0)
+            {
+                assignments[bestIdx].Add(verboseFormatted);
+                matched[j] = true;
+            }
+        }
+
+        // Step 2: assign unmatched verbose distances to the closest route (no tolerance)
+        for (int j = 0; j < verboseParts.Count; j++)
+        {
+            if (matched[j]) continue;
+
+            var (verboseKm, verboseFormatted) = verboseParts[j];
+            int bestIdx = 0;
+            double bestDelta = double.MaxValue;
+
+            for (int i = 0; i < routeDistancesKm.Count; i++)
+            {
+                var delta = Math.Abs(routeDistancesKm[i] - verboseKm);
+                if (delta < bestDelta)
+                {
+                    bestDelta = delta;
+                    bestIdx = i;
+                }
+            }
+
+            assignments[bestIdx].Add(verboseFormatted);
+        }
+
+        return assignments.Cast<IReadOnlyList<string>>().ToList();
+    }
+
     [GeneratedRegex("href\\s*=\\s*[\"'](?<href>[^\"']+)[\"']", RegexOptions.IgnoreCase)]
     private static partial Regex HrefRegex();
 
@@ -650,6 +892,14 @@ public static partial class RaceScrapeDiscovery
 
     [GeneratedRegex("(?<url>/[^\"'\\s<>]+?\\.gpx(?:\\?[^\"'\\s<>]*)?)", RegexOptions.IgnoreCase)]
     private static partial Regex RelativeGpxRegex();
+
+    // Matches an <a> element capturing href attribute and inner text content.
+    [GeneratedRegex(@"<a\b[^>]*\bhref\s*=\s*[""'](?<href>[^""']+)[""'][^>]*>(?<text>.*?)</a>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex AnchorRegex();
+
+    // Strips all HTML tags so anchor inner content can be inspected as plain text.
+    [GeneratedRegex(@"<[^>]+>")]
+    private static partial Regex HtmlTagRegex();
 }
 
 public record RacePageCandidate(
