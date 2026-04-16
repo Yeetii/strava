@@ -654,7 +654,7 @@ public static partial class RaceScrapeDiscovery
     }
 
     // Returns true if the token is a marathon keyword and sets km to the corresponding distance.
-    // "marathon" → 42 km, "halvmarathon" / "half marathon" → 21 km.
+    // "marathon" → 42 km, "halvmarathon" / "half marathon" / "half-marathon" → 21 km.
     private static bool TryParseMarathonKeyword(string token, out double km)
     {
         if (token.Equals("marathon", StringComparison.OrdinalIgnoreCase))
@@ -664,7 +664,8 @@ public static partial class RaceScrapeDiscovery
         }
 
         if (token.Equals("halvmarathon", StringComparison.OrdinalIgnoreCase) ||
-            token.Replace("-", " ").Equals("half marathon", StringComparison.OrdinalIgnoreCase))
+            token.Equals("half marathon", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("half-marathon", StringComparison.OrdinalIgnoreCase))
         {
             km = 21.0;
             return true;

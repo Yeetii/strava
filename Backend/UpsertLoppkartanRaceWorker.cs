@@ -16,6 +16,10 @@ public class UpsertLoppkartanRaceWorker(
     private const int Zoom = RaceCollectionClient.DefaultZoom;
     private static readonly Uri SourceUrl = new("https://www.loppkartan.se/markers-se.json");
 
+    // Limits for the BFS course-page traversal when searching for GPX routes.
+    private const int GpxSearchMaxDepth = 3;
+    private const int GpxSearchMaxPages = 30;
+
     [Function(nameof(UpsertLoppkartanRaceWorker))]
     public async Task Run(
         [ServiceBusTrigger(ServiceBusConfig.UpsertLoppkartanRace, Connection = "ServicebusConnection")] ServiceBusReceivedMessage message,
@@ -141,17 +145,14 @@ public class UpsertLoppkartanRaceWorker(
         Uri websiteUri,
         CancellationToken cancellationToken)
     {
-        // BFS: start from the race website and follow course-related links up to MaxDepth levels.
+        // BFS: start from the race website and follow course-related links up to GpxSearchMaxDepth levels.
         // Collect GPX links from every visited page, then resolve each to a parsed route.
-        const int MaxDepth = 3;
-        const int MaxPages = 30;
-
         var visitedPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var gpxLinkUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var pageQueue = new Queue<(Uri PageUri, int Depth)>();
         pageQueue.Enqueue((websiteUri, 0));
 
-        while (pageQueue.Count > 0 && visitedPages.Count < MaxPages)
+        while (pageQueue.Count > 0 && visitedPages.Count < GpxSearchMaxPages)
         {
             var (pageUri, depth) = pageQueue.Dequeue();
             if (!visitedPages.Add(pageUri.AbsoluteUri)) continue;
@@ -162,7 +163,7 @@ public class UpsertLoppkartanRaceWorker(
             foreach (var gpxLink in RaceScrapeDiscovery.ExtractGpxLinksFromHtml(html, pageUri))
                 gpxLinkUrls.Add(gpxLink.AbsoluteUri);
 
-            if (depth < MaxDepth)
+            if (depth < GpxSearchMaxDepth)
             {
                 foreach (var courseLink in RaceScrapeDiscovery.ExtractCourseLinksFromHtml(html, pageUri))
                 {
