@@ -264,7 +264,7 @@ public static partial class RaceScrapeDiscovery
     private static partial Regex DistanceSuffixRegex();
 
     // Derives a stable source-scoped ID from the UTMB race page URL.
-    // e.g. https://julianalps.utmb.world/races/120K → "utmb:julianalps/120K"
+    // e.g. https://julianalps.utmb.world/races/120K → "utmb:julianalps:120K"
     public static string BuildUtmbFeatureId(Uri coursePageUrl)
     {
         var host = coursePageUrl.Host;
@@ -273,7 +273,7 @@ public static partial class RaceScrapeDiscovery
             ? host[..^utmbSuffix.Length]
             : host;
         var path = coursePageUrl.AbsolutePath.Trim('/');
-        return $"utmb:{subdomain}/{path}";
+        return $"utmb:{subdomain}:{path}".Replace('/', ':').ToLowerInvariant();
     }
 
     // Parses the response from https://api.utmb.world/search/races?lang=en&limit=400
