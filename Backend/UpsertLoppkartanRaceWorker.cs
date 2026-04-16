@@ -54,18 +54,22 @@ public class UpsertLoppkartanRaceWorker(
                     properties[RaceScrapeDiscovery.PropLocation] = target.Location;
                 if (!string.IsNullOrWhiteSpace(target.County))
                     properties["county"] = target.County;
-                if (!string.IsNullOrWhiteSpace(target.RaceDate))
-                    properties[RaceScrapeDiscovery.PropDate] = target.RaceDate;
-                if (!string.IsNullOrWhiteSpace(target.RaceType))
-                    properties[RaceScrapeDiscovery.PropRaceType] = target.RaceType;
+                var normalizedDate = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(target.RaceDate);
+                if (!string.IsNullOrWhiteSpace(normalizedDate))
+                    properties[RaceScrapeDiscovery.PropDate] = normalizedDate;
+                var normalizedRaceType = RaceScrapeDiscovery.NormalizeRaceType(target.RaceType);
+                if (!string.IsNullOrWhiteSpace(normalizedRaceType))
+                    properties[RaceScrapeDiscovery.PropRaceType] = normalizedRaceType;
                 if (!string.IsNullOrWhiteSpace(target.TypeLocal))
                     properties["typeLocal"] = target.TypeLocal;
                 if (!string.IsNullOrWhiteSpace(target.DomainName))
                     properties["domainName"] = target.DomainName;
-                if (!string.IsNullOrWhiteSpace(target.OriginCountry))
-                    properties[RaceScrapeDiscovery.PropCountry] = target.OriginCountry;
-                if (!string.IsNullOrWhiteSpace(target.DistanceVerbose))
-                    properties["distanceVerbose"] = target.DistanceVerbose;
+                var normalizedCountry = RaceScrapeDiscovery.NormalizeCountryToIso2(target.OriginCountry);
+                if (!string.IsNullOrWhiteSpace(normalizedCountry))
+                    properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
+                var normalizedDistance = RaceScrapeDiscovery.ParseDistanceVerbose(target.DistanceVerbose);
+                if (!string.IsNullOrWhiteSpace(normalizedDistance))
+                    properties[RaceScrapeDiscovery.PropDistance] = normalizedDistance;
 
                 var featureId = $"loppkartan:{target.MarkerId}";
                 var feature = new Feature(point, properties, null, new FeatureId(featureId));

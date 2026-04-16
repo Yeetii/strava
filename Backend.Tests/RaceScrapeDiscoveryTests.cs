@@ -9,18 +9,31 @@ public class RaceScrapeDiscoveryTests
     {
         const string payload = """
             {
-              "results": [
+              "races": [
                 {
+                  "slug": "https://utmb.world/races/utmb-mont-blanc-50k",
                   "name": "UTMB Mont-Blanc 50K",
-                  "distance": 54.3,
-                  "elevationGain": 3200,
-                  "websiteUrl": "https://utmb.world/races/utmb-mont-blanc-50k"
+                  "details": {
+                    "statsUp": [
+                      { "name": "distance", "value": 54.3 },
+                      { "name": "elevationGain", "value": 3200 }
+                    ]
+                  },
+                  "country": "FR",
+                  "city": "Chamonix",
+                  "playgrounds": [{ "name": "UTMB Mont-Blanc" }],
+                  "runningStones": [{ "name": "Finisher Stone" }],
+                  "image": "https://utmb.world/img/race.jpg"
                 },
                 {
+                  "slug": "https://utmb.world/races/ccc",
                   "name": "CCC",
-                  "distanceKm": 101.0,
-                  "dPlus": 6100,
-                  "url": "/races/ccc"
+                  "details": {
+                    "statsUp": [
+                      { "name": "distance", "value": 101.0 },
+                      { "name": "elevationGain", "value": 6100 }
+                    ]
+                  }
                 }
               ]
             }
@@ -29,14 +42,20 @@ public class RaceScrapeDiscoveryTests
         var pages = RaceScrapeDiscovery.ParseUtmbRacePages(payload);
 
         Assert.Equal(2, pages.Count);
-        Assert.Contains(pages, p =>
-            p.PageUrl.AbsoluteUri == "https://utmb.world/races/utmb-mont-blanc-50k"
-            && p.Distance == 54.3
-            && p.ElevationGain == 3200);
-        Assert.Contains(pages, p =>
-            p.PageUrl.AbsoluteUri == "https://utmb.world/races/ccc"
-            && p.Distance == 101.0
-            && p.ElevationGain == 6100);
+
+        var utmb50k = Assert.Single(pages, p => p.PageUrl.AbsoluteUri == "https://utmb.world/races/utmb-mont-blanc-50k");
+        Assert.Equal(54.3, utmb50k.Distance);
+        Assert.Equal(3200, utmb50k.ElevationGain);
+        Assert.Equal("FR", utmb50k.Country);
+        Assert.Equal("Chamonix", utmb50k.Location);
+        Assert.Equal(["UTMB Mont-Blanc"], utmb50k.Playgrounds);
+        Assert.Equal(["Finisher Stone"], utmb50k.RunningStones);
+        Assert.Equal("https://utmb.world/img/race.jpg", utmb50k.ImageUrl);
+
+        var ccc = Assert.Single(pages, p => p.PageUrl.AbsoluteUri == "https://utmb.world/races/ccc");
+        Assert.Equal(101.0, ccc.Distance);
+        Assert.Equal(6100, ccc.ElevationGain);
+        Assert.Null(ccc.Playgrounds);
     }
 
     [Fact]
@@ -108,5 +127,95 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal("trail", marker.RaceType);
         Assert.Equal("Trail", marker.TypeLocal);
         Assert.Equal("vanga_mountain_xtreme", marker.DomainName);
+    }
+
+    // ── NormalizeDateToYyyyMmDd ────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("20250914", "2025-09-14")]
+    [InlineData("2025-09-14", "2025-09-14")]
+    [InlineData("2025-01-01", "2025-01-01")]
+    [InlineData("20231231", "2023-12-31")]
+    public void NormalizeDateToYyyyMmDd_ConvertsKnownFormats(string input, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(input));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void NormalizeDateToYyyyMmDd_ReturnsNullForBlankInput(string? input)
+    {
+        Assert.Null(RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(input));
+    }
+
+    // ── FormatDistanceKm ──────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(5.0, "5 km")]
+    [InlineData(10.1, "10.1 km")]
+    [InlineData(100.0, "100 km")]
+    [InlineData(42.195, "42.2 km")]
+    public void FormatDistanceKm_FormatsCorrectly(double input, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.FormatDistanceKm(input));
+    }
+
+    // ── ParseDistanceVerbose ──────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("100K", "100 km")]
+    [InlineData("100k, 50k, 25k", "100 km, 50 km, 25 km")]
+    [InlineData("100km", "100 km")]
+    [InlineData("10.5K", "10.5 km")]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    public void ParseDistanceVerbose_NormalisesDistanceStrings(string? input, string? expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.ParseDistanceVerbose(input));
+    }
+
+    // ── NormalizeCountryToIso2 ────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("se", "SE")]
+    [InlineData("SE", "SE")]
+    [InlineData("SWE", "SE")]
+    [InlineData("FRA", "FR")]
+    [InlineData("france", "FR")]
+    [InlineData("France", "FR")]
+    [InlineData("suède", "SE")]
+    [InlineData("germany", "DE")]
+    [InlineData("allemagne", "DE")]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    public void NormalizeCountryToIso2_NormalizesKnownValues(string? input, string? expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.NormalizeCountryToIso2(input));
+    }
+
+    // ── NormalizeRaceType ─────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("trail", "trail")]
+    [InlineData("Trail", "trail")]
+    [InlineData("randotrail", "trail, randotrail")]
+    [InlineData("RandoTrail", "trail, randotrail")]
+    [InlineData("Trail running", "trail, trail running")]
+    [InlineData("marathon", "marathon")]
+    [InlineData("Trail, marathon", "trail, marathon")]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    public void NormalizeRaceType_ConvertsRaceTypesCorrectly(string? input, string? expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.NormalizeRaceType(input));
+    }
+
+    [Fact]
+    public void NormalizeRaceType_DeduplicatesTokens()
+    {
+        var result = RaceScrapeDiscovery.NormalizeRaceType("trail, Trail, marathon");
+        Assert.Equal("trail, marathon", result);
     }
 }
