@@ -5,11 +5,20 @@ using Microsoft.Extensions.Logging;
 
 namespace Shared.Services;
 
+/// <summary>
+/// Holds a single write gate shared across all <see cref="CollectionClient{T}"/> instances and
+/// type parameters so that concurrent workers cannot collectively saturate the Cosmos DB
+/// free-tier RU/s budget.
+/// </summary>
+internal static class CosmosWriteThrottle
+{
+    internal static readonly SemaphoreSlim Semaphore = new(1, 1);
+    internal static readonly TimeSpan DelayBetweenWrites = TimeSpan.FromMilliseconds(50);
+}
+
 public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) where T : IDocument
 {
     private readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
-    const int maxConcurrentThreads = 2;
-    private readonly SemaphoreSlim semaphore = new(maxConcurrentThreads);
 
     public async Task<IEnumerable<T>> FetchWholeCollection(CancellationToken cancellationToken = default)
     {
@@ -121,36 +130,36 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
     public async Task UpsertDocument(T document, CancellationToken cancellationToken = default)
     {
-        await semaphore.WaitAsync(cancellationToken);
+        await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
         try
         {
             await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
+            // Delay is intentionally held inside the lock: releasing first would allow the
+            // next waiter to start immediately, bypassing the intended write-rate cap.
+            await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
         }
         finally
         {
-            semaphore.Release();
+            CosmosWriteThrottle.Semaphore.Release();
         }
     }
     public async Task BulkUpsert(IEnumerable<T> documents, CancellationToken cancellationToken = default)
     {
-        var concurrentTasks = new List<Task>();
-
         foreach (var document in documents)
         {
-            await semaphore.WaitAsync(cancellationToken);
-            concurrentTasks.Add(Task.Run(async () =>
+            await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+            try
             {
-                try
-                {
-                    await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
-                }
-                finally
-                {
-                    semaphore.Release();
-                }
-            }, cancellationToken));
+                await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
+                // Delay is intentionally held inside the lock: releasing first would allow the
+                // next waiter to start immediately, bypassing the intended write-rate cap.
+                await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+            }
+            finally
+            {
+                CosmosWriteThrottle.Semaphore.Release();
+            }
         }
-        await Task.WhenAll(concurrentTasks);
     }
 
     public async Task DeleteDocument(string id, PartitionKey partitionKey, CancellationToken cancellationToken = default)
