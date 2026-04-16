@@ -102,7 +102,7 @@ public class ScrapeRaceWorker(
             return;
         }
 
-        var traceData = RaceScrapeDiscovery.ParseTraceDeTrailTrace(json);
+        var traceData = RaceHtmlScraper.ParseTraceDeTrailTrace(json);
 
         if (traceData.Points.Count < 2)
         {
@@ -159,7 +159,7 @@ public class ScrapeRaceWorker(
             return;
         }
 
-        var siteUrl = RaceScrapeDiscovery.ExtractRaceSiteUrl(html, url);
+        var siteUrl = RaceHtmlScraper.ExtractRaceSiteUrl(html, url);
         if (siteUrl is null)
         {
             logger.LogDebug("TraceDeTrail event page: no 'Site de la course' found on {Url}", url);
@@ -189,7 +189,7 @@ public class ScrapeRaceWorker(
             return;
         }
 
-        var gpxUrls = RaceScrapeDiscovery.ExtractGpxUrlsFromHtml(html, url)
+        var gpxUrls = RaceHtmlScraper.ExtractGpxUrlsFromHtml(html, url)
             .GroupBy(u => u.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
@@ -413,12 +413,12 @@ public class ScrapeRaceWorker(
             var html = await TryFetchString(httpClient, pageUri, cancellationToken);
             if (html is null) continue;
 
-            foreach (var gpxLink in RaceScrapeDiscovery.ExtractGpxLinksFromHtml(html, pageUri))
+            foreach (var gpxLink in RaceHtmlScraper.ExtractGpxLinksFromHtml(html, pageUri))
                 gpxLinkUrls.Add(gpxLink.AbsoluteUri);
 
             if (depth < GpxSearchMaxDepth)
             {
-                foreach (var courseLink in RaceScrapeDiscovery.ExtractCourseLinksFromHtml(html, pageUri))
+                foreach (var courseLink in RaceHtmlScraper.ExtractCourseLinksFromHtml(html, pageUri))
                 {
                     if (!visitedPages.Contains(courseLink.AbsoluteUri))
                         pageQueue.Enqueue((courseLink, depth + 1));
@@ -458,7 +458,7 @@ public class ScrapeRaceWorker(
         if (parsed is not null)
             return (parsed, url);
 
-        foreach (var gpxLink in RaceScrapeDiscovery.ExtractGpxLinksFromHtml(content, url))
+        foreach (var gpxLink in RaceHtmlScraper.ExtractGpxLinksFromHtml(content, url))
         {
             if (triedUrls.Contains(gpxLink.AbsoluteUri)) continue;
             triedUrls.Add(gpxLink.AbsoluteUri);
@@ -471,7 +471,7 @@ public class ScrapeRaceWorker(
                 return (gpxParsed, gpxLink);
         }
 
-        foreach (var dlLink in RaceScrapeDiscovery.ExtractDownloadLinksFromHtml(content, url))
+        foreach (var dlLink in RaceHtmlScraper.ExtractDownloadLinksFromHtml(content, url))
         {
             if (triedUrls.Contains(dlLink.AbsoluteUri)) continue;
             triedUrls.Add(dlLink.AbsoluteUri);
