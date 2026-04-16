@@ -218,4 +218,32 @@ public class RaceScrapeDiscoveryTests
         var result = RaceScrapeDiscovery.NormalizeRaceType("trail, Trail, marathon");
         Assert.Equal("trail, marathon", result);
     }
+
+    // ── MatchDistanceKmToVerbose ──────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(34.5, "34.2 km, 12.9 km", "34.2 km")]   // close to first entry
+    [InlineData(13.0, "34.2 km, 12.9 km", "12.9 km")]   // close to second entry
+    [InlineData(100.0, "100 km, 50 km", "100 km")]        // exact match
+    [InlineData(50.0, "100 km, 50 km", "50 km")]          // exact match second
+    public void MatchDistanceKmToVerbose_ReturnsClosestMatch(double gpxKm, string verbose, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxKm, verbose));
+    }
+
+    [Theory]
+    [InlineData(50.0, null)]
+    [InlineData(50.0, "")]
+    [InlineData(0.0, "50 km")]
+    public void MatchDistanceKmToVerbose_ReturnsNullForMissingInput(double gpxKm, string? verbose)
+    {
+        Assert.Null(RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxKm, verbose));
+    }
+
+    [Fact]
+    public void MatchDistanceKmToVerbose_ReturnsNullWhenNoMatchWithinTolerance()
+    {
+        // 50 km GPX vs 100 km verbose — 50 % difference, exceeds 25 % tolerance.
+        Assert.Null(RaceScrapeDiscovery.MatchDistanceKmToVerbose(50.0, "100 km"));
+    }
 }

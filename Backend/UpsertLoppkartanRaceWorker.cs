@@ -9,6 +9,7 @@ using Shared.Services;
 namespace Backend;
 
 public class UpsertLoppkartanRaceWorker(
+    IHttpClientFactory httpClientFactory,
     RaceCollectionClient racesCollectionClient,
     ILogger<UpsertLoppkartanRaceWorker> logger)
 {
@@ -36,7 +37,6 @@ public class UpsertLoppkartanRaceWorker(
 
         try
         {
-            var point = new Point(new Position(target.Longitude, target.Latitude));
             var properties = new Dictionary<string, dynamic>
             {
                 [RaceScrapeDiscovery.PropName] = target.Name ?? target.Location ?? $"Loppkartan {target.MarkerId}",
@@ -67,15 +67,97 @@ public class UpsertLoppkartanRaceWorker(
             if (!string.IsNullOrWhiteSpace(normalizedDistance))
                 properties[RaceScrapeDiscovery.PropDistance] = normalizedDistance;
 
-            var featureId = $"loppkartan:{target.MarkerId}";
-            var feature = new Feature(point, properties, null, new FeatureId(featureId));
-            var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
-            await racesCollectionClient.UpsertDocument(stored, cancellationToken);
+            var baseFeatureId = $"loppkartan:{target.MarkerId}";
+
+            // Attempt to enrich with GPX routes from the event website.
+            if (!string.IsNullOrWhiteSpace(target.Website) &&
+                Uri.TryCreate(target.Website, UriKind.Absolute, out var websiteUri) &&
+                websiteUri.Scheme is "http" or "https")
+            {
+                var routes = await TryFetchWebsiteGpxRoutes(httpClientFactory.CreateClient(), websiteUri, cancellationToken);
+                if (routes.Count > 0)
+                {
+                    for (int i = 0; i < routes.Count; i++)
+                    {
+                        var (route, gpxUrl) = routes[i];
+                        var routeProps = new Dictionary<string, dynamic>(properties)
+                        {
+                            [RaceScrapeDiscovery.PropName] = route.Name,
+                            ["gpxUrl"] = gpxUrl.AbsoluteUri
+                        };
+
+                        var gpxDistanceKm = GpxParser.CalculateDistanceKm(route.Coordinates);
+                        var matchedDistance = RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxDistanceKm, target.DistanceVerbose);
+                        if (!string.IsNullOrWhiteSpace(matchedDistance))
+                            routeProps[RaceScrapeDiscovery.PropDistance] = matchedDistance;
+                        else if (gpxDistanceKm > 0)
+                            routeProps[RaceScrapeDiscovery.PropDistance] = RaceScrapeDiscovery.FormatDistanceKm(gpxDistanceKm);
+
+                        var routeFeatureId = routes.Count == 1 ? baseFeatureId : $"{baseFeatureId}:{i}";
+                        var lineString = new LineString(route.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
+                        var feature = new Feature(lineString, routeProps, null, new FeatureId(routeFeatureId));
+                        var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
+                        await racesCollectionClient.UpsertDocument(stored, cancellationToken);
+                        logger.LogInformation("Loppkartan: upserted GPX route {RouteFeatureId} from {GpxUrl}", routeFeatureId, gpxUrl);
+                    }
+
+                    return;
+                }
+            }
+
+            // Fallback: store the scraped point position.
+            var point = new Point(new Position(target.Longitude, target.Latitude));
+            var pointFeature = new Feature(point, properties, null, new FeatureId(baseFeatureId));
+            var pointStored = new StoredFeature(pointFeature, FeatureKinds.Race, Zoom);
+            await racesCollectionClient.UpsertDocument(pointStored, cancellationToken);
             logger.LogInformation("Loppkartan: upserted marker {MarkerId}", target.MarkerId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Failed to upsert Loppkartan marker {MarkerId}", target.MarkerId);
         }
+    }
+
+    private async Task<IReadOnlyList<(ParsedGpxRoute Route, Uri GpxUrl)>> TryFetchWebsiteGpxRoutes(
+        HttpClient httpClient,
+        Uri websiteUri,
+        CancellationToken cancellationToken)
+    {
+        string html;
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(30));
+            html = await httpClient.GetStringAsync(websiteUri, cts.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(ex, "Loppkartan: could not fetch website {WebsiteUri}", websiteUri);
+            return [];
+        }
+
+        var gpxUrls = RaceScrapeDiscovery.ExtractGpxUrlsFromHtml(html, websiteUri);
+        if (gpxUrls.Count == 0)
+            return [];
+
+        var routes = new List<(ParsedGpxRoute, Uri)>();
+        foreach (var gpxUrl in gpxUrls)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(TimeSpan.FromSeconds(30));
+                var gpxContent = await httpClient.GetStringAsync(gpxUrl, cts.Token);
+                var parsed = GpxParser.TryParseRoute(gpxContent);
+                if (parsed is not null)
+                    routes.Add((parsed, gpxUrl));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogDebug(ex, "Loppkartan: could not fetch GPX {GpxUrl}", gpxUrl);
+            }
+        }
+
+        return routes;
     }
 }

@@ -51,6 +51,28 @@ public static class GpxParser
             points);
     }
 
+    // Computes the total track distance in km using the haversine formula.
+    public static double CalculateDistanceKm(IReadOnlyList<Coordinate> coordinates)
+    {
+        double total = 0;
+        for (int i = 1; i < coordinates.Count; i++)
+            total += HaversineKm(coordinates[i - 1], coordinates[i]);
+        return total;
+    }
+
+    private static double HaversineKm(Coordinate a, Coordinate b)
+    {
+        const double R = 6371.0;
+        var dLat = ToRadians(b.Lat - a.Lat);
+        var dLng = ToRadians(b.Lng - a.Lng);
+        var sinLat = Math.Sin(dLat / 2);
+        var sinLng = Math.Sin(dLng / 2);
+        var h = sinLat * sinLat + Math.Cos(ToRadians(a.Lat)) * Math.Cos(ToRadians(b.Lat)) * sinLng * sinLng;
+        return 2 * R * Math.Asin(Math.Sqrt(h));
+    }
+
+    private static double ToRadians(double degrees) => degrees * Math.PI / 180.0;
+
     private static Coordinate? ParseCoordinate(XElement pointElement)
     {
         var latText = pointElement.Attribute("lat")?.Value;
