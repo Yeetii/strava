@@ -11,7 +11,7 @@ public class QueueScrapeLoppkartanJobs(
     ILogger<QueueScrapeLoppkartanJobs> logger)
 {
     private static readonly Uri MarkersUrl = new("https://www.loppkartan.se/markers-se.json");
-    private readonly ServiceBusSender _upsertSender = serviceBusClient.CreateSender(ServiceBusConfig.UpsertLoppkartanRace);
+    private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);
 
     [Function(nameof(QueueScrapeLoppkartanJobs))]
     public async Task Run(
@@ -20,12 +20,12 @@ public class QueueScrapeLoppkartanJobs(
     {
         var httpClient = httpClientFactory.CreateClient();
         var json = await httpClient.GetStringAsync(MarkersUrl, cancellationToken);
-        var targets = RaceScrapeDiscovery.ParseLoppkartanMarkers(json);
+        var jobs = RaceScrapeDiscovery.ParseLoppkartanMarkers(json);
 
-        logger.LogInformation("Loppkartan: discovered {Count} unique markers", targets.Count);
+        logger.LogInformation("Loppkartan: discovered {Count} unique markers", jobs.Count);
 
-        var messages = targets
-            .Select((t, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(t))
+        var messages = jobs
+            .Select((j, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(j))
             {
                 ContentType = "application/json",
                 ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 5)
@@ -34,7 +34,7 @@ public class QueueScrapeLoppkartanJobs(
 
         const int ChunkSize = 100;
         for (int i = 0; i < messages.Count; i += ChunkSize)
-            await _upsertSender.SendMessagesAsync(messages.Skip(i).Take(ChunkSize), cancellationToken);
+            await _sender.SendMessagesAsync(messages.Skip(i).Take(ChunkSize), cancellationToken);
 
         logger.LogInformation("Loppkartan: enqueued {Count} race messages", messages.Count);
     }

@@ -39,12 +39,12 @@ public class RaceScrapeDiscoveryTests
             }
             """;
 
-        var pages = RaceScrapeDiscovery.ParseUtmbRacePages(payload);
+        var jobs = RaceScrapeDiscovery.ParseUtmbRacePages(payload);
 
-        Assert.Equal(2, pages.Count);
+        Assert.Equal(2, jobs.Count);
 
-        var utmb50k = Assert.Single(pages, p => p.PageUrl.AbsoluteUri == "https://utmb.world/races/utmb-mont-blanc-50k");
-        Assert.Equal(54.3, utmb50k.Distance);
+        var utmb50k = Assert.Single(jobs, j => j.Url!.AbsoluteUri == "https://utmb.world/races/utmb-mont-blanc-50k");
+        Assert.Equal("54.3 km", utmb50k.Distance);
         Assert.Equal(3200, utmb50k.ElevationGain);
         Assert.Equal("FR", utmb50k.Country);
         Assert.Equal("Chamonix", utmb50k.Location);
@@ -52,8 +52,8 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal(["Finisher Stone"], utmb50k.RunningStones);
         Assert.Equal("https://utmb.world/img/race.jpg", utmb50k.ImageUrl);
 
-        var ccc = Assert.Single(pages, p => p.PageUrl.AbsoluteUri == "https://utmb.world/races/ccc");
-        Assert.Equal(101.0, ccc.Distance);
+        var ccc = Assert.Single(jobs, j => j.Url!.AbsoluteUri == "https://utmb.world/races/ccc");
+        Assert.Equal("101 km", ccc.Distance);
         Assert.Equal(6100, ccc.ElevationGain);
         Assert.Null(ccc.Playgrounds);
     }
@@ -118,15 +118,14 @@ public class RaceScrapeDiscoveryTests
         var markers = RaceScrapeDiscovery.ParseLoppkartanMarkers(payload);
 
         var marker = Assert.Single(markers);
-        Assert.Equal("eb3555a8-38ab-43df-b094-ff01d8d27000", marker.MarkerId);
+        Assert.Equal("https://www.vmxtreme.se/", marker.Url!.AbsoluteUri);
         Assert.Equal("Vånga Mountain Xtreme - VMX", marker.Name);
         Assert.Equal(56.1774298686757, marker.Latitude);
         Assert.Equal(14.3645238871977, marker.Longitude);
-        Assert.Equal("https://www.vmxtreme.se/", marker.Website);
-        Assert.Equal("20250914", marker.RaceDate);
+        Assert.Equal("20250914", marker.Date);
         Assert.Equal("trail", marker.RaceType);
         Assert.Equal("Trail", marker.TypeLocal);
-        Assert.Equal("vanga_mountain_xtreme", marker.DomainName);
+        Assert.Equal("Skåne", marker.County);
     }
 
     // ── NormalizeDateToYyyyMmDd ────────────────────────────────────────────────
@@ -454,5 +453,145 @@ public class RaceScrapeDiscoveryTests
         var assignments = RaceScrapeDiscovery.AssignDistancesToRoutes([], "10 km, 20 km");
 
         Assert.Empty(assignments);
+    }
+
+    // ── ParseTraceDeTrailCalendarEvents ───────────────────────────────────────
+
+    [Fact]
+    public void ParseTraceDeTrailCalendarEvents_EmitsItraJobsAndEventPageJobs()
+    {
+        const string payload = """
+            {
+              "success": 1,
+              "data": [
+                {
+                  "nom": "Ultra Tour 4 Massifs",
+                  "traceIDs": "12345_67890",
+                  "distances": "50_100",
+                  "country": "FR",
+                  "label": "ultra-tour-4-massifs",
+                  "sports": "trail",
+                  "img": "race.jpg",
+                  "logo": null
+                },
+                {
+                  "nom": "Another Race",
+                  "traceIDs": "11111",
+                  "distances": "42",
+                  "country": "IT",
+                  "label": "another-race",
+                  "sports": "trail running",
+                  "img": null,
+                  "logo": "logo.jpg"
+                }
+              ]
+            }
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(payload);
+
+        // ITRA jobs: one per trace ID
+        var itraJobs = jobs.Where(j => j.Url!.AbsoluteUri.Contains("/trace/getTraceItra/")).ToList();
+        Assert.Equal(3, itraJobs.Count);
+
+        var trace12345 = Assert.Single(itraJobs, j => j.Url!.AbsoluteUri.EndsWith("/12345"));
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/12345", trace12345.Url!.AbsoluteUri);
+        Assert.Equal("50 km", trace12345.Distance);
+        Assert.Equal("Ultra Tour 4 Massifs", trace12345.Name);
+        Assert.Equal("FR", trace12345.Country);
+        Assert.Equal("https://tracedetrail.fr/events/race.jpg", trace12345.ImageUrl);
+
+        var trace67890 = Assert.Single(itraJobs, j => j.Url!.AbsoluteUri.EndsWith("/67890"));
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/67890", trace67890.Url!.AbsoluteUri);
+        Assert.Equal("100 km", trace67890.Distance);
+
+        var trace11111 = Assert.Single(itraJobs, j => j.Url!.AbsoluteUri.EndsWith("/11111"));
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", trace11111.Url!.AbsoluteUri);
+        Assert.Equal("42 km", trace11111.Distance);
+        // logo fallback when img is null
+        Assert.Equal("https://tracedetrail.fr/events/logo.jpg", trace11111.ImageUrl);
+
+        // Event page jobs: one per unique slug
+        var eventPageJobs = jobs.Where(j => j.Url!.AbsoluteUri.Contains("/en/event/")).ToList();
+        Assert.Equal(2, eventPageJobs.Count);
+
+        var eventJob1 = Assert.Single(eventPageJobs, j => j.Url!.AbsoluteUri.Contains("ultra-tour-4-massifs"));
+        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", eventJob1.Url!.AbsoluteUri);
+        Assert.Equal("50 km, 100 km", eventJob1.Distance);
+
+        var eventJob2 = Assert.Single(eventPageJobs, j => j.Url!.AbsoluteUri.Contains("another-race"));
+        Assert.Equal("https://tracedetrail.fr/en/event/another-race", eventJob2.Url!.AbsoluteUri);
+        Assert.Equal("42 km", eventJob2.Distance);
+    }
+
+    [Fact]
+    public void ParseTraceDeTrailCalendarEvents_ReturnsEmptyForBlankInput()
+    {
+        Assert.Empty(RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(""));
+        Assert.Empty(RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents("{}"));
+    }
+
+    // ── BuildFeatureId (URL overload) ─────────────────────────────────────────
+
+    [Theory]
+    [InlineData("https://julianalps.utmb.world/races/120K", null, "julianalps.utmb.world-races-120K")]
+    [InlineData("https://www.vmxtreme.se/", null, "vmxtreme.se")]
+    [InlineData("https://tracedetrail.fr/trace/getTraceItra/12345", null, "tracedetrail.fr-trace-getTraceItra-12345")]
+    [InlineData("https://julianalps.utmb.world/races/120K", 0, "julianalps.utmb.world-races-120K-0")]
+    [InlineData("https://julianalps.utmb.world/races/120K", 1, "julianalps.utmb.world-races-120K-1")]
+    public void BuildFeatureId_FromUrl_BuildsCosmosId(string url, int? routeIndex, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.BuildFeatureId(new Uri(url), routeIndex));
+    }
+
+    // ── BuildFeatureId (name+distance overload) ───────────────────────────────
+
+    [Theory]
+    [InlineData("Race Name", "50 km", "race-name-50-km")]
+    [InlineData("Race Name", null, "race-name")]
+    [InlineData(null, "50 km", "50-km")]
+    public void BuildFeatureId_FromNameAndDistance_BuildsSlug(string? name, string? distance, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.BuildFeatureId(name, distance));
+    }
+
+    // ── ExtractRaceSiteUrl ────────────────────────────────────────────────────
+
+    [Fact]
+    public void ExtractRaceSiteUrl_FindsSiteDelaCourseLink()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="https://utmb.world/races/120K">UTMB</a>
+                <a href="https://myrace.com/">Site de la course</a>
+                <a href="/info">Info</a>
+              </body>
+            </html>
+            """;
+
+        var result = RaceScrapeDiscovery.ExtractRaceSiteUrl(html, new Uri("https://tracedetrail.fr/en/event/some-event"));
+        Assert.Equal("https://myrace.com/", result?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractRaceSiteUrl_IsCaseInsensitive()
+    {
+        const string html = """<a href="https://myrace.com/">SITE DE LA COURSE</a>""";
+        var result = RaceScrapeDiscovery.ExtractRaceSiteUrl(html, new Uri("https://tracedetrail.fr/en/event/x"));
+        Assert.Equal("https://myrace.com/", result?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractRaceSiteUrl_ReturnsNullWhenNoneFound()
+    {
+        const string html = "<html><body><a href='/info'>Info</a></body></html>";
+        Assert.Null(RaceScrapeDiscovery.ExtractRaceSiteUrl(html, new Uri("https://tracedetrail.fr/en/event/x")));
+    }
+
+    [Fact]
+    public void ExtractRaceSiteUrl_ReturnsNullForBlankInput()
+    {
+        Assert.Null(RaceScrapeDiscovery.ExtractRaceSiteUrl("", new Uri("https://tracedetrail.fr/en/event/x")));
     }
 }

@@ -12,7 +12,7 @@ public class QueueScrapeTraceDeTrailJobs(
 {
     private static readonly Uri CalendarUrl = new("https://tracedetrail.fr/event/getEventsCalendar/all/all/all");
     private const string CalendarReferer = "https://tracedetrail.fr/en/calendar";
-    private readonly ServiceBusSender _upsertSender = serviceBusClient.CreateSender(ServiceBusConfig.UpsertTraceDeTrailRace);
+    private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);
 
     [Function(nameof(QueueScrapeTraceDeTrailJobs))]
     public async Task Run(
@@ -20,7 +20,7 @@ public class QueueScrapeTraceDeTrailJobs(
         CancellationToken cancellationToken)
     {
         var httpClient = httpClientFactory.CreateClient();
-        var targets = new Dictionary<int, TraceDeTrailScrapeTarget>();
+        var jobsByUrl = new Dictionary<string, ScrapeJob>(StringComparer.OrdinalIgnoreCase);
         var now = DateTime.UtcNow;
 
         for (int monthOffset = 0; monthOffset <= 12; monthOffset++)
@@ -46,9 +46,12 @@ public class QueueScrapeTraceDeTrailJobs(
                 }
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var events = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(json);
-                foreach (var target in events)
-                    targets.TryAdd(target.TraceId, target);
+                var jobs = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(json);
+                foreach (var job in jobs)
+                {
+                    if (job.Url is not null)
+                        jobsByUrl.TryAdd(job.Url.AbsoluteUri, job);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -56,10 +59,10 @@ public class QueueScrapeTraceDeTrailJobs(
             }
         }
 
-        logger.LogInformation("TraceDeTrail: discovered {Count} unique traces from calendar", targets.Count);
+        logger.LogInformation("TraceDeTrail: discovered {Count} unique jobs from calendar", jobsByUrl.Count);
 
-        var messages = targets.Values
-            .Select((t, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(t))
+        var messages = jobsByUrl.Values
+            .Select((j, i) => new ServiceBusMessage(BinaryData.FromObjectAsJson(j))
             {
                 ContentType = "application/json",
                 ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 5)
@@ -68,8 +71,8 @@ public class QueueScrapeTraceDeTrailJobs(
 
         const int ChunkSize = 100;
         for (int i = 0; i < messages.Count; i += ChunkSize)
-            await _upsertSender.SendMessagesAsync(messages.Skip(i).Take(ChunkSize), cancellationToken);
+            await _sender.SendMessagesAsync(messages.Skip(i).Take(ChunkSize), cancellationToken);
 
-        logger.LogInformation("TraceDeTrail: enqueued {Count} trace messages", messages.Count);
+        logger.LogInformation("TraceDeTrail: enqueued {Count} scrape job messages", messages.Count);
     }
 }
