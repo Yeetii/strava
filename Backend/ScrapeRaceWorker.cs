@@ -36,7 +36,7 @@ public class ScrapeRaceWorker
             new UtmbScraper(logger),
             new ItraScraper(logger),
             new TraceDeTrailEventScraper(logger, bfsScraper),
-            new RunagainScraper(logger),
+            new RunagainScraper(logger, bfsScraper),
             bfsScraper,
         ];
     }

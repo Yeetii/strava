@@ -17,11 +17,12 @@ public class QueueScrapeRaceJobs(
     private static readonly Uri UtmbApiUrl = new("https://api.utmb.world/search/races?lang=en&limit=400");
     private static readonly Uri TraceDeTrailCalendarUrl = new("https://tracedetrail.fr/event/getEventsCalendar/all/all/all");
     private const string TraceDeTrailCalendarReferer = "https://tracedetrail.fr/en/calendar";
+    private static readonly Uri RunagainBaseUrl = new("https://runagain.com/");
+    private static readonly string[] RunagainRaceTypes = ["Stiløp"];
+
     private static readonly Uri LoppkartanMarkersUrl = new("https://www.loppkartan.se/markers-se.json");
 
     private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);
-
-    [Function(nameof(QueueScrapeRaceJobs))]
     public async Task Run(
         [TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo,
         CancellationToken cancellationToken)
@@ -32,7 +33,7 @@ public class QueueScrapeRaceJobs(
         // Fetch all sources (TraceDeTrail is sequential across months; others are single requests).
         all.AddRange(await FetchUtmbJobsAsync(httpClient, cancellationToken));
         all.AddRange(await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken));
-        all.AddRange(FetchRunagainJobs());
+        all.AddRange(await FetchRunagainJobsAsync(httpClient, cancellationToken));
         all.AddRange(await FetchLoppkartanJobsAsync(httpClient, cancellationToken));
 
         logger.LogInformation("QueueScrapeRaceJobs: {Count} total jobs discovered across all sources", all.Count);
@@ -116,9 +117,51 @@ public class QueueScrapeRaceJobs(
         return [.. jobsByUrl.Values];
     }
 
-    // Placeholder: returns no jobs until the Runagain API endpoint and response format are known.
-    // TODO: implement discovery once Runagain integration is scoped (see RunagainScraper.cs).
-    private static IReadOnlyCollection<ScrapeJob> FetchRunagainJobs() => [];
+    // Paginates all race types on RunAgain (https://runagain.com/find-event?race_type={type}&p={n})
+    // until an empty page is returned.  Yields one ScrapeJob per discovered event URL.
+    private async Task<IReadOnlyCollection<ScrapeJob>> FetchRunagainJobsAsync(HttpClient httpClient, CancellationToken cancellationToken)
+    {
+        var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var jobs = new List<ScrapeJob>();
+
+        foreach (var raceType in RunagainRaceTypes)
+        {
+            for (int page = 1; ; page++)
+            {
+                var listingUrl = new Uri(RunagainBaseUrl, $"find-event?race_type={Uri.EscapeDataString(raceType)}&p={page}");
+                string html;
+                try
+                {
+                    html = await httpClient.GetStringAsync(listingUrl, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "RunAgain: failed to fetch listing page {Url}", listingUrl);
+                    break;
+                }
+
+                var eventLinks = RaceHtmlScraper.ExtractRunagainEventLinks(html, RunagainBaseUrl);
+                if (eventLinks.Count == 0)
+                    break;
+
+                var added = 0;
+                foreach (var eventUrl in eventLinks)
+                {
+                    if (seenUrls.Add(eventUrl.AbsoluteUri))
+                    {
+                        jobs.Add(new ScrapeJob(RunagainUrl: eventUrl));
+                        added++;
+                    }
+                }
+
+                // No new events on this page — stop paginating this race type.
+                if (added == 0) break;
+            }
+        }
+
+        logger.LogInformation("RunAgain: discovered {Count} unique events", jobs.Count);
+        return jobs;
+    }
 
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchLoppkartanJobsAsync(HttpClient httpClient, CancellationToken cancellationToken)
     {
