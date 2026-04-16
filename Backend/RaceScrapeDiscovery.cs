@@ -523,6 +523,13 @@ public static partial class RaceScrapeDiscovery
             var name = FindStringValue(evt, ["nom", "name"]);
             var country = FindStringValue(evt, ["country", "pays", "countryCode"]);
             var slug = FindStringValue(evt, ["label",]);
+            var sports = FindStringValue(evt, ["sports", "sport"]);
+
+            var imageBaseUrl = "https://tracedetrail.fr/events/";
+            var imageName = FindStringValue(evt, ["img", "image", "imageUrl"]);
+            var logoName = FindStringValue(evt, ["logo"]);
+            var imageUrl = !string.IsNullOrWhiteSpace(imageName) ? $"{imageBaseUrl}{imageName}" : null;
+            var logoUrl = !string.IsNullOrWhiteSpace(logoName) ? $"{imageBaseUrl}{logoName}" : null;
 
             string[]? distanceParts = null;
             if (TryGetPropertyIgnoreCase(evt, "distances", out var distancesEl) && distancesEl.ValueKind == JsonValueKind.String)
@@ -538,7 +545,7 @@ public static partial class RaceScrapeDiscovery
                     double.TryParse(distanceParts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
                     distance = d;
 
-                targets.Add(new TraceDeTrailScrapeTarget(traceId, name, distance, country, slug));
+                targets.Add(new TraceDeTrailScrapeTarget(traceId, name, distance, country, slug, sports, imageUrl, logoUrl));
             }
         }
 
@@ -669,7 +676,7 @@ public record RaceScrapeTarget(
     IReadOnlyList<string>? RunningStones = null,
     string? ImageUrl = null);
 
-public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance, string? Country, string? Slug);
+public record TraceDeTrailScrapeTarget(int TraceId, string? Name, double? Distance, string? Country, string? Slug, string? Sports, string? ImageUrl, string? LogoUrl);
 
 public record LoppkartanScrapeTarget(
     string MarkerId,

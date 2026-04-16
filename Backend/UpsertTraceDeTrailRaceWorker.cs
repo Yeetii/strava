@@ -57,6 +57,13 @@ public class UpsertTraceDeTrailRaceWorker(
                 [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
             };
 
+            if (!string.IsNullOrWhiteSpace(target.ImageUrl))
+                properties[RaceScrapeDiscovery.PropImage] = target.ImageUrl;
+            else if (!string.IsNullOrWhiteSpace(target.LogoUrl))
+                properties[RaceScrapeDiscovery.PropImage] = target.LogoUrl;
+            var raceType = RaceScrapeDiscovery.NormalizeRaceType(target.Sports);
+            if (!string.IsNullOrWhiteSpace(raceType))
+                properties[RaceScrapeDiscovery.PropRaceType] = raceType;
             var distance = target.Distance ?? traceData.TotalDistanceKm;
             if (distance.HasValue)
                 properties[RaceScrapeDiscovery.PropDistance] = RaceScrapeDiscovery.FormatDistanceKm(distance.Value);
