@@ -21,6 +21,11 @@ public static partial class RaceScrapeDiscovery
     public const string PropImage = "image";
     public const string PropPlaygrounds = "playgrounds";
     public const string PropRunningStones = "runningStones";
+    public const string PropSources = "sources";
+    public const string PropLogo = "logo";
+    public const string PropOrganizer = "organizer";
+    public const string PropStartFee = "startFee";
+    public const string PropCurrency = "currency";
 
     // Converts various date formats to YYYY-MM-DD, e.g. "20250914" → "2025-09-14".
     // Returns null if the date cannot be parsed.
@@ -684,6 +689,117 @@ public static partial class RaceScrapeDiscovery
         return jobs;
     }
 
+    // Parses the response from POST https://cloudrun-pgjjiy2k6a-ew.a.run.app/find_runs
+    // Response: {"hits":[...],"estimatedTotalHits":N,"offset":N,"last_item":bool}
+    // Each hit has post_title, post_url, country, place, county, date, gps, length[], race_type[], terrain_type[], cover_image, race_guid.
+    public static IReadOnlyCollection<ScrapeJob> ParseRunagainSearchResults(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        if (!TryGetPropertyIgnoreCase(root, "hits", out var hitsEl) || hitsEl.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var jobs = new List<ScrapeJob>();
+
+        foreach (var hit in hitsEl.EnumerateArray())
+        {
+            if (hit.ValueKind != JsonValueKind.Object)
+                continue;
+
+            var slug = FindStringValue(hit, ["post_url"]);
+            if (string.IsNullOrWhiteSpace(slug))
+                continue;
+
+            var eventUrl = new Uri($"https://runagain.com/find-event/{slug}");
+            var name = FindStringValue(hit, ["post_title"]);
+            var country = FindStringValue(hit, ["country"]);
+            var location = FindStringValue(hit, ["place"]);
+            var county = FindStringValue(hit, ["county"]);
+            var date = NormalizeDateToYyyyMmDd(FindStringValue(hit, ["date"]));
+            var imageUrl = FindStringValue(hit, ["cover_image"]);
+            if (string.IsNullOrWhiteSpace(imageUrl)) imageUrl = null;
+
+            // race_type and terrain_type are arrays of strings
+            string? raceType = null;
+            if (TryGetPropertyIgnoreCase(hit, "race_type", out var raceTypeEl) && raceTypeEl.ValueKind == JsonValueKind.Array)
+            {
+                var types = new List<string>();
+                foreach (var t in raceTypeEl.EnumerateArray())
+                    if (t.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(t.GetString()))
+                        types.Add(t.GetString()!);
+                if (TryGetPropertyIgnoreCase(hit, "terrain_type", out var terrainEl) && terrainEl.ValueKind == JsonValueKind.Array)
+                    foreach (var t in terrainEl.EnumerateArray())
+                        if (t.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(t.GetString()))
+                            types.Add(t.GetString()!);
+                raceType = NormalizeRaceType(string.Join(", ", types));
+            }
+
+            // TypeLocal stores the original Norwegian race_type terms (e.g. "Stiløp")
+            string? typeLocal = null;
+            if (TryGetPropertyIgnoreCase(hit, "race_type", out var raceTypeLocalEl) && raceTypeLocalEl.ValueKind == JsonValueKind.Array)
+            {
+                var localTypes = new List<string>();
+                foreach (var t in raceTypeLocalEl.EnumerateArray())
+                    if (t.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(t.GetString()))
+                        localTypes.Add(t.GetString()!);
+                typeLocal = localTypes.Count > 0 ? string.Join(", ", localTypes) : null;
+            }
+
+            // length is an array of distances in km
+            string? distance = null;
+            if (TryGetPropertyIgnoreCase(hit, "length", out var lengthEl) && lengthEl.ValueKind == JsonValueKind.Array)
+            {
+                var parts = new List<string>();
+                foreach (var l in lengthEl.EnumerateArray())
+                    if (l.TryGetDouble(out var d) && d > 0)
+                        parts.Add(FormatDistanceKm(d));
+                distance = parts.Count > 0 ? string.Join(", ", parts) : null;
+            }
+
+            // gps is [lat, lng]
+            double? lat = null, lng = null;
+            if (TryGetPropertyIgnoreCase(hit, "gps", out var gpsEl) && gpsEl.ValueKind == JsonValueKind.Array)
+            {
+                var coords = new List<double>();
+                foreach (var c in gpsEl.EnumerateArray())
+                    if (c.TryGetDouble(out var v))
+                        coords.Add(v);
+                if (coords.Count >= 2)
+                {
+                    lat = coords[0];
+                    lng = coords[1];
+                }
+            }
+
+            // ExternalIds from race_guid
+            Dictionary<string, string>? externalIds = null;
+            var guid = FindStringValue(hit, ["race_guid"]);
+            if (!string.IsNullOrWhiteSpace(guid))
+                externalIds = new(StringComparer.Ordinal) { ["runagain"] = guid! };
+
+            jobs.Add(new ScrapeJob(
+                RunagainUrl: eventUrl,
+                Name: name,
+                ExternalIds: externalIds,
+                Distance: distance,
+                Country: country,
+                Location: location,
+                County: county,
+                Date: date,
+                RaceType: raceType,
+                TypeLocal: typeLocal,
+                ImageUrl: imageUrl,
+                Latitude: lat,
+                Longitude: lng));
+        }
+
+        return jobs;
+    }
+
 
     // Returns true if the token is a marathon keyword and sets km to the corresponding distance.
     // "marathon" → 42 km, "halvmarathon" / "half marathon" / "half-marathon" → 21 km.
@@ -839,6 +955,10 @@ public record ScrapeJob(
     string? UtmbWorldSeriesCategory = null,
     string? County = null,
     string? TypeLocal = null,
+    string? Organizer = null,
+    string? Description = null,
+    string? StartFee = null,
+    string? Currency = null,
     // Per-source URLs (null = source not available for this race).
     Uri? UtmbUrl = null,
     IReadOnlyList<Uri>? TraceDeTrailItraUrls = null,

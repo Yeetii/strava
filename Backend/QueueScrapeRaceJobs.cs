@@ -2,6 +2,7 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
+using System.Text.Json;
 
 namespace Backend;
 
@@ -17,7 +18,9 @@ public class QueueScrapeRaceJobs(
     private static readonly Uri UtmbApiUrl = new("https://api.utmb.world/search/races?lang=en&limit=400");
     private static readonly Uri TraceDeTrailCalendarUrl = new("https://tracedetrail.fr/event/getEventsCalendar/all/all/all");
     private const string TraceDeTrailCalendarReferer = "https://tracedetrail.fr/en/calendar";
-    private static readonly Uri RunagainBaseUrl = new("https://runagain.com/");
+    private static readonly Uri RunagainApiUrl = new("https://cloudrun-pgjjiy2k6a-ew.a.run.app/find_runs");
+    private static readonly string RunagainFirestoreBatchUrl = "https://firestore.googleapis.com/v1/projects/nestelop-production/databases/(default)/documents:batchGet";
+    private static readonly string RunagainFirestoreDocPrefix = "projects/nestelop-production/databases/(default)/documents/RunCollection/";
     private static readonly string[] RunagainRaceTypes = ["Stiløp"];
 
     private static readonly Uri LoppkartanMarkersUrl = new("https://www.loppkartan.se/markers-se.json");
@@ -119,44 +122,176 @@ public class QueueScrapeRaceJobs(
         return [.. jobsByUrl.Values];
     }
 
-    // Paginates all race types on RunAgain (https://runagain.com/find-event?race_type={type}&p={n})
-    // until an empty page is returned.  Yields one ScrapeJob per discovered event URL.
+    // Queries the RunAgain search API (POST https://cloudrun-pgjjiy2k6a-ew.a.run.app/find_runs)
+    // for each race type, paging through all results.  Yields one ScrapeJob per discovered event.
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchRunagainJobsAsync(HttpClient httpClient, CancellationToken cancellationToken)
     {
         var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var jobs = new List<ScrapeJob>();
+        var nowTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         foreach (var raceType in RunagainRaceTypes)
         {
-            for (int page = 1; ; page++)
+            var filter = $"race_type IN ['{raceType}'] AND timestamp >= {nowTimestamp}";
+            const int pageSize = 500;
+
+            for (int offset = 0; ; offset += pageSize)
             {
-                var listingUrl = new Uri(RunagainBaseUrl, $"find-event?race_type={Uri.EscapeDataString(raceType)}&p={page}");
-                string html;
+                string json;
                 try
                 {
-                    html = await httpClient.GetStringAsync(listingUrl, cancellationToken);
+                    var request = new HttpRequestMessage(HttpMethod.Post, RunagainApiUrl)
+                    {
+                        Content = new StringContent(
+                            System.Text.Json.JsonSerializer.Serialize(new { search = "", filter, offset, sort = "date", limit = pageSize }),
+                            System.Text.Encoding.UTF8,
+                            "application/json")
+                    };
+                    var response = await httpClient.SendAsync(request, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+                    json = await response.Content.ReadAsStringAsync(cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    logger.LogWarning(ex, "RunAgain: failed to fetch listing page {Url}", listingUrl);
+                    logger.LogWarning(ex, "RunAgain: failed to fetch search results (offset {Offset})", offset);
                     break;
                 }
 
-                var eventLinks = RaceHtmlScraper.ExtractRunagainEventLinks(html, listingUrl);
-                // Empty page means we've gone past the last page — stop paginating.
-                if (eventLinks.Count == 0)
+                var page = RaceScrapeDiscovery.ParseRunagainSearchResults(json);
+                if (page.Count == 0)
                     break;
 
-                foreach (var eventUrl in eventLinks)
+                foreach (var job in page)
                 {
-                    if (seenUrls.Add(eventUrl.AbsoluteUri))
-                        jobs.Add(new ScrapeJob(RunagainUrl: eventUrl));
+                    if (job.RunagainUrl is not null && seenUrls.Add(job.RunagainUrl.AbsoluteUri))
+                        jobs.Add(job);
                 }
+
+                // Check if we've reached the end
+                if (page.Count < pageSize)
+                    break;
             }
         }
 
         logger.LogInformation("RunAgain: discovered {Count} unique events", jobs.Count);
+
+        // Enrich with organizer website URLs from RunAgain's Firestore (batchGet, 100 docs/request).
+        await EnrichRunagainWebsiteUrlsAsync(httpClient, jobs, cancellationToken);
+
         return jobs;
+    }
+
+    // Fetches 'link' (organizer website) and 'registration' fields from RunAgain's
+    // public Firestore, using race_guid as the document ID.  Mutates jobs in-place,
+    // setting WebsiteUrl to the organizer link when available.
+    private async Task EnrichRunagainWebsiteUrlsAsync(HttpClient httpClient, List<ScrapeJob> jobs, CancellationToken cancellationToken)
+    {
+        // Build guid → index lookup (only for jobs that have a runagain ExternalId and no WebsiteUrl yet)
+        var guidToIndices = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        for (int i = 0; i < jobs.Count; i++)
+        {
+            if (jobs[i].ExternalIds?.TryGetValue("runagain", out var guid) == true && !string.IsNullOrWhiteSpace(guid))
+            {
+                if (!guidToIndices.TryGetValue(guid, out var list))
+                {
+                    list = [];
+                    guidToIndices[guid] = list;
+                }
+                list.Add(i);
+            }
+        }
+
+        if (guidToIndices.Count == 0) return;
+
+        // Batch in groups of 100 (Firestore limit)
+        var allGuids = guidToIndices.Keys.ToList();
+        int enriched = 0;
+
+        for (int batch = 0; batch < allGuids.Count; batch += 100)
+        {
+            var batchGuids = allGuids.Skip(batch).Take(100).ToList();
+            var documentPaths = batchGuids.Select(g => $"{RunagainFirestoreDocPrefix}{g}").ToList();
+
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, RunagainFirestoreBatchUrl)
+                {
+                    Content = new StringContent(
+                        JsonSerializer.Serialize(new
+                        {
+                            documents = documentPaths,
+                            mask = new { fieldPaths = new[] { "link", "registration", "organizer", "more_information", "start_fee", "currency", "county" } }
+                        }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                };
+                var response = await httpClient.SendAsync(request, cancellationToken);
+                response.EnsureSuccessStatusCode();
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                using var doc = JsonDocument.Parse(json);
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    if (!item.TryGetProperty("found", out var found)) continue;
+                    if (!found.TryGetProperty("name", out var nameEl)) continue;
+
+                    var docName = nameEl.GetString() ?? "";
+                    var guid = docName.Replace(RunagainFirestoreDocPrefix, "");
+                    if (!guidToIndices.TryGetValue(guid, out var indices)) continue;
+
+                    if (!found.TryGetProperty("fields", out var fields)) continue;
+
+                    // Extract link (organizer website) — prefer 'link' over 'registration'
+                    string? websiteUrl = null;
+                    if (fields.TryGetProperty("link", out var linkEl)
+                        && linkEl.TryGetProperty("stringValue", out var linkVal))
+                        websiteUrl = linkVal.GetString();
+
+                    if (string.IsNullOrWhiteSpace(websiteUrl)
+                        && fields.TryGetProperty("registration", out var regEl)
+                        && regEl.TryGetProperty("stringValue", out var regVal))
+                        websiteUrl = regVal.GetString();
+
+                    Uri? parsedUrl = null;
+                    if (!string.IsNullOrWhiteSpace(websiteUrl)
+                        && Uri.TryCreate(websiteUrl, UriKind.Absolute, out var url)
+                        && url.Scheme is "http" or "https")
+                        parsedUrl = url;
+
+                    // Extract additional Firestore-only fields
+                    static string? GetStringField(JsonElement fields, string name) =>
+                        fields.TryGetProperty(name, out var el) && el.TryGetProperty("stringValue", out var v)
+                            ? v.GetString() : null;
+
+                    var organizer = GetStringField(fields, "organizer");
+                    var description = GetStringField(fields, "more_information");
+                    var startFee = GetStringField(fields, "start_fee");
+                    var currency = GetStringField(fields, "currency");
+                    var county = GetStringField(fields, "county");
+
+                    foreach (var idx in indices)
+                    {
+                        var j = jobs[idx];
+                        jobs[idx] = j with
+                        {
+                            WebsiteUrl = parsedUrl ?? j.WebsiteUrl,
+                            Organizer = string.IsNullOrWhiteSpace(organizer) ? j.Organizer : organizer,
+                            Description = string.IsNullOrWhiteSpace(description) ? j.Description : description,
+                            StartFee = string.IsNullOrWhiteSpace(startFee) ? j.StartFee : startFee,
+                            Currency = string.IsNullOrWhiteSpace(currency) ? j.Currency : currency,
+                            County = string.IsNullOrWhiteSpace(county) ? j.County : county,
+                        };
+                        if (parsedUrl is not null) enriched++;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "RunAgain: failed to enrich website URLs from Firestore (batch {Batch})", batch / 100);
+            }
+        }
+
+        logger.LogInformation("RunAgain: enriched {Count}/{Total} events with organizer website URLs", enriched, jobs.Count);
     }
 
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchLoppkartanJobsAsync(HttpClient httpClient, CancellationToken cancellationToken)

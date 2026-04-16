@@ -19,7 +19,7 @@ public class ScrapeRaceWorker
 
     // Scraper pipeline in priority order:
     // 1. UTMB  2. ITRA (TraceDeTrail direct)  3. TraceDeTrail event page → BFS
-    // 4. Runagain  5. BFS (Loppkartan / generic website)
+    // 4. BFS (Loppkartan / RunAgain organizer website / generic)
     private readonly IReadOnlyList<IRaceScraper> _scrapers;
 
     public ScrapeRaceWorker(
@@ -36,7 +36,6 @@ public class ScrapeRaceWorker
             new UtmbScraper(logger),
             new ItraScraper(logger),
             new TraceDeTrailEventScraper(logger, bfsScraper),
-            new RunagainScraper(logger, bfsScraper),
             bfsScraper,
         ];
     }
@@ -97,7 +96,7 @@ public class ScrapeRaceWorker
         {
             var route = routes[i];
             var sourceUrl = route.SourceUrl
-                ?? job.UtmbUrl ?? job.TraceDeTrailItraUrls?.FirstOrDefault() ?? job.WebsiteUrl;
+                ?? job.UtmbUrl ?? job.TraceDeTrailItraUrls?.FirstOrDefault() ?? job.RunagainUrl ?? job.WebsiteUrl;
             var routeIndex = routes.Count > 1 ? i : (int?)null;
 
             var featureId = sourceUrl is not null
@@ -137,7 +136,7 @@ public class ScrapeRaceWorker
             return;
         }
 
-        var sourceUrl = job.WebsiteUrl ?? job.UtmbUrl ?? job.TraceDeTrailItraUrls?.FirstOrDefault();
+        var sourceUrl = job.WebsiteUrl ?? job.UtmbUrl ?? job.TraceDeTrailItraUrls?.FirstOrDefault() ?? job.RunagainUrl;
         var featureId = sourceUrl is not null
             ? RaceScrapeDiscovery.BuildFeatureId(sourceUrl)
             : RaceScrapeDiscovery.BuildFeatureId(job.Name, job.Distance);
@@ -194,6 +193,28 @@ public class ScrapeRaceWorker
             properties[RaceScrapeDiscovery.PropRunningStones] = job.RunningStones;
         if (job.ElevationGain.HasValue)
             properties[RaceScrapeDiscovery.PropElevationGain] = job.ElevationGain.Value;
+        if (!string.IsNullOrWhiteSpace(job.LogoUrl))
+            properties[RaceScrapeDiscovery.PropLogo] = job.LogoUrl;
+        if (job.ExternalIds is { Count: > 0 })
+            properties["externalIds"] = job.ExternalIds;
+        if (!string.IsNullOrWhiteSpace(job.Organizer))
+            properties[RaceScrapeDiscovery.PropOrganizer] = job.Organizer;
+        if (!string.IsNullOrWhiteSpace(job.Description))
+            properties[RaceScrapeDiscovery.PropDescription] = job.Description;
+        if (!string.IsNullOrWhiteSpace(job.StartFee))
+        {
+            properties[RaceScrapeDiscovery.PropStartFee] = job.StartFee;
+            if (!string.IsNullOrWhiteSpace(job.Currency))
+                properties[RaceScrapeDiscovery.PropCurrency] = job.Currency;
+        }
+
+        var sources = new List<string>();
+        if (job.UtmbUrl is not null) sources.Add("utmb");
+        if (job.TraceDeTrailItraUrls is { Count: > 0 } || job.TraceDeTrailEventUrl is not null) sources.Add("tracedetrail");
+        if (job.RunagainUrl is not null) sources.Add("runagain");
+        if (job.WebsiteUrl is not null) sources.Add("loppkartan");
+        if (sources.Count > 0)
+            properties[RaceScrapeDiscovery.PropSources] = sources;
 
         return properties;
     }

@@ -148,61 +148,6 @@ public static partial class RaceHtmlScraper
         return null;
     }
 
-    // Keywords that identify a "go to the official race website" link on RunAgain event pages.
-    // Norwegian: "hjemmeside", "nettside", "offisiell"; English: "official website", "website".
-    private static readonly string[] RunagainSiteKeywords =
-        ["hjemmeside", "nettside", "offisiell nettside", "official website", "official site", "website"];
-
-    // Extracts a link to the external race website from a RunAgain event page.
-    // Looks for anchors whose visible text contains any of the RunAgain site keywords.
-    // Only returns external links (different host than the RunAgain page itself).
-    public static Uri? ExtractRunagainSiteUrl(string html, Uri pageUrl)
-    {
-        if (string.IsNullOrWhiteSpace(html))
-            return null;
-
-        foreach (Match match in AnchorRegex().Matches(html))
-        {
-            var href = match.Groups["href"].Value;
-            var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
-
-            var isMatch = RunagainSiteKeywords.Any(kw =>
-                text.Contains(kw, StringComparison.OrdinalIgnoreCase));
-
-            if (!isMatch) continue;
-            if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
-            if (uri.Scheme is not ("http" or "https")) continue;
-            // Only return links that go to a different host (external race site).
-            if (string.Equals(uri.Host, pageUrl.Host, StringComparison.OrdinalIgnoreCase)) continue;
-
-            return uri;
-        }
-
-        return null;
-    }
-
-    // Extracts RunAgain event page links from a RunAgain listing page.
-    // Returns absolute URIs for all distinct /event/… hrefs found on the page.
-    public static IReadOnlyCollection<Uri> ExtractRunagainEventLinks(string html, Uri pageUrl)
-    {
-        if (string.IsNullOrWhiteSpace(html))
-            return [];
-
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var results = new List<Uri>();
-
-        foreach (Match match in AnchorRegex().Matches(html))
-        {
-            var href = match.Groups["href"].Value;
-            if (!href.StartsWith("/event/", StringComparison.OrdinalIgnoreCase)) continue;
-            if (!Uri.TryCreate(pageUrl, href, out var uri)) continue;
-            if (seen.Add(uri.AbsoluteUri))
-                results.Add(uri);
-        }
-
-        return results;
-    }
-
     // Parses the response from GET https://tracedetrail.fr/trace/getTraceItra/{id}
     // Coordinates are in EPSG:3857 (Web Mercator). Only "gpx"-tagged points are the primary route.
     // Returns WGS84 (longitude, latitude) positions and total elevation stats from the last point.
