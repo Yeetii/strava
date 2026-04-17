@@ -39,7 +39,11 @@ public class AdminBoundaryEnrichmentWorker(
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to enrich admin boundary {BoundaryId}", document.Id);
-                await actions.AbandonMessageAsync(message, cancellationToken: cancellationToken);
+                await actions.DeadLetterMessageAsync(message,
+                    deadLetterReason: nameof(AdminBoundaryEnrichmentWorker),
+                    deadLetterErrorDescription: $"Boundary {document.Id}: {ex.Message}",
+                    cancellationToken: cancellationToken);
+                throw;
             }
         }
     }

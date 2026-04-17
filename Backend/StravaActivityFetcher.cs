@@ -1,6 +1,8 @@
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
+using Shared.Services;
 using Shared.Services.StravaClient;
 
 namespace Backend
@@ -11,39 +13,34 @@ namespace Backend
         public required string ActivityId { get; set; }
     }
 
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi)
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection)
     {
         readonly HttpClient _backendApiClient = httpClientFactory.CreateClient("backendApiClient");
-        [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection")]
+
         [Function(nameof(StravaActivityFetcher))]
-        public async Task<Activity?> Run([ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServicebusConnection")] ActivityFetchJob fetchJob)
+        public async Task Run(
+            [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
+            ServiceBusMessageActions actions)
         {
-            var accessTokenResponse = await _backendApiClient.GetAsync($"{fetchJob.UserId}/accessToken");
-
-            if (!accessTokenResponse.IsSuccessStatusCode)
+            var fetchJob = message.Body.ToObjectFromJson<ActivityFetchJob>();
+            try
             {
-                if (accessTokenResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
-                {
-                    _logger.LogError("No access token found in database");
-                    return default;
-                }
-                else
-                {
-                    _logger.LogError("Failed to get access token {statusCode}", accessTokenResponse.StatusCode);
-                    return default;
-                }
+                var accessTokenResponse = await _backendApiClient.GetAsync($"{fetchJob.UserId}/accessToken");
+
+                if (!accessTokenResponse.IsSuccessStatusCode)
+                    throw new InvalidOperationException(
+                        $"Failed to get access token for user {fetchJob.UserId}, activity {fetchJob.ActivityId}: {(int)accessTokenResponse.StatusCode} {accessTokenResponse.ReasonPhrase}");
+
+                var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
+                var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
+                await _activitiesCollection.UpsertDocument(ActivityMapper.MapDetailedActivity(activity));
+                await actions.CompleteMessageAsync(message);
             }
-
-            var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
-
-            var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
-            return ActivityMapper.MapDetailedActivity(activity);
-        }
-
-        public class Outputs
-        {
-            [CosmosDBOutput("%CosmosDb%", "%ActivitiesContainer%", Connection = "CosmosDBConnection")]
-            public object WriteToActivities { get; set; }
+            catch (Exception ex)
+            {
+                await actions.DeadLetterMessageAsync(message, deadLetterReason: nameof(StravaActivityFetcher), deadLetterErrorDescription: ex.Message);
+                throw;
+            }
         }
     }
 }

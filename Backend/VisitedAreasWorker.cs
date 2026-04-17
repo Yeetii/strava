@@ -46,48 +46,58 @@ public class VisitedAreasWorker(
         List<StoredFeature> nearbyAreas)
     {
         var activityId = job.Body.ToString();
-        var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
-
-        if (activity == null || string.IsNullOrWhiteSpace(activity.Polyline ?? activity.SummaryPolyline))
+        try
         {
-            _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
+            var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
+
+            if (activity == null || string.IsNullOrWhiteSpace(activity.Polyline ?? activity.SummaryPolyline))
+            {
+                _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
+                await actions.CompleteMessageAsync(job);
+                return;
+            }
+
+            var activityPoints = GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToList();
+            var visitedAreas = FindVisitedAreas(activityPoints, nearbyAreas).ToList();
+
+            _logger.LogInformation("Activity {ActivityId} visits {AreaCount} areas", activityId, visitedAreas.Count);
+
+            var documents = new List<VisitedArea>();
+            foreach (var area in visitedAreas)
+            {
+                var areaId = area.LogicalId;
+                var documentId = activity.UserId + "-" + areaId;
+                var partitionKey = new PartitionKey(activity.UserId);
+                var areaType = area.Kind == FeatureKinds.AdminBoundary
+                    ? "region"
+                    : (area.Properties.TryGetValue("areaType", out var existingAreaType) ? existingAreaType?.ToString() ?? "protected_area" : "protected_area");
+                var doc = await _visitedAreasCollection.GetByIdMaybe(documentId, partitionKey)
+                    ?? new VisitedArea
+                    {
+                        Id = documentId,
+                        UserId = activity.UserId,
+                        AreaId = areaId,
+                        Name = area.Properties.TryGetValue("name", out var name) ? name?.ToString() ?? areaId : areaId,
+                        AreaType = areaType,
+                        Wikidata = area.Properties.TryGetValue("wikidata", out var wikidata) ? wikidata?.ToString() : null,
+                        WikimediaCommons = area.Properties.TryGetValue("wikimedia_commons", out var wmc) ? wmc?.ToString() : null,
+                        ActivityIds = []
+                    };
+                doc.ActivityIds.Add(activity.Id);
+                documents.Add(doc);
+            }
+
+            await actions.RenewMessageLockAsync(job);
+            await _visitedAreasCollection.BulkUpsert(documents);
             await actions.CompleteMessageAsync(job);
-            return;
         }
-
-        var activityPoints = GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToList();
-        var visitedAreas = FindVisitedAreas(activityPoints, nearbyAreas).ToList();
-
-        _logger.LogInformation("Activity {ActivityId} visits {AreaCount} areas", activityId, visitedAreas.Count);
-
-        var documents = new List<VisitedArea>();
-        foreach (var area in visitedAreas)
+        catch (Exception ex)
         {
-            var areaId = area.LogicalId;
-            var documentId = activity.UserId + "-" + areaId;
-            var partitionKey = new PartitionKey(activity.UserId);
-            var areaType = area.Kind == FeatureKinds.AdminBoundary
-                ? "region"
-                : (area.Properties.TryGetValue("areaType", out var existingAreaType) ? existingAreaType?.ToString() ?? "protected_area" : "protected_area");
-            var doc = await _visitedAreasCollection.GetByIdMaybe(documentId, partitionKey)
-                ?? new VisitedArea
-                {
-                    Id = documentId,
-                    UserId = activity.UserId,
-                    AreaId = areaId,
-                    Name = area.Properties.TryGetValue("name", out var name) ? name?.ToString() ?? areaId : areaId,
-                    AreaType = areaType,
-                    Wikidata = area.Properties.TryGetValue("wikidata", out var wikidata) ? wikidata?.ToString() : null,
-                    WikimediaCommons = area.Properties.TryGetValue("wikimedia_commons", out var wmc) ? wmc?.ToString() : null,
-                    ActivityIds = []
-                };
-            doc.ActivityIds.Add(activity.Id);
-            documents.Add(doc);
+            await actions.DeadLetterMessageAsync(job,
+                deadLetterReason: nameof(VisitedAreasWorker),
+                deadLetterErrorDescription: $"Activity {activityId}: {ex.Message}");
+            throw;
         }
-
-        await actions.RenewMessageLockAsync(job);
-        await _visitedAreasCollection.BulkUpsert(documents);
-        await actions.CompleteMessageAsync(job);
     }
 
     private static IEnumerable<StoredFeature> FindVisitedAreas(List<Coordinate> activityPoints, IEnumerable<StoredFeature> areas)

@@ -42,7 +42,8 @@ public class ScrapeRaceWorker
 
     [Function(nameof(ScrapeRaceWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.ScrapeRace, Connection = "ServicebusConnection")] ServiceBusReceivedMessage message,
+        [ServiceBusTrigger(ServiceBusConfig.ScrapeRace, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
+        ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
         ScrapeJob? job;
@@ -52,11 +53,15 @@ public class ScrapeRaceWorker
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to deserialize ScrapeJob message");
-            return;
+            await actions.DeadLetterMessageAsync(message, deadLetterReason: "DeserializationFailed", deadLetterErrorDescription: ex.Message);
+            throw;
         }
 
-        if (job is null) return;
+        if (job is null)
+        {
+            await actions.DeadLetterMessageAsync(message, deadLetterReason: "NullScrapeJob", deadLetterErrorDescription: "ScrapeJob message deserialized to null");
+            throw new InvalidOperationException("ScrapeJob message deserialized to null");
+        }
 
         try
         {
@@ -86,16 +91,20 @@ public class ScrapeRaceWorker
             {
                 var merged = routeResult with { WebsiteUrl = websiteUrl ?? routeResult.WebsiteUrl };
                 await UpsertRoutesAsync(merged, job, cancellationToken);
+                await actions.CompleteMessageAsync(message, cancellationToken);
                 return;
             }
 
             // All scrapers yielded no routes — fall back to a point feature.
             await UpsertPointFallbackAsync(job, websiteUrl, cancellationToken);
+            await actions.CompleteMessageAsync(message, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "ScrapeRaceWorker: failed to process job (UTMB={Utmb}, ITRA={Itra}, Event={Event}, Website={Web})",
-                job.UtmbUrl, job.TraceDeTrailItraUrls, job.TraceDeTrailEventUrl, job.WebsiteUrl);
+            await actions.DeadLetterMessageAsync(message,
+                deadLetterReason: nameof(ScrapeRaceWorker),
+                deadLetterErrorDescription: $"UTMB={job.UtmbUrl}, ITRA={job.TraceDeTrailItraUrls}, Event={job.TraceDeTrailEventUrl}, Website={job.WebsiteUrl}: {ex.Message}");
+            throw;
         }
     }
 

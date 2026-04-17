@@ -1,6 +1,8 @@
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
+using System.Text.Json;
 
 namespace Backend;
 
@@ -11,15 +13,30 @@ public class ActivityEventWorker(UserAuthenticationService _userAuthService, ILo
 
     [Function(nameof(ActivityEventWorker))]
     [SignalROutput(HubName = "peakshunters")]
-    public async Task<IEnumerable<SignalRMessageAction>> Run([ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityProcessed, Connection = "ServicebusConnection", IsBatched = true)] IEnumerable<ActivityProcessedEvent> processedEvents)
+    public async Task<IEnumerable<SignalRMessageAction>> Run(
+        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityProcessed, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
+        ServiceBusReceivedMessage[] messages,
+        ServiceBusMessageActions actions)
     {
-        _logger.LogInformation("Publishing {amnEvents} signalR activity processed events", processedEvents.Count());
-        var messages = new List<SignalRMessageAction>();
-        foreach (var processedEvent in processedEvents)
+        var allSignalRMessages = new List<SignalRMessageAction>();
+        foreach (var message in messages)
         {
-            messages.AddRange(await CreateSignalRMessage(processedEvent));
+            try
+            {
+                var processedEvent = message.Body.ToObjectFromJson<ActivityProcessedEvent>();
+                var signalRMessages = await CreateSignalRMessage(processedEvent);
+                allSignalRMessages.AddRange(signalRMessages);
+                await actions.CompleteMessageAsync(message);
+            }
+            catch (Exception ex)
+            {
+                await actions.DeadLetterMessageAsync(message,
+                    deadLetterReason: nameof(ActivityEventWorker),
+                    deadLetterErrorDescription: ex.Message);
+                throw;
+            }
         }
-        return messages;
+        return allSignalRMessages;
     }
     private record SummitsEvent(string ActivityId, string[] SummitedPeakIds, string[] SummitedPeakNames, bool SummitedAnyPeaks);
     private async Task<IEnumerable<SignalRMessageAction>> CreateSignalRMessage(ActivityProcessedEvent activityProcessedEvent)
