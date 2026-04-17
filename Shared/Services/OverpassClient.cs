@@ -441,10 +441,12 @@ namespace Shared.Services
             var territoryFilter = adminLevel == 2
                 ? "[\"border_type\"!~\"territorial|territory|dependency\"]"
                 : "";
+            // Admin boundaries are always relations in OSM.
+            // Querying ways returns individual border segments
+            // (e.g. "Border Bulgaria - Greece") which are not actual regions.
             string query = string.Join(string.Empty,
                 "[out:json][timeout:120];(",
                 $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}({bbox});",
-                $"way[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}({bbox});",
                 ");out tags;"
             );
             string encodedQuery = Uri.EscapeDataString(query);

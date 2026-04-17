@@ -27,7 +27,7 @@ public class GetVisitedAreas(
     [OpenApiOperation(tags: ["VisitedAreas"])]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "areaType", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Optional filter by area type (e.g. national_park, nature_reserve, protected_area, region).")]
+        Description = "Optional comma-separated filter by area type (e.g. national_park,nature_reserve,protected_area,region).")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<VisitedAreaDto>),
         Description = "A list of areas the authenticated user has visited, including visit counts and dates.")]
     [Function(nameof(GetVisitedAreas))]
@@ -44,13 +44,23 @@ public class GetVisitedAreas(
         }
 
         var areaType = req.Query["areaType"];
+        var areaTypes = areaType?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var query = string.IsNullOrEmpty(areaType)
-            ? new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId")
-                .WithParameter("@userId", user.Id)
-            : new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId AND c.areaType = @areaType")
-                .WithParameter("@userId", user.Id)
-                .WithParameter("@areaType", areaType);
+        QueryDefinition query;
+        if (areaTypes is { Length: > 0 })
+        {
+            var inClause = string.Join(",", areaTypes.Select((_, i) => $"@areaType{i}"));
+            var qd = new QueryDefinition($"SELECT * FROM c WHERE c.userId = @userId AND c.areaType IN ({inClause})")
+                .WithParameter("@userId", user.Id);
+            for (int i = 0; i < areaTypes.Length; i++)
+                qd = qd.WithParameter($"@areaType{i}", areaTypes[i]);
+            query = qd;
+        }
+        else
+        {
+            query = new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId")
+                .WithParameter("@userId", user.Id);
+        }
 
         var visitedAreas = await visitedAreasCollection.ExecuteQueryAsync<VisitedArea>(query);
         var visitedAreasList = visitedAreas.ToList();

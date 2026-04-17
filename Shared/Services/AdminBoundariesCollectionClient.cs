@@ -369,6 +369,129 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         };
     }
 
+    public async Task<IEnumerable<StoredFeature>> FetchAllCountries(CancellationToken cancellationToken = default)
+    {
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE c.kind = @kind AND c.properties.adminLevel = @adminLevel AND NOT IS_DEFINED(c.properties.isPointer)")
+            .WithParameter("@kind", Kind)
+            .WithParameter("@adminLevel", "2");
+
+        return (await ExecuteQueryAsync<StoredFeature>(query, cancellationToken: cancellationToken))
+            .Where(d => !d.Id.StartsWith("empty-", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Fetches countries from Overpass that are not yet stored in Cosmos,
+    /// stores them, and creates pointers for all bounding-box tiles.
+    /// When <paramref name="countryCodes"/> is provided, only those countries are targeted.
+    /// Returns a summary of what was fetched and stored.
+    /// </summary>
+    public async Task<CountryFetchResult> FetchAndStoreCountries(IReadOnlyList<string>? countryCodes, ILogger logger, CancellationToken cancellationToken)
+    {
+        const int adminLevel = 2;
+        const int zoom = 6;
+
+        // Phase 1: discover all countries globally via Overpass (tags only, no geometry).
+        var worldSw = new Coordinate(-180, -90);
+        var worldNe = new Coordinate(180, 90);
+        var allDiscovered = (await _overpassClient.GetAdminBoundaryIds(worldSw, worldNe, adminLevel, cancellationToken)).ToList();
+        logger.LogInformation("Overpass discovered {Count} admin_level=2 relations globally", allDiscovered.Count);
+
+        // Phase 2: if country codes specified, filter to only matching relations.
+        if (countryCodes is { Count: > 0 })
+        {
+            var requestedCodes = new HashSet<string>(countryCodes, StringComparer.OrdinalIgnoreCase);
+            allDiscovered = allDiscovered
+                .Where(d => d.tags.TryGetValue("ISO3166-1", out var code) && requestedCodes.Contains(code)
+                          || d.tags.TryGetValue("ISO3166-1:alpha2", out code) && requestedCodes.Contains(code)
+                          || d.tags.TryGetValue("country_code_iso3166_1_alpha_2", out code) && requestedCodes.Contains(code))
+                .ToList();
+
+            logger.LogInformation("Filtered to {Count} relations matching requested country codes: {Codes}",
+                allDiscovered.Count, string.Join(", ", countryCodes));
+        }
+
+        // Phase 3: check which ones are already stored in Cosmos.
+        var candidateDocIds = allDiscovered
+            .Select(d => $"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}")
+            .ToList();
+        var existingDocs = (await GetByIdsAsync(candidateDocIds, cancellationToken))
+            .ToDictionary(d => d.Id, StringComparer.Ordinal);
+
+        var missingIds = allDiscovered
+            .Where(d => !existingDocs.ContainsKey($"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}"))
+            .Select(d => (d.osmType, d.osmId))
+            .ToList();
+
+        logger.LogInformation("Already stored: {Existing}, missing: {Missing}", existingDocs.Count, missingIds.Count);
+
+        // Phase 4: fetch full geometry for missing countries.
+        var newCountries = new List<StoredFeature>();
+        if (missingIds.Count > 0)
+        {
+            var rawFeatures = (await _overpassClient.GetAdminBoundariesByIds(missingIds, cancellationToken)).ToList();
+            rawFeatures = DeduplicateByCountryCode(rawFeatures);
+
+            foreach (var feature in rawFeatures)
+            {
+                var stored = new StoredFeature(feature, Kind, zoom);
+                stored.Id = $"{Kind}:{adminLevel}:{stored.FeatureId}";
+                stored.Properties["adminLevel"] = adminLevel.ToString();
+                SetCountryCodeProperty(stored);
+                await UpsertBoundaryDocument(stored, cancellationToken);
+                newCountries.Add(stored);
+                string countryCode = stored.Properties.TryGetValue("countryCode", out var cc) ? cc?.ToString() ?? "?" : "?";
+                logger.LogInformation("Stored country: {Id} ({CountryCode}) at tile ({X},{Y})",
+                    stored.Id, countryCode, stored.X, stored.Y);
+            }
+        }
+
+        // Phase 5: create pointers for ALL countries (existing + new) covering their bounding-box tiles.
+        var allCountries = existingDocs.Values.Concat(newCountries).ToList();
+        var pointersCreated = 0;
+        var maxTile = (1 << zoom) - 1;
+
+        var countryIndex = 0;
+        foreach (var country in allCountries)
+        {
+            countryIndex++;
+            if (country.Geometry is Point)
+                continue;
+
+            string cName = country.Properties.TryGetValue("countryCode", out var cVal) ? cVal?.ToString() ?? country.Id : country.Id;
+            var tiles = AdminBoundaryMetricsEnricher.CalculateCandidateTiles(country.Geometry, zoom, borderSamplingStep: 10)
+                .Where(t => t.x >= 0 && t.x <= maxTile && t.y >= 0 && t.y <= maxTile)
+                .Where(t => t.x != country.X || t.y != country.Y)
+                .ToList();
+
+            logger.LogInformation("Creating {TileCount} pointers for {Country} ({Index}/{Total})",
+                tiles.Count, cName, countryIndex, allCountries.Count);
+
+            foreach (var (tx, ty) in tiles)
+            {
+                var pointer = StoredFeature.CreatePointer(
+                    Kind,
+                    country.FeatureId ?? country.LogicalId,
+                    tx, ty, zoom,
+                    country.X, country.Y, country.Zoom,
+                    country.Id,
+                    new Dictionary<string, dynamic> { ["adminLevel"] = adminLevel.ToString() });
+                await UpsertBoundaryDocument(pointer, cancellationToken);
+                pointersCreated++;
+            }
+        }
+
+        logger.LogInformation("Created {Pointers} pointers for {Countries} countries", pointersCreated, allCountries.Count);
+
+        return new CountryFetchResult(
+            Discovered: allDiscovered.Count,
+            AlreadyStored: existingDocs.Count,
+            NewlyFetched: newCountries.Count,
+            PointersCreated: pointersCreated);
+    }
+
+    public record CountryFetchResult(int Discovered, int AlreadyStored, int NewlyFetched, int PointersCreated);
+
     public async Task<int> DeleteAllBoundariesAsync(CancellationToken cancellationToken = default)
     {
         var queryDefinition = new QueryDefinition(

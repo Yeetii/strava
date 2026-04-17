@@ -1,0 +1,19 @@
+meta {
+  name: Fetch Countries
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/manage/countries/fetch
+  body: none
+  auth: none
+}
+
+params:query {
+  ~countryCodes: SE,AT,FR
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}
