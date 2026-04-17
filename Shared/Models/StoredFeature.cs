@@ -195,12 +195,29 @@ namespace Shared.Models
         // When Properties come back from Cosmos via System.Text.Json, values are JsonElement
         // rather than native CLR types.  BAMCIS GeoJSON re-serializes them as nested wrappers,
         // producing e.g. [[]] instead of ["tracedetrail"].  Convert them back to plain objects.
+        // When read via Newtonsoft (CollectionClient), nested objects come back as JToken.
         private static dynamic NormalizePropertyValue(dynamic value)
         {
             if (value is System.Text.Json.JsonElement je)
                 return ConvertJsonElement(je);
+            if (value is Newtonsoft.Json.Linq.JToken jt)
+                return ConvertJToken(jt);
             return value;
         }
+
+        private static dynamic ConvertJToken(Newtonsoft.Json.Linq.JToken token) => token.Type switch
+        {
+            Newtonsoft.Json.Linq.JTokenType.String => token.ToObject<string>()!,
+            Newtonsoft.Json.Linq.JTokenType.Integer => token.ToObject<long>(),
+            Newtonsoft.Json.Linq.JTokenType.Float => token.ToObject<double>(),
+            Newtonsoft.Json.Linq.JTokenType.Boolean => token.ToObject<bool>(),
+            Newtonsoft.Json.Linq.JTokenType.Null => null!,
+            Newtonsoft.Json.Linq.JTokenType.Array => ((Newtonsoft.Json.Linq.JArray)token).Select(ConvertJToken).ToList(),
+            Newtonsoft.Json.Linq.JTokenType.Object => ((Newtonsoft.Json.Linq.JObject)token)
+                .Properties()
+                .ToDictionary(p => p.Name, p => ConvertJToken(p.Value)),
+            _ => token.ToString()
+        };
 
         private static dynamic ConvertJsonElement(System.Text.Json.JsonElement element) => element.ValueKind switch
         {
