@@ -1,3 +1,4 @@
+using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
@@ -33,8 +34,9 @@ public class EnrichNewAdminBoundaries(
             }
 
             _logger.LogInformation("Enriching admin boundary {BoundaryId}", document.Id);
-            await _enricher.EnrichAsync(document, cancellationToken);
-            await _storedFeaturesCollection.UpsertDocument(document, cancellationToken);
+            var ops = await _enricher.CalculatePatchOperationsAsync(document, cancellationToken);
+            var pk = new PartitionKeyBuilder().Add((double)document.X).Add((double)document.Y).Build();
+            await _storedFeaturesCollection.PatchDocument(document.Id, pk, ops, cancellationToken);
         }
     }
 

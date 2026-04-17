@@ -50,8 +50,9 @@ AND (
             try
             {
                 _logger.LogInformation("Backfilling admin boundary {BoundaryId}", boundary.Id);
-                await _enricher.EnrichAsync(boundary, cancellationToken);
-                await _storedFeaturesCollection.UpsertDocument(boundary, cancellationToken);
+                var ops = await _enricher.CalculatePatchOperationsAsync(boundary, cancellationToken);
+                var pk = new PartitionKeyBuilder().Add((double)boundary.X).Add((double)boundary.Y).Build();
+                await _storedFeaturesCollection.PatchDocument(boundary.Id, pk, ops, cancellationToken);
                 processed++;
             }
             catch (Exception ex)

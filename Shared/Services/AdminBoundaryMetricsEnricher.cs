@@ -1,5 +1,6 @@
 using System.Globalization;
 using BAMCIS.GeoJSON;
+using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Shared.Geo;
 using Shared.Models;
@@ -20,26 +21,30 @@ public sealed class AdminBoundaryMetricsEnricher(
     private readonly TiledCollectionClient _protectedAreasCollection = protectedAreasCollection;
     private readonly AdminBoundariesCollectionClient _adminBoundariesCollection = adminBoundariesCollection;
 
-    public async Task EnrichAsync(StoredFeature boundary, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PatchOperation>> CalculatePatchOperationsAsync(StoredFeature boundary, CancellationToken cancellationToken = default)
     {
         var candidateTiles = CalculateCandidateTiles(boundary.Geometry, AnalysisTileZoom, BorderSamplingStep);
         var peaks = await _peaksCollection.FetchByTiles(candidateTiles, AnalysisTileZoom, cancellationToken: cancellationToken);
         var protectedAreas = await _protectedAreasCollection.FetchByTiles(candidateTiles, AnalysisTileZoom, followPointers: true, cancellationToken: cancellationToken);
 
         var metrics = CalculateMetrics(boundary, peaks, protectedAreas);
+        var ops = new List<PatchOperation>();
         foreach (var (key, value) in metrics)
         {
-            boundary.Properties[key] = value;
+            ops.Add(PatchOperation.Set($"/properties/{key}", value));
         }
 
         if (IsAdminLevel(boundary, 4))
         {
-            await EnrichWithCountryAsync(boundary, cancellationToken);
+            ops.AddRange(await GetCountryPatchOpsAsync(boundary, cancellationToken));
         }
+
+        return ops;
     }
 
-    private async Task EnrichWithCountryAsync(StoredFeature boundary, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<PatchOperation>> GetCountryPatchOpsAsync(StoredFeature boundary, CancellationToken cancellationToken)
     {
+        var ops = new List<PatchOperation>();
         var centroid = GeometryCentroidHelper.GetCentroid(boundary.Geometry);
         var centroidTile = SlippyTileCalculator.WGS84ToTileIndex(centroid, CountryTileZoom);
 
@@ -52,13 +57,15 @@ public sealed class AdminBoundaryMetricsEnricher(
 
         if (country != null)
         {
-            boundary.Properties["countryId"] = country.Id;
+            ops.Add(PatchOperation.Set("/properties/countryId", country.Id));
             if (country.Properties.TryGetValue("countryCode", out var code)
                 && code?.ToString() is string countryCode)
             {
-                boundary.Properties["countryCode"] = countryCode;
+                ops.Add(PatchOperation.Set("/properties/countryCode", countryCode));
             }
         }
+
+        return ops;
     }
 
     private static bool IsAdminLevel(StoredFeature boundary, int level)

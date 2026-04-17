@@ -180,4 +180,18 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         var tasks = ids.Select(id => DeleteDocument(id, new PartitionKey(partitionKey ?? id), cancellationToken));
         await Task.WhenAll(tasks);
     }
+
+    public async Task PatchDocument(string id, PartitionKey partitionKey, IReadOnlyList<PatchOperation> operations, CancellationToken cancellationToken = default)
+    {
+        await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+        try
+        {
+            await _container.PatchItemAsync<T>(id, partitionKey, operations, cancellationToken: cancellationToken);
+            await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+        }
+        finally
+        {
+            CosmosWriteThrottle.Semaphore.Release();
+        }
+    }
 }

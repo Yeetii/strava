@@ -429,29 +429,57 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         logger.LogInformation("Already stored: {Existing}, to fetch: {Missing}{Force}",
             existingDocs.Count, missingIds.Count, forceRefetch ? " (force-refetch)" : "");
 
-        // Phase 4: fetch full geometry from Overpass BEFORE deleting old data.
+        // Phase 4: fetch full geometry from Overpass in batches BEFORE deleting old data.
         var newCountries = new List<StoredFeature>();
+        var failedIds = new List<string>();
         if (missingIds.Count > 0)
         {
-            var rawFeatures = (await _overpassClient.GetAdminBoundariesByIds(missingIds, cancellationToken)).ToList();
-            rawFeatures = DeduplicateByCountryCode(rawFeatures);
+            const int batchSize = 5;
+            var batches = missingIds
+                .Select((id, i) => (id, i))
+                .GroupBy(x => x.i / batchSize)
+                .Select(g => g.Select(x => x.id).ToList())
+                .ToList();
 
-            foreach (var feature in rawFeatures)
+            for (var bi = 0; bi < batches.Count; bi++)
             {
-                var stored = new StoredFeature(feature, Kind, zoom);
-                stored.Id = $"{Kind}:{adminLevel}:{stored.FeatureId}";
-                stored.Properties["adminLevel"] = adminLevel.ToString();
-                SetCountryCodeProperty(stored);
-                newCountries.Add(stored);
+                var batch = batches[bi];
+                logger.LogInformation("Fetching batch {Batch}/{Total} ({Count} countries) from Overpass",
+                    bi + 1, batches.Count, batch.Count);
+
+                try
+                {
+                    var rawFeatures = (await _overpassClient.GetAdminBoundariesByIds(batch, cancellationToken)).ToList();
+                    rawFeatures = DeduplicateByCountryCode(rawFeatures);
+
+                    var batchFetched = new List<StoredFeature>();
+                    foreach (var feature in rawFeatures)
+                    {
+                        var stored = new StoredFeature(feature, Kind, zoom);
+                        stored.Id = $"{Kind}:{adminLevel}:{stored.FeatureId}";
+                        stored.Properties["adminLevel"] = adminLevel.ToString();
+                        SetCountryCodeProperty(stored);
+                        batchFetched.Add(stored);
+                    }
+
+                    var fetchedFeatureIds = new HashSet<string>(batchFetched.Select(c => c.FeatureId!), StringComparer.Ordinal);
+                    failedIds.AddRange(batch
+                        .Where(m => !fetchedFeatureIds.Contains($"{m.osmType}:{m.osmId}"))
+                        .Select(m => $"{m.osmType}:{m.osmId}"));
+
+                    newCountries.AddRange(batchFetched);
+                    logger.LogInformation("Batch {Batch}: fetched {Fetched}, failed {Failed}",
+                        bi + 1, batchFetched.Count, batch.Count - batchFetched.Count);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Batch {Batch} failed entirely", bi + 1);
+                    failedIds.AddRange(batch.Select(m => $"{m.osmType}:{m.osmId}"));
+                }
             }
 
-            logger.LogInformation("Fetched {Count} countries from Overpass", newCountries.Count);
+            logger.LogInformation("Fetched {Count} countries from Overpass in {Batches} batches", newCountries.Count, batches.Count);
 
-            var fetchedFeatureIds = new HashSet<string>(newCountries.Select(c => c.FeatureId!), StringComparer.Ordinal);
-            var failedIds = missingIds
-                .Where(m => !fetchedFeatureIds.Contains($"{m.osmType}:{m.osmId}"))
-                .Select(m => $"{m.osmType}:{m.osmId}")
-                .ToList();
             if (failedIds.Count > 0)
                 logger.LogWarning("{FailedCount} countries failed to fetch from Overpass: {Ids}", failedIds.Count, string.Join(", ", failedIds));
         }
@@ -525,16 +553,12 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
 
         logger.LogInformation("Created {Pointers} pointers for {Countries} new countries", pointersCreated, newCountries.Count);
 
-        var failedCount = missingIds.Count - newCountries.Count;
-        if (failedCount > 0)
-            logger.LogWarning("{FailedCount} of {Requested} countries could not be fetched or had no usable geometry", failedCount, missingIds.Count);
-
         return new CountryFetchResult(
             Discovered: allDiscovered.Count,
             AlreadyStored: existingDocs.Count,
             NewlyFetched: newCountries.Count,
             PointersCreated: pointersCreated,
-            Failed: failedCount);
+            Failed: failedIds.Count);
     }
 
     public record CountryFetchResult(int Discovered, int AlreadyStored, int NewlyFetched, int PointersCreated, int Failed);
