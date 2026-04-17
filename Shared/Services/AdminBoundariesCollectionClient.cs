@@ -412,20 +412,24 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         }
 
         // Phase 3: check which ones are already stored in Cosmos.
+        var forceRefetch = countryCodes is { Count: > 0 };
         var candidateDocIds = allDiscovered
             .Select(d => $"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}")
             .ToList();
         var existingDocs = (await GetByIdsAsync(candidateDocIds, cancellationToken))
             .ToDictionary(d => d.Id, StringComparer.Ordinal);
 
-        var missingIds = allDiscovered
-            .Where(d => !existingDocs.ContainsKey($"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}"))
-            .Select(d => (d.osmType, d.osmId))
-            .ToList();
+        var missingIds = forceRefetch
+            ? allDiscovered.Select(d => (d.osmType, d.osmId)).ToList()
+            : allDiscovered
+                .Where(d => !existingDocs.ContainsKey($"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}"))
+                .Select(d => (d.osmType, d.osmId))
+                .ToList();
 
-        logger.LogInformation("Already stored: {Existing}, missing: {Missing}", existingDocs.Count, missingIds.Count);
+        logger.LogInformation("Already stored: {Existing}, to fetch: {Missing}{Force}",
+            existingDocs.Count, missingIds.Count, forceRefetch ? " (force-refetch)" : "");
 
-        // Phase 4: fetch full geometry for missing countries.
+        // Phase 4: fetch full geometry from Overpass BEFORE deleting old data.
         var newCountries = new List<StoredFeature>();
         if (missingIds.Count > 0)
         {
@@ -438,21 +442,59 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
                 stored.Id = $"{Kind}:{adminLevel}:{stored.FeatureId}";
                 stored.Properties["adminLevel"] = adminLevel.ToString();
                 SetCountryCodeProperty(stored);
-                await UpsertBoundaryDocument(stored, cancellationToken);
                 newCountries.Add(stored);
-                string countryCode = stored.Properties.TryGetValue("countryCode", out var cc) ? cc?.ToString() ?? "?" : "?";
-                logger.LogInformation("Stored country: {Id} ({CountryCode}) at tile ({X},{Y})",
-                    stored.Id, countryCode, stored.X, stored.Y);
             }
+
+            logger.LogInformation("Fetched {Count} countries from Overpass", newCountries.Count);
+
+            var fetchedFeatureIds = new HashSet<string>(newCountries.Select(c => c.FeatureId!), StringComparer.Ordinal);
+            var failedIds = missingIds
+                .Where(m => !fetchedFeatureIds.Contains($"{m.osmType}:{m.osmId}"))
+                .Select(m => $"{m.osmType}:{m.osmId}")
+                .ToList();
+            if (failedIds.Count > 0)
+                logger.LogWarning("{FailedCount} countries failed to fetch from Overpass: {Ids}", failedIds.Count, string.Join(", ", failedIds));
         }
 
-        // Phase 5: create pointers for ALL countries (existing + new) covering their bounding-box tiles.
-        var allCountries = existingDocs.Values.Concat(newCountries).ToList();
+        // Phase 4b: for force-refetch, delete old docs + pointers now that we have new data ready.
+        if (forceRefetch && existingDocs.Count > 0)
+        {
+            logger.LogInformation("Deleting {Count} existing country docs and their pointers", existingDocs.Count);
+            foreach (var doc in existingDocs.Values)
+            {
+                var pointerQuery = new QueryDefinition(
+                    "SELECT * FROM c WHERE c.kind = @kind AND c.properties.isPointer = true AND c.properties.storedDocumentId = @docId")
+                    .WithParameter("@kind", Kind)
+                    .WithParameter("@docId", doc.Id);
+                var pointers = (await ExecuteQueryAsync<StoredFeature>(pointerQuery, cancellationToken: cancellationToken)).ToList();
+                foreach (var pointer in pointers)
+                {
+                    var pk = new PartitionKeyBuilder().Add((double)pointer.X).Add((double)pointer.Y).Build();
+                    await DeleteDocument(pointer.Id, pk, cancellationToken);
+                }
+                logger.LogInformation("Deleted {PointerCount} pointers for {DocId}", pointers.Count, doc.Id);
+
+                var docPk = new PartitionKeyBuilder().Add((double)doc.X).Add((double)doc.Y).Build();
+                await DeleteDocument(doc.Id, docPk, cancellationToken);
+            }
+            existingDocs.Clear();
+        }
+
+        // Phase 5: store new countries.
+        foreach (var stored in newCountries)
+        {
+            await UpsertBoundaryDocument(stored, cancellationToken);
+            string countryCode = stored.Properties.TryGetValue("countryCode", out var cc) ? cc?.ToString() ?? "?" : "?";
+            logger.LogInformation("Stored country: {Id} ({CountryCode}) at tile ({X},{Y})",
+                stored.Id, countryCode, stored.X, stored.Y);
+        }
+
+        // Phase 6: create pointers for newly fetched countries covering their bounding-box tiles.
         var pointersCreated = 0;
         var maxTile = (1 << zoom) - 1;
 
         var countryIndex = 0;
-        foreach (var country in allCountries)
+        foreach (var country in newCountries)
         {
             countryIndex++;
             if (country.Geometry is Point)
@@ -465,7 +507,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
                 .ToList();
 
             logger.LogInformation("Creating {TileCount} pointers for {Country} ({Index}/{Total})",
-                tiles.Count, cName, countryIndex, allCountries.Count);
+                tiles.Count, cName, countryIndex, newCountries.Count);
 
             foreach (var (tx, ty) in tiles)
             {
@@ -481,16 +523,21 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             }
         }
 
-        logger.LogInformation("Created {Pointers} pointers for {Countries} countries", pointersCreated, allCountries.Count);
+        logger.LogInformation("Created {Pointers} pointers for {Countries} new countries", pointersCreated, newCountries.Count);
+
+        var failedCount = missingIds.Count - newCountries.Count;
+        if (failedCount > 0)
+            logger.LogWarning("{FailedCount} of {Requested} countries could not be fetched or had no usable geometry", failedCount, missingIds.Count);
 
         return new CountryFetchResult(
             Discovered: allDiscovered.Count,
             AlreadyStored: existingDocs.Count,
             NewlyFetched: newCountries.Count,
-            PointersCreated: pointersCreated);
+            PointersCreated: pointersCreated,
+            Failed: failedCount);
     }
 
-    public record CountryFetchResult(int Discovered, int AlreadyStored, int NewlyFetched, int PointersCreated);
+    public record CountryFetchResult(int Discovered, int AlreadyStored, int NewlyFetched, int PointersCreated, int Failed);
 
     public async Task<int> DeleteAllBoundariesAsync(CancellationToken cancellationToken = default)
     {
