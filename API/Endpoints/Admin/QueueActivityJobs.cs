@@ -8,7 +8,7 @@ using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 
-namespace API.Endpoints.Queue;
+namespace API.Endpoints.Admin;
 
 public class QueueActivityJobs(
     CollectionClient<Activity> activityCollection,
@@ -22,7 +22,7 @@ public class QueueActivityJobs(
         ["visitedAreas"] = Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs,
     };
 
-    [OpenApiOperation(tags: ["Queue"])]
+    [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "jobType", In = ParameterLocation.Path, Type = typeof(string), Required = true,
         Description = "Job type: summits | visitedPaths | visitedAreas")]
@@ -34,7 +34,7 @@ public class QueueActivityJobs(
         Description = "Number of jobs queued.")]
     [Function(nameof(QueueActivityJobs))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "queue/{jobType}")] HttpRequestData req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/queue/{jobType}")] HttpRequestData req,
         string jobType)
     {
         var response = req.CreateResponse();

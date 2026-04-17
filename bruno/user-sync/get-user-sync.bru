@@ -1,0 +1,15 @@
+meta {
+  name: Get User Sync
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/userSync
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}

@@ -1,0 +1,19 @@
+meta {
+  name: Remove User
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/manage/users/{{userId}}
+  body: none
+  auth: none
+}
+
+params:path {
+  userId: replace-with-user-id
+}
+
+params:query {
+  code: {{functionKey}}
+}

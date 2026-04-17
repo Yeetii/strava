@@ -1,0 +1,24 @@
+meta {
+  name: Queue Activity Jobs
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/manage/queue/{{jobType}}
+  body: none
+  auth: none
+}
+
+params:path {
+  jobType: summits
+}
+
+params:query {
+  startDate: 
+  endDate: 
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}

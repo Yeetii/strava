@@ -62,7 +62,7 @@ public class GetAdminStatus(
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
     [Function(nameof(GetAdminStatus))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "admin/status")] HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/status")] HttpRequestData req)
     {
         if (!IsAuthorized(req))
         {

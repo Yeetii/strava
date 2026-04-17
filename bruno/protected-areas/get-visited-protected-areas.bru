@@ -1,0 +1,15 @@
+meta {
+  name: Get Visited Protected Areas
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/visitedProtectedAreas
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}

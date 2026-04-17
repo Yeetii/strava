@@ -1,0 +1,15 @@
+meta {
+  name: Get Summits Stats
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/summitsStats
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}
