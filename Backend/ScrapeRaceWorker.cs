@@ -62,21 +62,35 @@ public class ScrapeRaceWorker
         {
             var httpClient = _httpClientFactory.CreateClient();
 
-            // Try each scraper in priority order; take first non-empty result.
+            // Run all scrapers that can handle this job.
+            // Take routes from the highest-priority scraper that returns them,
+            // but collect WebsiteUrl from any scraper that provides one.
+            RaceScraperResult? routeResult = null;
+            Uri? websiteUrl = null;
+
             foreach (var scraper in _scrapers)
             {
                 if (!scraper.CanHandle(job)) continue;
 
                 var result = await scraper.ScrapeAsync(job, httpClient, cancellationToken);
-                if (result is { Routes.Count: > 0 })
-                {
-                    await UpsertRoutesAsync(result.Routes, job, cancellationToken);
-                    return;
-                }
+                if (result is null) continue;
+
+                websiteUrl ??= result.WebsiteUrl;
+
+                if (routeResult is null && result.Routes.Count > 0)
+                    routeResult = result;
             }
 
-            // All scrapers yielded nothing — fall back to a point feature.
-            await UpsertPointFallbackAsync(job, cancellationToken);
+            // Merge the website URL into the route result.
+            if (routeResult is not null)
+            {
+                var merged = routeResult with { WebsiteUrl = websiteUrl ?? routeResult.WebsiteUrl };
+                await UpsertRoutesAsync(merged, job, cancellationToken);
+                return;
+            }
+
+            // All scrapers yielded no routes — fall back to a point feature.
+            await UpsertPointFallbackAsync(job, websiteUrl, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -88,25 +102,27 @@ public class ScrapeRaceWorker
     // ── Upsert helpers ────────────────────────────────────────────────────────
 
     private async Task UpsertRoutesAsync(
-        IReadOnlyList<ScrapedRoute> routes,
+        RaceScraperResult result,
         ScrapeJob job,
         CancellationToken cancellationToken)
     {
-        for (int i = 0; i < routes.Count; i++)
+        for (int i = 0; i < result.Routes.Count; i++)
         {
-            var route = routes[i];
-            var sourceUrl = route.SourceUrl
-                ?? job.UtmbUrl ?? job.TraceDeTrailItraUrls?.FirstOrDefault() ?? job.RunagainUrl ?? job.WebsiteUrl;
-            var routeIndex = routes.Count > 1 ? i : (int?)null;
+            var route = result.Routes[i];
+            var websiteUrl = result.WebsiteUrl ?? route.SourceUrl
+                ?? job.UtmbUrl ?? job.TraceDeTrailEventUrl ?? job.RunagainUrl ?? job.WebsiteUrl;
+            var idUrl = result.WebsiteUrl ?? job.TraceDeTrailEventUrl ?? route.SourceUrl
+                ?? job.UtmbUrl ?? job.RunagainUrl ?? job.WebsiteUrl;
+            var routeIndex = result.Routes.Count > 1 ? i : (int?)null;
 
-            var featureId = sourceUrl is not null
-                ? RaceScrapeDiscovery.BuildFeatureId(sourceUrl, routeIndex)
+            var featureId = idUrl is not null
+                ? RaceScrapeDiscovery.BuildFeatureId(idUrl, routeIndex)
                 : RaceScrapeDiscovery.BuildFeatureId(job.Name, route.Distance ?? job.Distance);
 
             var properties = BuildBaseProperties(job);
 
-            if (sourceUrl is not null)
-                properties[RaceScrapeDiscovery.PropWebsite] = sourceUrl.AbsoluteUri;
+            if (websiteUrl is not null)
+                properties[RaceScrapeDiscovery.PropWebsite] = websiteUrl.AbsoluteUri;
             if (!string.IsNullOrWhiteSpace(route.Name))
                 properties[RaceScrapeDiscovery.PropName] = route.Name;
             if (!string.IsNullOrWhiteSpace(route.Distance))
@@ -126,7 +142,7 @@ public class ScrapeRaceWorker
         }
     }
 
-    private async Task UpsertPointFallbackAsync(ScrapeJob job, CancellationToken cancellationToken)
+    private async Task UpsertPointFallbackAsync(ScrapeJob job, Uri? websiteUrl, CancellationToken cancellationToken)
     {
         if (job.Latitude is null || job.Longitude is null)
         {
@@ -134,7 +150,7 @@ public class ScrapeRaceWorker
             return;
         }
 
-        var sourceUrl = job.WebsiteUrl ?? job.UtmbUrl ?? job.TraceDeTrailItraUrls?.FirstOrDefault() ?? job.RunagainUrl;
+        var sourceUrl = websiteUrl ?? job.WebsiteUrl ?? job.UtmbUrl ?? job.TraceDeTrailEventUrl ?? job.RunagainUrl;
         var featureId = sourceUrl is not null
             ? RaceScrapeDiscovery.BuildFeatureId(sourceUrl)
             : RaceScrapeDiscovery.BuildFeatureId(job.Name, job.Distance);
@@ -199,6 +215,10 @@ public class ScrapeRaceWorker
             properties[RaceScrapeDiscovery.PropOrganizer] = job.Organizer;
         if (!string.IsNullOrWhiteSpace(job.Description))
             properties[RaceScrapeDiscovery.PropDescription] = job.Description;
+        if (job.RegistrationOpen.HasValue)
+            properties["registrationOpen"] = job.RegistrationOpen.Value;
+        if (!string.IsNullOrWhiteSpace(job.UtmbWorldSeriesCategory))
+            properties["utmbWorldSeriesCategory"] = job.UtmbWorldSeriesCategory;
         if (!string.IsNullOrWhiteSpace(job.StartFee))
         {
             properties[RaceScrapeDiscovery.PropStartFee] = job.StartFee;

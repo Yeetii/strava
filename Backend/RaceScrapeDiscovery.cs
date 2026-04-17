@@ -214,12 +214,17 @@ public static partial class RaceScrapeDiscovery
     {
         ["stiløp"] = "trail", ["stig"] = "trail",
         ["terreng"] = "cross country", ["terräng"] = "cross country", ["terrain"] = "cross country",
+        ["terrengløp"] = "cross country",
         ["asfalt"] = "road", ["landsväg"] = "road", ["gateløp"] = "road",
         ["grus"] = "gravel",
         ["stafett"] = "relay",
         ["motbakke"] = "uphill", ["vertical"] = "uphill", ["vertikal"] = "uphill",
         ["trappeløp"] = "stairs", ["trappor"] = "stairs",
         ["hinderløp"] = "obstacle course", ["ocr"] = "obstacle course",
+        ["halvmaraton"] = "half marathon", ["maraton"] = "marathon",
+        ["baneløp"] = "track", ["barneløp"] = "kids",
+        ["etappeløp"] = "stage race", ["timeløp"] = "timed race",
+        ["triatlon"] = "triathlon", ["hundeløp"] = "canicross",
     };
 
     // ISO 3166-1 alpha-3 → alpha-2 mappings for common trail-running countries.

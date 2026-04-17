@@ -43,7 +43,6 @@ internal sealed class ItraScraper(ILogger logger) : IRaceScraper
             var coordinates = traceData.Points.Select(p => new Coordinate(p.Lng, p.Lat)).ToList();
             routes.Add(new ScrapedRoute(
                 Coordinates: coordinates,
-                SourceUrl: itraUrl,
                 Distance: distance,
                 ElevationGain: traceData.ElevationGain));
         }

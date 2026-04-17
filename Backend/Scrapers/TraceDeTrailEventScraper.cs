@@ -31,6 +31,10 @@ internal sealed class TraceDeTrailEventScraper(ILogger logger, BfsScraper bfsScr
         }
 
         logger.LogDebug("TraceDeTrail event page: found site URL {SiteUrl}, running BFS", siteUrl);
-        return await bfsScraper.ScrapeFromUrlAsync(job, siteUrl, httpClient, cancellationToken);
+        var bfsResult = await bfsScraper.ScrapeFromUrlAsync(job, siteUrl, httpClient, cancellationToken);
+
+        // Always return the website URL, even if BFS found no routes.
+        var routes = bfsResult?.Routes ?? [];
+        return new RaceScraperResult(routes, siteUrl);
     }
 }

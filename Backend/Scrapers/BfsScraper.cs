@@ -166,7 +166,11 @@ internal sealed class BfsScraper(ILogger logger) : IRaceScraper
             cts.CancelAfter(TimeSpan.FromSeconds(30));
             return await httpClient.GetStringAsync(url, cts.Token);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw; // Genuine cancellation — propagate.
+        }
+        catch (Exception ex)
         {
             logger.LogDebug(ex, "BfsScraper: could not fetch {Url}", url);
             return null;
