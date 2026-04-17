@@ -67,7 +67,7 @@ public class WipeOsmFeaturesByKind(
         logger.LogInformation(
             "Setting ttl=1 on {Count} osmFeatures documents of kind '{Kind}'", items.Count, kind);
 
-        const int batchSize = 10;
+        const int batchSize = 5;
         for (int i = 0; i < items.Count; i += batchSize)
         {
             var batch = items.Skip(i).Take(batchSize);
