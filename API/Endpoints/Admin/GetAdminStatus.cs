@@ -5,6 +5,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Shared.Constants;
 
@@ -27,7 +28,8 @@ public record AdminStatus(
 public class GetAdminStatus(
     ServiceBusAdministrationClient serviceBusAdminClient,
     CosmosClient cosmosClient,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    ILogger<GetAdminStatus> logger)
 {
     private static readonly string[] QueueNames =
     [
@@ -102,8 +104,9 @@ public class GetAdminStatus(
                 props.Value.ScheduledMessageCount,
                 props.Value.DeadLetterMessageCount);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            logger.LogWarning(ex, "Failed to fetch Service Bus runtime properties for queue {QueueName}", queueName);
             return new ServiceBusQueueStatus(queueName, -1, -1, -1);
         }
     }
@@ -123,8 +126,9 @@ public class GetAdminStatus(
 
             return new CosmosContainerStatus(containerName, 0);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            logger.LogWarning(ex, "Failed to fetch document count for Cosmos container {ContainerName}", containerName);
             return new CosmosContainerStatus(containerName, -1);
         }
     }
