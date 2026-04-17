@@ -19,7 +19,7 @@ public static class PolygonRingAssembler
 
         while (remaining.Count > 0)
         {
-            var ring = new List<Position>(remaining[0]);
+            var ring = new LinkedList<Position>(remaining[0]);
             remaining.RemoveAt(0);
 
             bool extended = true;
@@ -29,17 +29,35 @@ public static class PolygonRingAssembler
                 for (int i = 0; i < remaining.Count; i++)
                 {
                     var seg = remaining[i];
-                    if (PositionsAreEqual(ring[^1], seg[0]))
+
+                    // Try appending to the end of the ring.
+                    if (PositionsAreEqual(ring.Last!.Value, seg[0]))
                     {
-                        ring.AddRange(seg.Skip(1));
+                        foreach (var p in seg.Skip(1)) ring.AddLast(p);
                         remaining.RemoveAt(i);
                         extended = true;
                         break;
                     }
-                    if (PositionsAreEqual(ring[^1], seg[^1]))
+                    if (PositionsAreEqual(ring.Last!.Value, seg[^1]))
                     {
                         seg.Reverse();
-                        ring.AddRange(seg.Skip(1));
+                        foreach (var p in seg.Skip(1)) ring.AddLast(p);
+                        remaining.RemoveAt(i);
+                        extended = true;
+                        break;
+                    }
+
+                    // Try prepending to the start of the ring.
+                    if (PositionsAreEqual(ring.First!.Value, seg[^1]))
+                    {
+                        foreach (var p in seg.Take(seg.Count - 1).Reverse()) ring.AddFirst(p);
+                        remaining.RemoveAt(i);
+                        extended = true;
+                        break;
+                    }
+                    if (PositionsAreEqual(ring.First!.Value, seg[0]))
+                    {
+                        foreach (var p in seg.Skip(1)) ring.AddFirst(p);
                         remaining.RemoveAt(i);
                         extended = true;
                         break;
@@ -47,12 +65,18 @@ public static class PolygonRingAssembler
                 }
             }
 
-            if (!IsRingClosed(ring))
-                ring.Add(new Position(ring[0].Longitude, ring[0].Latitude));
+            var ringList = ring.ToList();
+            if (!IsRingClosed(ringList))
+                ringList.Add(new Position(ringList[0].Longitude, ringList[0].Latitude));
 
-            if (ring.Count >= 4)
-                yield return new LinearRing(ring, null);
+            if (ringList.Count >= 4)
+                yield return new LinearRing(ringList, null);
         }
+    }
+
+    private static bool IsRingClosed(LinkedList<Position> ring)
+    {
+        return ring.Count >= 2 && PositionsAreEqual(ring.First!.Value, ring.Last!.Value);
     }
 
     private static bool IsRingClosed(List<Position> ring)

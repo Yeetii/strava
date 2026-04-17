@@ -391,12 +391,86 @@ namespace Shared.Services
         {
             string bbox = CreateBoundingBox(southWest, northEast);
             var levelStr = adminLevel.ToString(CultureInfo.InvariantCulture);
+            // Filter out dependent territories / sub-national overseas entities that
+            // share admin_level=2 with their parent country.
+            var territoryFilter = adminLevel == 2
+                ? "[\"border_type\"!~\"territorial|territory|dependency\"]"
+                : "";
             string query = string.Join(string.Empty,
                 "[out:json][timeout:400];(",
-                $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]({bbox});",
-                $"way[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]({bbox});",
+                $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}({bbox});",
+                $"way[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}({bbox});",
                 ");out geom;"
             );
+
+            return await ExecuteAdminBoundaryQuery(query, cancellationToken);
+        }
+
+        /// <summary>
+        /// Fetch full geometry for specific OSM boundary IDs.
+        /// Use this to fetch only the boundaries that are not yet in Cosmos
+        /// rather than re-downloading all boundaries in a bbox.
+        /// </summary>
+        public async Task<IEnumerable<Feature>> GetAdminBoundariesByIds(IEnumerable<(string osmType, long osmId)> ids, CancellationToken cancellationToken = default)
+        {
+            var relationIds = ids.Where(x => x.osmType == "relation").Select(x => x.osmId).ToList();
+            var wayIds = ids.Where(x => x.osmType == "way").Select(x => x.osmId).ToList();
+
+            var parts = new List<string>();
+            if (relationIds.Count > 0)
+                parts.Add($"relation(id:{string.Join(",", relationIds)});");
+            if (wayIds.Count > 0)
+                parts.Add($"way(id:{string.Join(",", wayIds)});");
+
+            if (parts.Count == 0)
+                return [];
+
+            string query = $"[out:json][timeout:400];({string.Join("", parts)});out geom;";
+            return await ExecuteAdminBoundaryQuery(query, cancellationToken);
+        }
+
+        /// <summary>
+        /// Lightweight query that returns only IDs and tags (no geometry) for
+        /// admin boundaries in a bounding box.  Used to discover which boundaries
+        /// exist in a tile before deciding whether to fetch full geometry.
+        /// </summary>
+        public async Task<IEnumerable<(string osmType, long osmId, Dictionary<string, string> tags)>> GetAdminBoundaryIds(Coordinate southWest, Coordinate northEast, int adminLevel, CancellationToken cancellationToken = default)
+        {
+            string bbox = CreateBoundingBox(southWest, northEast);
+            var levelStr = adminLevel.ToString(CultureInfo.InvariantCulture);
+            var territoryFilter = adminLevel == 2
+                ? "[\"border_type\"!~\"territorial|territory|dependency\"]"
+                : "";
+            string query = string.Join(string.Empty,
+                "[out:json][timeout:120];(",
+                $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}({bbox});",
+                $"way[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}({bbox});",
+                ");out tags;"
+            );
+            string encodedQuery = Uri.EscapeDataString(query);
+
+            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"Could not get admin boundary IDs, status code: {response.StatusCode}, {response.ReasonPhrase}");
+
+            string rawAreas = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(rawAreas) || !(rawAreas.TrimStart().StartsWith("{") || rawAreas.TrimStart().StartsWith("[")))
+                throw new Exception("Overpass API did not return valid JSON for admin boundary IDs.");
+
+            RootProtectedAreas root = JsonConvert.DeserializeObject<RootProtectedAreas>(rawAreas)
+                ?? throw new Exception("Could not deserialize admin boundary IDs");
+
+            return root.Elements.Select(e => (
+                e.Type,
+                e.Id,
+                e.Tags
+                    .Where(kvp => kvp.Value.Type == JTokenType.String)
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToString())
+            ));
+        }
+
+        private async Task<IEnumerable<Feature>> ExecuteAdminBoundaryQuery(string query, CancellationToken cancellationToken)
+        {
             string encodedQuery = Uri.EscapeDataString(query);
 
             var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);

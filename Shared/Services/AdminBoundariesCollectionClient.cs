@@ -1,6 +1,7 @@
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using System.Net;
+using BAMCIS.GeoJSON;
 using Shared.Geo;
 using Shared.Models;
 
@@ -10,6 +11,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
     : CollectionClient<StoredFeature>(container, loggerFactory)
 {
     private const string SimplificationStepProperty = "geometrySimplificationStep";
+    private const string SimplificationEpsilonProperty = "geometrySimplificationEpsilon";
     private const string SimplifiedGeometryProperty = "geometrySimplified";
 
     private readonly OverpassClient _overpassClient = overpassClient;
@@ -60,39 +62,94 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
     private async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, int adminLevel, CancellationToken cancellationToken)
     {
         var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
-        var rawFeatures = await _overpassClient.GetAdminBoundaries(southWest, northEast, adminLevel, cancellationToken);
 
-        var features = rawFeatures
-            .SelectMany(feature =>
+        // Phase 1: lightweight tags-only query to discover which boundaries are in this tile.
+        var discoveredIds = (await _overpassClient.GetAdminBoundaryIds(southWest, northEast, adminLevel, cancellationToken)).ToList();
+        if (discoveredIds.Count == 0)
+        {
+            var empty = new StoredFeature(Kind, x, y, zoom)
             {
-                var stored = new StoredFeature(feature, Kind, zoom);
-                // Namespace id by adminLevel so different levels don't collide on the same OSM id.
-                stored.Id = $"{Kind}:{adminLevel}:{stored.FeatureId}";
-                stored.Properties["adminLevel"] = adminLevel.ToString();
-                var documents = new List<StoredFeature> { stored };
+                Id = $"empty-{Kind}-{adminLevel}-{zoom}-{x}-{y}",
+            };
+            empty.Properties["adminLevel"] = adminLevel.ToString();
+            await UpsertBoundaryDocument(empty, cancellationToken);
+            return [empty];
+        }
 
-                if (feature.Geometry is not BAMCIS.GeoJSON.Point && (stored.X != x || stored.Y != y))
-                {
-                    documents.Add(StoredFeature.CreatePointer(
-                        Kind,
-                        stored.FeatureId ?? stored.LogicalId,
-                        x,
-                        y,
-                        zoom,
-                        stored.X,
-                        stored.Y,
-                        stored.Zoom,
-                        stored.Id,
-                        new Dictionary<string, dynamic>
-                        {
-                            ["adminLevel"] = adminLevel.ToString()
-                        }));
-                }
-
-                return documents;
-            })
+        // Phase 2: check Cosmos for boundaries we already have stored.
+        var candidateDocIds = discoveredIds
+            .Select(d => $"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}")
             .ToList();
+        var existingDocs = (await GetByIdsAsync(candidateDocIds, cancellationToken))
+            .ToDictionary(d => d.Id, StringComparer.Ordinal);
 
+        // Phase 3: create pointers for already-stored boundaries whose centroid is elsewhere.
+        var features = new List<StoredFeature>();
+        var missingIds = new List<(string osmType, long osmId)>();
+
+        foreach (var (osmType, osmId, _) in discoveredIds)
+        {
+            var docId = $"{Kind}:{adminLevel}:{osmType}:{osmId}";
+            if (existingDocs.TryGetValue(docId, out var existing))
+            {
+                features.Add(existing);
+                if (existing.X != x || existing.Y != y)
+                {
+                    var pointer = StoredFeature.CreatePointer(
+                        Kind,
+                        existing.FeatureId ?? existing.LogicalId,
+                        x, y, zoom,
+                        existing.X, existing.Y, existing.Zoom,
+                        existing.Id,
+                        new Dictionary<string, dynamic> { ["adminLevel"] = adminLevel.ToString() });
+                    features.Add(pointer);
+                    await UpsertBoundaryDocument(pointer, cancellationToken);
+                }
+            }
+            else
+            {
+                missingIds.Add((osmType, osmId));
+            }
+        }
+
+        // Phase 4: fetch full geometry only for genuinely new boundaries.
+        if (missingIds.Count > 0)
+        {
+            var rawFeatures = (await _overpassClient.GetAdminBoundariesByIds(missingIds, cancellationToken)).ToList();
+
+            if (adminLevel == 2)
+                rawFeatures = DeduplicateByCountryCode(rawFeatures);
+
+            var newDocuments = rawFeatures
+                .SelectMany(feature =>
+                {
+                    var stored = new StoredFeature(feature, Kind, zoom);
+                    stored.Id = $"{Kind}:{adminLevel}:{stored.FeatureId}";
+                    stored.Properties["adminLevel"] = adminLevel.ToString();
+                    if (adminLevel == 2)
+                        SetCountryCodeProperty(stored);
+                    var documents = new List<StoredFeature> { stored };
+
+                    if (feature.Geometry is not Point && (stored.X != x || stored.Y != y))
+                    {
+                        documents.Add(StoredFeature.CreatePointer(
+                            Kind,
+                            stored.FeatureId ?? stored.LogicalId,
+                            x, y, zoom,
+                            stored.X, stored.Y, stored.Zoom,
+                            stored.Id,
+                            new Dictionary<string, dynamic> { ["adminLevel"] = adminLevel.ToString() }));
+                    }
+
+                    return documents;
+                })
+                .ToList();
+
+            await UpsertBoundaryDocuments(newDocuments, cancellationToken);
+            features.AddRange(newDocuments);
+        }
+
+        // If nothing survived (e.g. all boundaries were filtered), store an empty marker.
         if (features.Count == 0)
         {
             var empty = new StoredFeature(Kind, x, y, zoom)
@@ -101,10 +158,84 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             };
             empty.Properties["adminLevel"] = adminLevel.ToString();
             features.Add(empty);
+            await UpsertBoundaryDocument(empty, cancellationToken);
         }
 
-        await UpsertBoundaryDocuments(features, cancellationToken);
         return features;
+    }
+
+    /// <summary>
+    /// Extracts the ISO 3166-1 alpha-2 country code from a Feature's OSM tags
+    /// and stores it under a camelCase-safe key so it survives Cosmos serialization.
+    /// </summary>
+    private static void SetCountryCodeProperty(StoredFeature stored)
+    {
+        foreach (var key in new[] { "ISO3166-1", "ISO3166-1:alpha2", "country_code_iso3166_1_alpha_2" })
+        {
+            if (stored.Properties.TryGetValue(key, out var val))
+            {
+                var s = val?.ToString();
+                if (!string.IsNullOrWhiteSpace(s))
+                {
+                    stored.Properties["countryCode"] = s;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// When multiple admin_level=2 relations share an ISO3166-1 code (e.g. France +
+    /// overseas territories), keep only the one with the largest geometry so the
+    /// client sees one feature per country code.  Features without a country code
+    /// are always kept.
+    /// </summary>
+    private static List<Feature> DeduplicateByCountryCode(List<Feature> features)
+    {
+        static string? GetCountryCode(Feature f)
+        {
+            if (f.Properties == null) return null;
+            // OSM tags: "ISO3166-1", "ISO3166-1:alpha2", or "country_code_iso3166_1_alpha_2"
+            foreach (var key in new[] { "ISO3166-1", "ISO3166-1:alpha2", "country_code_iso3166_1_alpha_2" })
+            {
+                if (f.Properties.TryGetValue(key, out var val))
+                {
+                    var s = val?.ToString();
+                    if (!string.IsNullOrWhiteSpace(s)) return s;
+                }
+            }
+            return null;
+        }
+
+        static int EstimateGeometrySize(Feature f)
+        {
+            return f.Geometry switch
+            {
+                Polygon p => p.Coordinates.Sum(r => r.Coordinates.Count()),
+                MultiPolygon mp => mp.Coordinates.Sum(p => p.Coordinates.Sum(r => r.Coordinates.Count())),
+                _ => 0
+            };
+        }
+
+        var result = new List<Feature>();
+        var seenCodes = new Dictionary<string, (Feature Feature, int Size)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var f in features)
+        {
+            var code = GetCountryCode(f);
+            if (code == null)
+            {
+                result.Add(f);
+                continue;
+            }
+
+            var size = EstimateGeometrySize(f);
+            if (!seenCodes.TryGetValue(code, out var existing) || size > existing.Size)
+                seenCodes[code] = (f, size);
+        }
+
+        result.AddRange(seenCodes.Values.Select(v => v.Feature));
+        return result;
     }
 
     private async Task UpsertBoundaryDocuments(IEnumerable<StoredFeature> documents, CancellationToken cancellationToken)
@@ -123,15 +254,31 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             return;
         }
 
-        var currentDocument = document;
-        foreach (var step in new[] { 1, 2, 4, 8, 16, 32 })
+        // Proactively simplify with RDP before the first write attempt.
+        // admin_level=2 (countries): 0.01° ≈ 1 km, admin_level=4 (regions): 0.005° ≈ 500 m.
+        var adminLevel = document.Properties.TryGetValue("adminLevel", out var lvl) ? lvl?.ToString() : null;
+        var epsilon = adminLevel switch
+        {
+            "2" => 0.01,
+            "4" => 0.005,
+            _ => 0.005
+        };
+        var simplified = CreateRdpSimplifiedDocument(document, epsilon);
+
+        try
+        {
+            await UpsertDocument(simplified, cancellationToken);
+            return;
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.RequestEntityTooLarge) { }
+
+        // RDP-simplified geometry still too large — fall back to increasingly
+        // aggressive nth-point decimation on the already-simplified geometry.
+        foreach (var step in new[] { 2, 4, 8, 16, 32 })
         {
             try
             {
-                if (step > 1)
-                    currentDocument = CreateSimplifiedBoundaryDocument(document, step);
-
-                await UpsertDocument(currentDocument, cancellationToken);
+                await UpsertDocument(CreateSimplifiedBoundaryDocument(simplified, step), cancellationToken);
                 return;
             }
             catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.RequestEntityTooLarge && step < 32)
@@ -140,7 +287,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             }
         }
 
-        await UpsertDocument(CreateSimplifiedBoundaryDocument(document, 64), cancellationToken);
+        await UpsertDocument(CreateSimplifiedBoundaryDocument(simplified, 64), cancellationToken);
     }
 
     private async Task<IEnumerable<StoredFeature>> ResolvePointers(IEnumerable<StoredFeature> documents, CancellationToken cancellationToken)
@@ -172,6 +319,25 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
                 return document;
             })
             .Where(document => !StoredFeature.IsPointerDocument(document));
+    }
+
+    private static StoredFeature CreateRdpSimplifiedDocument(StoredFeature document, double epsilon)
+    {
+        return new StoredFeature
+        {
+            Id = document.Id,
+            FeatureId = document.FeatureId,
+            Kind = document.Kind,
+            X = document.X,
+            Y = document.Y,
+            Zoom = document.Zoom,
+            Geometry = GeometryDecimator.Simplify(document.Geometry, epsilon),
+            Properties = new Dictionary<string, dynamic>(document.Properties)
+            {
+                [SimplifiedGeometryProperty] = true,
+                [SimplificationEpsilonProperty] = epsilon
+            }
+        };
     }
 
     private static StoredFeature CreateSimplifiedBoundaryDocument(StoredFeature document, int step)

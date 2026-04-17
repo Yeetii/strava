@@ -78,6 +78,37 @@ public class PolygonRingAssemblerTests
     }
 
     [Fact]
+    public void SeedInMiddle_PrependsMissingSegments()
+    {
+        // The seed segment (seg2) is in the middle. seg1 connects to its start,
+        // seg3 connects to its end. Without bidirectional assembly, seg1 would
+        // be orphaned and produce a second broken ring.
+        var seg1 = new List<Position> { new(0, 0), new(1, 0) }; // connects to start of seg2
+        var seg2 = new List<Position> { new(1, 0), new(1, 1) }; // seed
+        var seg3 = new List<Position> { new(1, 1), new(0, 1), new(0, 0) }; // connects to end of seg2
+
+        // Provide seg2 first so it becomes the seed.
+        var rings = PolygonRingAssembler.AssembleRings([seg2, seg3, seg1]).ToList();
+
+        Assert.Single(rings);
+        Assert.Equal(5, rings[0].Coordinates.Count());
+    }
+
+    [Fact]
+    public void SeedInMiddle_ReversedPrepend()
+    {
+        // Segment that connects to the ring start is reversed.
+        var seg1 = new List<Position> { new(1, 0), new(0, 0) }; // reversed: end matches start of ring
+        var seg2 = new List<Position> { new(1, 0), new(1, 1) }; // seed
+        var seg3 = new List<Position> { new(1, 1), new(0, 1), new(0, 0) };
+
+        var rings = PolygonRingAssembler.AssembleRings([seg2, seg3, seg1]).ToList();
+
+        Assert.Single(rings);
+        Assert.Equal(5, rings[0].Coordinates.Count());
+    }
+
+    [Fact]
     public void TwoDisjointRings_ReturnsTwoRings()
     {
         // Two completely separate closed ways (e.g. a multipolygon with two outer rings)
