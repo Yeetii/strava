@@ -12,7 +12,7 @@ public static class GeometryCentroidHelper
                 Point point => new Coordinate(point.Coordinates.Longitude, point.Coordinates.Latitude),
                 LineString lineString => GetLineCentroid(lineString),
                 Polygon polygon => GetPolygonCentroid(polygon),
-                MultiPolygon multiPolygon => GetPolygonCentroid(multiPolygon.Coordinates.First()),
+                MultiPolygon multiPolygon => GetMultiPolygonCentroid(multiPolygon),
                 _ => throw new NotSupportedException($"Geometry type {geometry.Type} not supported for tile calculation")
             };
     }
@@ -49,5 +49,18 @@ public static class GeometryCentroidHelper
             sumLng += pos.Longitude;
         }
         return new Coordinate(sumLng / count, sumLat / count);
+    }
+
+    /// <summary>
+    /// Centroid of a MultiPolygon weighted by the largest member polygon
+    /// (by vertex count as a proxy for area). Using only First() can place
+    /// the centroid on a small island rather than the main landmass.
+    /// </summary>
+    public static Coordinate GetMultiPolygonCentroid(MultiPolygon multiPolygon)
+    {
+        var largest = multiPolygon.Coordinates
+            .OrderByDescending(p => p.Coordinates.First().Coordinates.Count())
+            .First();
+        return GetPolygonCentroid(largest);
     }
 }

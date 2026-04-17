@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/visitedProtectedAreas
+  url: {{baseUrl}}/visitedAreas
   body: none
   auth: none
+}
+
+params:query {
+  ~areaType: national_park,nature_reserve
 }
 
 headers {

@@ -1,0 +1,19 @@
+meta {
+  name: Wipe Empty Admin Boundary Markers
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/manage/adminBoundaries/emptyMarkers
+  body: none
+  auth: none
+}
+
+params:query {
+  ~adminLevel: 4
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Get Boundaries By Grid
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/boundaries/{{x}}/{{y}}
+  body: none
+  auth: none
+}
+
+params:path {
+  x: 33
+  y: 18
+}
+
+params:query {
+  ~adminLevel: 4
+  ~zoom: 6
+}

@@ -64,7 +64,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
 
         // Phase 1: lightweight tags-only query to discover which boundaries are in this tile.
-        var discoveredIds = (await _overpassClient.GetAdminBoundaryIds(southWest, northEast, adminLevel, cancellationToken)).ToList();
+        var discoveredIds = (await _overpassClient.GetAdminBoundaryIds(southWest, northEast, adminLevel, cancellationToken: cancellationToken)).ToList();
         if (discoveredIds.Count == 0)
         {
             var empty = new StoredFeature(Kind, x, y, zoom)
@@ -78,18 +78,18 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
 
         // Phase 2: check Cosmos for boundaries we already have stored.
         var candidateDocIds = discoveredIds
-            .Select(d => $"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}")
+            .Select(d => $"{Kind}:{adminLevel}:{d.osmId}")
             .ToList();
         var existingDocs = (await GetByIdsAsync(candidateDocIds, cancellationToken))
             .ToDictionary(d => d.Id, StringComparer.Ordinal);
 
-        // Phase 3: create pointers for already-stored boundaries whose centroid is elsewhere.
+        // Phase 3: return already-stored boundaries; create pointers for non-centroid tiles.
         var features = new List<StoredFeature>();
         var missingIds = new List<(string osmType, long osmId)>();
 
         foreach (var (osmType, osmId, _) in discoveredIds)
         {
-            var docId = $"{Kind}:{adminLevel}:{osmType}:{osmId}";
+            var docId = $"{Kind}:{adminLevel}:{osmId}";
             if (existingDocs.TryGetValue(docId, out var existing))
             {
                 // For countries, only include features whose centroid is on this tile.
@@ -235,7 +235,8 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             var code = GetCountryCode(f);
             if (code == null)
             {
-                result.Add(f);
+                // Border relations (e.g. "France - Monaco") have no ISO country code.
+                // Drop them — only actual sovereign territory polygons belong here.
                 continue;
             }
 
@@ -403,11 +404,18 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         }
         else
         {
-            // Phase 1: discover all countries globally via Overpass (tags only, no geometry).
+            // Phase 1: discover countries via Overpass (tags only, no geometry).
+            // When country codes are specified, push the ISO filter into the Overpass query
+            // to avoid scanning every admin_level=2 boundary in the world (which times out).
             var worldSw = new Coordinate(-180, -90);
             var worldNe = new Coordinate(180, 90);
-            var allDiscovered = (await _overpassClient.GetAdminBoundaryIds(worldSw, worldNe, adminLevel, cancellationToken)).ToList();
-            logger.LogInformation("Overpass discovered {Count} admin_level=2 relations globally", allDiscovered.Count);
+            var allDiscovered = (await _overpassClient.GetAdminBoundaryIds(
+                worldSw, worldNe, adminLevel,
+                isoCodes: countryCodes,
+                cancellationToken: cancellationToken)).ToList();
+            logger.LogInformation("Overpass discovered {Count} admin_level=2 relations{Filter}",
+                allDiscovered.Count,
+                countryCodes is { Count: > 0 } ? $" for codes: {string.Join(", ", countryCodes)}" : " globally");
 
             // Phase 2: if country codes specified, filter to only matching relations.
             if (countryCodes is { Count: > 0 })
@@ -444,11 +452,13 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             existingDocs.Count, missingIds.Count, forceRefetch ? " (force-refetch)" : "");
 
         // Phase 4: fetch full geometry from Overpass in batches BEFORE deleting old data.
+        // Batch size 1 when force-fetching by OSM ID: large countries (Russia, Canada, US) can
+        // time out Overpass on their own, so batching them together just causes collateral failures.
         var newCountries = new List<StoredFeature>();
         var failedIds = new List<string>();
         if (missingIds.Count > 0)
         {
-            const int batchSize = 5;
+            int batchSize = forceRefetch ? 1 : 5;
             var batches = missingIds
                 .Select((id, i) => (id, i))
                 .GroupBy(x => x.i / batchSize)
@@ -499,6 +509,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         }
 
         // Phase 4b: for force-refetch, delete old docs + pointers now that we have new data ready.
+        int alreadyStoredCount = existingDocs.Count;
         if (forceRefetch && existingDocs.Count > 0)
         {
             logger.LogInformation("Deleting {Count} existing country docs and their pointers", existingDocs.Count);
@@ -569,7 +580,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
 
         return new CountryFetchResult(
             Discovered: discoveredCount,
-            AlreadyStored: existingDocs.Count,
+            AlreadyStored: alreadyStoredCount,
             NewlyFetched: newCountries.Count,
             PointersCreated: pointersCreated,
             Failed: failedIds.Count);
@@ -595,5 +606,31 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         }
 
         return docs.Count;
+    }
+
+    /// <summary>
+    /// Wipes all cached docs (main, pointers, empty markers) for a specific tile + admin level,
+    /// then re-fetches from Overpass and stores the result.
+    /// Returns the fresh features for the tile.
+    /// </summary>
+    public async Task<IEnumerable<StoredFeature>> RefreshTile(int x, int y, int adminLevel, int zoom, CancellationToken cancellationToken)
+    {
+        // Delete everything stored for this tile at this admin level.
+        var queryDefinition = new QueryDefinition(
+            "SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind AND c.x = @x AND c.y = @y AND c.zoom = @zoom AND c.properties.adminLevel = @adminLevel")
+            .WithParameter("@kind", Kind)
+            .WithParameter("@x", x)
+            .WithParameter("@y", y)
+            .WithParameter("@zoom", zoom)
+            .WithParameter("@adminLevel", adminLevel.ToString());
+
+        var existing = (await ExecuteQueryAsync<StoredFeature>(queryDefinition, cancellationToken: cancellationToken)).ToList();
+        foreach (var doc in existing)
+        {
+            var pk = new PartitionKeyBuilder().Add((double)doc.X).Add((double)doc.Y).Build();
+            await DeleteDocument(doc.Id, pk, cancellationToken);
+        }
+
+        return await FetchMissingTile(x, y, zoom, adminLevel, cancellationToken);
     }
 }

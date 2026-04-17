@@ -14,6 +14,10 @@ params:path {
   kind: adminBoundary
 }
 
+params:query {
+  ~ids: relation:12345
+}
+
 headers {
   x-admin-key: {{adminKey}}
 }

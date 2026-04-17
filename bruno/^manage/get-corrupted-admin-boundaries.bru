@@ -1,0 +1,15 @@
+meta {
+  name: Get Corrupted Admin Boundaries
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/manage/adminBoundaries/corrupted
+  body: none
+  auth: none
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}

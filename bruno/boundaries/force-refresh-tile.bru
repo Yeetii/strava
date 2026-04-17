@@ -1,0 +1,26 @@
+meta {
+  name: Force Refresh Tile
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/boundaries/{{x}}/{{y}}
+  body: none
+  auth: none
+}
+
+params:path {
+  x: 33
+  y: 18
+}
+
+params:query {
+  adminLevel: 4
+  forceRefresh: true
+  ~zoom: 6
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}

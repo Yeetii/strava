@@ -1,0 +1,15 @@
+meta {
+  name: Get Countries
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/manage/countries
+  body: none
+  auth: none
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}

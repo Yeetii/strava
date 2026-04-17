@@ -434,21 +434,44 @@ namespace Shared.Services
         /// admin boundaries in a bounding box.  Used to discover which boundaries
         /// exist in a tile before deciding whether to fetch full geometry.
         /// </summary>
-        public async Task<IEnumerable<(string osmType, long osmId, Dictionary<string, string> tags)>> GetAdminBoundaryIds(Coordinate southWest, Coordinate northEast, int adminLevel, CancellationToken cancellationToken = default)
+        public async Task<IEnumerable<(string osmType, long osmId, Dictionary<string, string> tags)>> GetAdminBoundaryIds(Coordinate southWest, Coordinate northEast, int adminLevel, IReadOnlyList<string>? isoCodes = null, CancellationToken cancellationToken = default)
         {
             string bbox = CreateBoundingBox(southWest, northEast);
             var levelStr = adminLevel.ToString(CultureInfo.InvariantCulture);
             var territoryFilter = adminLevel == 2
                 ? "[\"border_type\"!~\"territorial|territory|dependency\"]"
                 : "";
+            // When specific ISO codes are requested, filter at the Overpass level to avoid
+            // fetching the entire world (which can time out for partial results).
+            // OSM uses both "ISO3166-1" and "ISO3166-1:alpha2"; query both via a union.
+            var isoFilter = (isoCodes is { Count: > 0 })
+                ? $"[\"ISO3166-1\"~\"^({string.Join('|', isoCodes)})$\"]"
+                : "";
             // Admin boundaries are always relations in OSM.
             // Querying ways returns individual border segments
             // (e.g. "Border Bulgaria - Greece") which are not actual regions.
-            string query = string.Join(string.Empty,
-                "[out:json][timeout:120];(",
-                $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}({bbox});",
-                ");out tags;"
-            );
+            // Note: shared border relations (e.g. "France - Monaco") also match this query
+            // but are filtered out later because they carry no ISO country code.
+            string query;
+            if (isoCodes is { Count: > 0 })
+            {
+                // Use a union: one clause per ISO tag key so we catch all variants.
+                var altIsoFilter = $"[\"ISO3166-1:alpha2\"~\"^({string.Join('|', isoCodes)})$\"]";
+                query = string.Join(string.Empty,
+                    "[out:json][timeout:300];(",
+                    $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}{isoFilter}({bbox});",
+                    $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}{altIsoFilter}({bbox});",
+                    ");out tags;"
+                );
+            }
+            else
+            {
+                query = string.Join(string.Empty,
+                    "[out:json][timeout:300];(",
+                    $"relation[\"boundary\"=\"administrative\"][\"admin_level\"=\"{levelStr}\"][\"name\"]{territoryFilter}({bbox});",
+                    ");out tags;"
+                );
+            }
             string encodedQuery = Uri.EscapeDataString(query);
 
             var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);

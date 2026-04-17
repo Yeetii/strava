@@ -54,6 +54,7 @@ var host = new HostBuilder()
             client =>
             {
                 client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
+                client.Timeout = TimeSpan.FromMinutes(10); // large country geometries (Russia, Canada) can take several minutes
             });
         services.AddSingleton(serviceProvider =>
         {
