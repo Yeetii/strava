@@ -1,0 +1,17 @@
+meta {
+  name: Get Peaks
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/peaks
+  body: none
+  auth: none
+}
+
+params:query {
+  lat: 61.0
+  lon: 8.0
+  radius: 50000
+}

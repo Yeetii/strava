@@ -1,0 +1,22 @@
+meta {
+  name: Post User Sync
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/userSync
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}
+
+body:json {
+  {
+    "settings": [],
+    "files": []
+  }
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Get Visited Paths
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/visitedPaths
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}

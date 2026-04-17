@@ -1,0 +1,20 @@
+meta {
+  name: Get Peaks By Grid
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/peaks/{{x}}/{{y}}
+  body: none
+  auth: none
+}
+
+params:path {
+  x: 557
+  y: 319
+}
+
+params:query {
+  zoom: 11
+}

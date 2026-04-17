@@ -1,0 +1,18 @@
+meta {
+  name: Post Route
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/route
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "points": [[8.0, 61.0], [8.1, 61.1]],
+    "profile": "foot"
+  }
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Get Grid Indices
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/gridIndices
+  body: none
+  auth: none
+}
+
+params:query {
+  peakIds: 12345,67890
+}

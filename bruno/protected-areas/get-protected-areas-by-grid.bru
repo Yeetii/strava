@@ -1,0 +1,20 @@
+meta {
+  name: Get Protected Areas By Grid
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/protectedAreas/{{x}}/{{y}}
+  body: none
+  auth: none
+}
+
+params:path {
+  x: 557
+  y: 319
+}
+
+params:query {
+  zoom: 8
+}
