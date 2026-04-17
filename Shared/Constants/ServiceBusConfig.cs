@@ -9,5 +9,6 @@ namespace Shared.Constants
         public const string ActivityFetchJobs = "activityFetchJobs";
         public const string ActivityProcessed = "activityprocessed";
         public const string ScrapeRace = "scrapeRace";
+        public const string EnrichAdminBoundaryJobs = "enrichAdminBoundaryJobs";
     }
 }

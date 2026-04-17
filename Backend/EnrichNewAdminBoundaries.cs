@@ -1,4 +1,4 @@
-using Microsoft.Azure.Cosmos;
+using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
@@ -8,13 +8,10 @@ using Shared.Services;
 namespace Backend;
 
 public class EnrichNewAdminBoundaries(
-    AdminBoundaryMetricsEnricher enricher,
-    CollectionClient<StoredFeature> storedFeaturesCollection,
+    ServiceBusClient serviceBusClient,
     ILogger<EnrichNewAdminBoundaries> logger)
 {
-    private readonly AdminBoundaryMetricsEnricher _enricher = enricher;
-    private readonly CollectionClient<StoredFeature> _storedFeaturesCollection = storedFeaturesCollection;
-    private readonly ILogger<EnrichNewAdminBoundaries> _logger = logger;
+    private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.EnrichAdminBoundaryJobs);
 
     [Function(nameof(EnrichNewAdminBoundaries))]
     public async Task Run(
@@ -26,31 +23,28 @@ public class EnrichNewAdminBoundaries(
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<StoredFeature> changedDocuments,
         CancellationToken cancellationToken)
     {
-        foreach (var document in changedDocuments)
-        {
-            if (!ShouldEnrich(document))
-            {
-                continue;
-            }
+        var jobs = changedDocuments
+            .Where(ShouldEnrich)
+            .Select(d => new ServiceBusMessage(d.Id))
+            .ToList();
 
-            _logger.LogInformation("Enriching admin boundary {BoundaryId}", document.Id);
-            var ops = await _enricher.CalculatePatchOperationsAsync(document, cancellationToken);
-            var pk = new PartitionKeyBuilder().Add((double)document.X).Add((double)document.Y).Build();
-            await _storedFeaturesCollection.PatchDocument(document.Id, pk, ops, cancellationToken);
-        }
+        if (jobs.Count == 0)
+            return;
+
+        logger.LogInformation("Queuing {Count} admin boundary enrichment jobs", jobs.Count);
+        await _sender.SendMessagesAsync(jobs, cancellationToken);
     }
 
     internal static bool ShouldEnrich(StoredFeature document)
     {
         if (!string.Equals(document.Kind, FeatureKinds.AdminBoundary, StringComparison.Ordinal))
-        {
             return false;
-        }
 
         if (document.Id.StartsWith("empty-", StringComparison.Ordinal))
-        {
             return false;
-        }
+
+        if (StoredFeature.IsPointerDocument(document))
+            return false;
 
         if (document.Properties.TryGetValue("adminBoundaryMetricsVersion", out var version))
         {
