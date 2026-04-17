@@ -192,4 +192,24 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             }
         };
     }
+
+    public async Task<int> DeleteAllBoundariesAsync(CancellationToken cancellationToken = default)
+    {
+        var queryDefinition = new QueryDefinition(
+            "SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind")
+            .WithParameter("@kind", Kind);
+
+        var docs = (await ExecuteQueryAsync<StoredFeature>(queryDefinition, cancellationToken: cancellationToken)).ToList();
+
+        foreach (var doc in docs)
+        {
+            var partitionKey = new PartitionKeyBuilder()
+                .Add((double)doc.X)
+                .Add((double)doc.Y)
+                .Build();
+            await DeleteDocument(doc.Id, partitionKey, cancellationToken);
+        }
+
+        return docs.Count;
+    }
 }
