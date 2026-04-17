@@ -1,0 +1,19 @@
+meta {
+  name: Wipe OSM Features By Kind
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/manage/osmfeatures/{{kind}}
+  body: none
+  auth: none
+}
+
+params:path {
+  kind: adminBoundary
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}
