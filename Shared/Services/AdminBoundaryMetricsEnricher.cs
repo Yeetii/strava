@@ -8,14 +8,17 @@ namespace Shared.Services;
 
 public sealed class AdminBoundaryMetricsEnricher(
     [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient peaksCollection,
-    [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient protectedAreasCollection)
+    [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient protectedAreasCollection,
+    AdminBoundariesCollectionClient adminBoundariesCollection)
 {
     public const int AnalysisTileZoom = 8;
+    public const int CountryTileZoom = 6;
     public const int BorderSamplingStep = 10;
-    public const int MetricsVersion = 1;
+    public const int MetricsVersion = 2;
 
     private readonly TiledCollectionClient _peaksCollection = peaksCollection;
     private readonly TiledCollectionClient _protectedAreasCollection = protectedAreasCollection;
+    private readonly AdminBoundariesCollectionClient _adminBoundariesCollection = adminBoundariesCollection;
 
     public async Task EnrichAsync(StoredFeature boundary, CancellationToken cancellationToken = default)
     {
@@ -28,6 +31,40 @@ public sealed class AdminBoundaryMetricsEnricher(
         {
             boundary.Properties[key] = value;
         }
+
+        if (IsAdminLevel(boundary, 4))
+        {
+            await EnrichWithCountryAsync(boundary, cancellationToken);
+        }
+    }
+
+    private async Task EnrichWithCountryAsync(StoredFeature boundary, CancellationToken cancellationToken)
+    {
+        var centroid = GeometryCentroidHelper.GetCentroid(boundary.Geometry);
+        var centroidTile = SlippyTileCalculator.WGS84ToTileIndex(centroid, CountryTileZoom);
+
+        var countries = await _adminBoundariesCollection.FetchByTiles(
+            [centroidTile], adminLevel: 2, zoom: CountryTileZoom, followPointers: true, cancellationToken: cancellationToken);
+
+        var country = countries.FirstOrDefault(c =>
+            !StoredFeature.IsPointerDocument(c)
+            && RouteFeatureMatcher.IsPointInGeometry(centroid, c.Geometry));
+
+        if (country != null)
+        {
+            boundary.Properties["countryId"] = country.Id;
+            if (country.Properties.TryGetValue("countryCode", out var code)
+                && code?.ToString() is string countryCode)
+            {
+                boundary.Properties["countryCode"] = countryCode;
+            }
+        }
+    }
+
+    private static bool IsAdminLevel(StoredFeature boundary, int level)
+    {
+        return boundary.Properties.TryGetValue("adminLevel", out var val)
+            && string.Equals(val?.ToString(), level.ToString(), StringComparison.Ordinal);
     }
 
     public static HashSet<(int x, int y)> CalculateCandidateTiles(Geometry geometry, int zoom = AnalysisTileZoom, int borderSamplingStep = BorderSamplingStep)

@@ -9,12 +9,12 @@ using Shared.Services;
 
 namespace API.Endpoints.ProtectedAreas;
 
-public class GetVisitedProtectedAreas(
+public class GetVisitedAreas(
     CollectionClient<VisitedArea> visitedAreasCollection,
     CollectionClient<Activity> activityCollection,
     UserAuthenticationService userAuthService)
 {
-    private sealed record VisitedProtectedAreaDto(
+    private sealed record VisitedAreaDto(
         string AreaId,
         string Name,
         string AreaType,
@@ -24,12 +24,14 @@ public class GetVisitedProtectedAreas(
         string? Wikidata,
         string? WikimediaCommons);
 
-    [OpenApiOperation(tags: ["ProtectedAreas"])]
+    [OpenApiOperation(tags: ["VisitedAreas"])]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<VisitedProtectedAreaDto>),
-        Description = "A list of protected areas the authenticated user has been in, including visit counts and dates.")]
-    [Function(nameof(GetVisitedProtectedAreas))]
-    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "visitedProtectedAreas")] HttpRequestData req)
+    [OpenApiParameter(name: "areaType", In = ParameterLocation.Query, Type = typeof(string), Required = false,
+        Description = "Optional filter by area type (e.g. national_park, nature_reserve, protected_area, region).")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<VisitedAreaDto>),
+        Description = "A list of areas the authenticated user has visited, including visit counts and dates.")]
+    [Function(nameof(GetVisitedAreas))]
+    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "visitedAreas")] HttpRequestData req)
     {
         var response = req.CreateResponse();
         response.Headers.Add("Access-Control-Allow-Credentials", "true");
@@ -41,9 +43,16 @@ public class GetVisitedProtectedAreas(
             return response;
         }
 
-        var visitedAreas = await visitedAreasCollection.ExecuteQueryAsync<VisitedArea>(
-            new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId").WithParameter("@userId", user.Id)
-        );
+        var areaType = req.Query["areaType"];
+
+        var query = string.IsNullOrEmpty(areaType)
+            ? new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId")
+                .WithParameter("@userId", user.Id)
+            : new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId AND c.areaType = @areaType")
+                .WithParameter("@userId", user.Id)
+                .WithParameter("@areaType", areaType);
+
+        var visitedAreas = await visitedAreasCollection.ExecuteQueryAsync<VisitedArea>(query);
         var visitedAreasList = visitedAreas.ToList();
 
         var allActivityIds = visitedAreasList.SelectMany(va => va.ActivityIds).Distinct().ToArray();
@@ -64,7 +73,7 @@ public class GetVisitedProtectedAreas(
                     .Select(d => d.ToString("O"))
                     .ToArray();
 
-                return new VisitedProtectedAreaDto(
+                return new VisitedAreaDto(
                     va.AreaId,
                     va.Name,
                     va.AreaType,
