@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker.Extensions.OpenApi.Extensions;
 using Microsoft.Extensions.DependencyInjection;
@@ -85,6 +86,11 @@ var host = new HostBuilder()
         {
             var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
             return new ServiceBusClient(sbConnectionString);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
+            return new ServiceBusAdministrationClient(sbConnectionString);
         });
         services.AddScoped(serviceProvider =>
         {
