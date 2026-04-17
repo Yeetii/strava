@@ -29,6 +29,8 @@ public class WipeOsmFeaturesByKind(
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "kind", In = ParameterLocation.Path, Type = typeof(string), Required = true,
         Description = "Feature kind to wipe: peak | path | protectedArea | adminBoundary | race")]
+    [OpenApiParameter(name: "ids", In = ParameterLocation.Query, Type = typeof(string), Required = false,
+        Description = "Optional comma-separated document IDs to wipe. When omitted, all documents of the given kind are wiped.")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(int),
         Description = "Number of documents marked for expiry (ttl=1).")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
@@ -51,12 +53,38 @@ public class WipeOsmFeaturesByKind(
 
         var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
 
-        var queryDefinition = new QueryDefinition("SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind")
-            .WithParameter("@kind", kind);
+        var idsParam = req.Query["ids"];
+        List<(string Id, int X, int Y)> items;
 
-        var items = new List<(string Id, int X, int Y)>();
-        using (var feedIterator = container.GetItemQueryIterator<OsmFeatureKey>(queryDefinition))
+        if (!string.IsNullOrWhiteSpace(idsParam))
         {
+            var requestedIds = idsParam
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToHashSet(StringComparer.Ordinal);
+
+            var inClause = string.Join(",", requestedIds.Select((_, i) => $"@id{i}"));
+            var queryDefinition = new QueryDefinition(
+                $"SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind AND c.id IN ({inClause})")
+                .WithParameter("@kind", kind);
+            int idx = 0;
+            foreach (var id in requestedIds)
+                queryDefinition.WithParameter($"@id{idx++}", id);
+
+            items = [];
+            using var feedIterator = container.GetItemQueryIterator<OsmFeatureKey>(queryDefinition);
+            while (feedIterator.HasMoreResults)
+            {
+                var page = await feedIterator.ReadNextAsync();
+                items.AddRange(page.Select(i => (i.Id, i.X, i.Y)));
+            }
+        }
+        else
+        {
+            var queryDefinition = new QueryDefinition("SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind")
+                .WithParameter("@kind", kind);
+
+            items = [];
+            using var feedIterator = container.GetItemQueryIterator<OsmFeatureKey>(queryDefinition);
             while (feedIterator.HasMoreResults)
             {
                 var page = await feedIterator.ReadNextAsync();

@@ -369,62 +369,76 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         };
     }
 
-    public async Task<IEnumerable<StoredFeature>> FetchAllCountries(CancellationToken cancellationToken = default)
-    {
-        var query = new QueryDefinition(
-            "SELECT * FROM c WHERE c.kind = @kind AND c.properties.adminLevel = @adminLevel AND NOT IS_DEFINED(c.properties.isPointer)")
-            .WithParameter("@kind", Kind)
-            .WithParameter("@adminLevel", "2");
-
-        return (await ExecuteQueryAsync<StoredFeature>(query, cancellationToken: cancellationToken))
-            .Where(d => !d.Id.StartsWith("empty-", StringComparison.Ordinal));
-    }
-
     /// <summary>
     /// Fetches countries from Overpass that are not yet stored in Cosmos,
     /// stores them, and creates pointers for all bounding-box tiles.
-    /// When <paramref name="countryCodes"/> is provided, only those countries are targeted.
+    /// When <paramref name="countryCodes"/> or <paramref name="osmIds"/> is provided, only those countries are targeted.
     /// Returns a summary of what was fetched and stored.
     /// </summary>
-    public async Task<CountryFetchResult> FetchAndStoreCountries(IReadOnlyList<string>? countryCodes, ILogger logger, CancellationToken cancellationToken)
+    public async Task<CountryFetchResult> FetchAndStoreCountries(IReadOnlyList<string>? countryCodes, IReadOnlyList<(string osmType, long osmId)>? osmIds, ILogger logger, CancellationToken cancellationToken)
     {
         const int adminLevel = 2;
         const int zoom = 6;
 
-        // Phase 1: discover all countries globally via Overpass (tags only, no geometry).
-        var worldSw = new Coordinate(-180, -90);
-        var worldNe = new Coordinate(180, 90);
-        var allDiscovered = (await _overpassClient.GetAdminBoundaryIds(worldSw, worldNe, adminLevel, cancellationToken)).ToList();
-        logger.LogInformation("Overpass discovered {Count} admin_level=2 relations globally", allDiscovered.Count);
+        List<(string osmType, long osmId)> missingIds;
+        Dictionary<string, StoredFeature> existingDocs;
+        int discoveredCount;
+        bool forceRefetch;
 
-        // Phase 2: if country codes specified, filter to only matching relations.
-        if (countryCodes is { Count: > 0 })
+        if (osmIds is { Count: > 0 })
         {
-            var requestedCodes = new HashSet<string>(countryCodes, StringComparer.OrdinalIgnoreCase);
-            allDiscovered = allDiscovered
-                .Where(d => d.tags.TryGetValue("ISO3166-1", out var code) && requestedCodes.Contains(code)
-                          || d.tags.TryGetValue("ISO3166-1:alpha2", out code) && requestedCodes.Contains(code)
-                          || d.tags.TryGetValue("country_code_iso3166_1_alpha_2", out code) && requestedCodes.Contains(code))
-                .ToList();
+            // Direct OSM ID refetch — skip Overpass discovery.
+            forceRefetch = true;
+            discoveredCount = osmIds.Count;
+            missingIds = osmIds.ToList();
 
-            logger.LogInformation("Filtered to {Count} relations matching requested country codes: {Codes}",
-                allDiscovered.Count, string.Join(", ", countryCodes));
+            var candidateDocIds = osmIds
+                .Select(d => $"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}")
+                .ToList();
+            existingDocs = (await GetByIdsAsync(candidateDocIds, cancellationToken))
+                .ToDictionary(d => d.Id, StringComparer.Ordinal);
+
+            logger.LogInformation("OSM ID refetch: {Count} IDs requested, {Existing} existing docs found",
+                osmIds.Count, existingDocs.Count);
         }
+        else
+        {
+            // Phase 1: discover all countries globally via Overpass (tags only, no geometry).
+            var worldSw = new Coordinate(-180, -90);
+            var worldNe = new Coordinate(180, 90);
+            var allDiscovered = (await _overpassClient.GetAdminBoundaryIds(worldSw, worldNe, adminLevel, cancellationToken)).ToList();
+            logger.LogInformation("Overpass discovered {Count} admin_level=2 relations globally", allDiscovered.Count);
 
-        // Phase 3: check which ones are already stored in Cosmos.
-        var forceRefetch = countryCodes is { Count: > 0 };
-        var candidateDocIds = allDiscovered
-            .Select(d => $"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}")
-            .ToList();
-        var existingDocs = (await GetByIdsAsync(candidateDocIds, cancellationToken))
-            .ToDictionary(d => d.Id, StringComparer.Ordinal);
+            // Phase 2: if country codes specified, filter to only matching relations.
+            if (countryCodes is { Count: > 0 })
+            {
+                var requestedCodes = new HashSet<string>(countryCodes, StringComparer.OrdinalIgnoreCase);
+                allDiscovered = allDiscovered
+                    .Where(d => d.tags.TryGetValue("ISO3166-1", out var code) && requestedCodes.Contains(code)
+                              || d.tags.TryGetValue("ISO3166-1:alpha2", out code) && requestedCodes.Contains(code)
+                              || d.tags.TryGetValue("country_code_iso3166_1_alpha_2", out code) && requestedCodes.Contains(code))
+                    .ToList();
 
-        var missingIds = forceRefetch
-            ? allDiscovered.Select(d => (d.osmType, d.osmId)).ToList()
-            : allDiscovered
-                .Where(d => !existingDocs.ContainsKey($"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}"))
-                .Select(d => (d.osmType, d.osmId))
+                logger.LogInformation("Filtered to {Count} relations matching requested country codes: {Codes}",
+                    allDiscovered.Count, string.Join(", ", countryCodes));
+            }
+
+            // Phase 3: check which ones are already stored in Cosmos.
+            forceRefetch = countryCodes is { Count: > 0 };
+            discoveredCount = allDiscovered.Count;
+            var candidateDocIds = allDiscovered
+                .Select(d => $"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}")
                 .ToList();
+            existingDocs = (await GetByIdsAsync(candidateDocIds, cancellationToken))
+                .ToDictionary(d => d.Id, StringComparer.Ordinal);
+
+            missingIds = forceRefetch
+                ? allDiscovered.Select(d => (d.osmType, d.osmId)).ToList()
+                : allDiscovered
+                    .Where(d => !existingDocs.ContainsKey($"{Kind}:{adminLevel}:{d.osmType}:{d.osmId}"))
+                    .Select(d => (d.osmType, d.osmId))
+                    .ToList();
+        }
 
         logger.LogInformation("Already stored: {Existing}, to fetch: {Missing}{Force}",
             existingDocs.Count, missingIds.Count, forceRefetch ? " (force-refetch)" : "");
@@ -554,7 +568,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         logger.LogInformation("Created {Pointers} pointers for {Countries} new countries", pointersCreated, newCountries.Count);
 
         return new CountryFetchResult(
-            Discovered: allDiscovered.Count,
+            Discovered: discoveredCount,
             AlreadyStored: existingDocs.Count,
             NewlyFetched: newCountries.Count,
             PointersCreated: pointersCreated,

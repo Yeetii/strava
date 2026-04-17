@@ -5,18 +5,13 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/manage/queue/{{jobType}}
+  url: {{baseUrl}}/manage/queue/:jobType
   body: none
   auth: none
 }
 
-params:query {
-  startDate: 
-  endDate: 
-}
-
 params:path {
-  jobType: summits
+  jobType: visitedAreas
 }
 
 headers {
@@ -25,15 +20,15 @@ headers {
 
 docs {
   ## Job Types
-
+  
   | jobType       | Description                                      |
   |---------------|--------------------------------------------------|
   | summits       | Recalculate summited peaks for each activity     |
   | visitedPaths  | Recalculate visited paths for each activity      |
   | visitedAreas  | Recalculate visited areas for each activity      |
-
+  
   ## Query Parameters
-
+  
   - **startDate** (optional): ISO 8601 date, only queue activities on or after this date
   - **endDate** (optional): ISO 8601 date, only queue activities on or before this date
 }
