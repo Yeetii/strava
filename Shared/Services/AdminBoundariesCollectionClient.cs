@@ -92,7 +92,9 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             var docId = $"{Kind}:{adminLevel}:{osmType}:{osmId}";
             if (existingDocs.TryGetValue(docId, out var existing))
             {
-                features.Add(existing);
+                // For countries, only include features whose centroid is on this tile.
+                if (adminLevel != 2 || (existing.X == x && existing.Y == y))
+                    features.Add(existing);
                 if (existing.X != x || existing.Y != y)
                 {
                     var pointer = StoredFeature.CreatePointer(
@@ -146,6 +148,14 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
                 .ToList();
 
             await UpsertBoundaryDocuments(newDocuments, cancellationToken);
+
+            // For countries, don't return the full-geometry doc on a non-centroid tile;
+            // the pointer already tells the frontend where to find it.
+            if (adminLevel == 2)
+                newDocuments = newDocuments
+                    .Where(d => StoredFeature.IsPointerDocument(d) || d.X == x && d.Y == y)
+                    .ToList();
+
             features.AddRange(newDocuments);
         }
 
