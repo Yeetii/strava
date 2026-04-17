@@ -176,12 +176,13 @@ namespace Shared.Models
 
         public Feature ToFeature()
         {
-            var propertiesCopy = new Dictionary<string, dynamic>(Properties)
-            {
-                ["x"] = X.ToString(),
-                ["y"] = Y.ToString(),
-                ["zoom"] = Zoom.ToString()
-            };
+            var propertiesCopy = new Dictionary<string, dynamic>(Properties.Count + 3);
+            foreach (var (key, value) in Properties)
+                propertiesCopy[key] = NormalizePropertyValue(value);
+
+            propertiesCopy["x"] = X.ToString();
+            propertiesCopy["y"] = Y.ToString();
+            propertiesCopy["zoom"] = Zoom.ToString();
 
             return new Feature(
                 Geometry,
@@ -190,5 +191,28 @@ namespace Shared.Models
                 new FeatureId(LogicalId)
             );
         }
+
+        // When Properties come back from Cosmos via System.Text.Json, values are JsonElement
+        // rather than native CLR types.  BAMCIS GeoJSON re-serializes them as nested wrappers,
+        // producing e.g. [[]] instead of ["tracedetrail"].  Convert them back to plain objects.
+        private static dynamic NormalizePropertyValue(dynamic value)
+        {
+            if (value is System.Text.Json.JsonElement je)
+                return ConvertJsonElement(je);
+            return value;
+        }
+
+        private static dynamic ConvertJsonElement(System.Text.Json.JsonElement element) => element.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => element.GetString()!,
+            System.Text.Json.JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False => false,
+            System.Text.Json.JsonValueKind.Null => null!,
+            System.Text.Json.JsonValueKind.Array => element.EnumerateArray().Select(ConvertJsonElement).ToList(),
+            System.Text.Json.JsonValueKind.Object => element.EnumerateObject()
+                .ToDictionary(p => p.Name, p => ConvertJsonElement(p.Value)),
+            _ => element.GetRawText()
+        };
     }
 }
