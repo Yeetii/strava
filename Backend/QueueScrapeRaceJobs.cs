@@ -21,7 +21,8 @@ public class QueueScrapeRaceJobs(
     private static readonly Uri RunagainApiUrl = new("https://cloudrun-pgjjiy2k6a-ew.a.run.app/find_runs");
     private static readonly string RunagainFirestoreBatchUrl = "https://firestore.googleapis.com/v1/projects/nestelop-production/databases/(default)/documents:batchGet";
     private static readonly string RunagainFirestoreDocPrefix = "projects/nestelop-production/databases/(default)/documents/RunCollection/";
-    private static readonly string[] RunagainRaceTypes = ["Stiløp"];
+    private static readonly string[] RunagainRaceTypes = ["Stiløp", "Backyard ultra", "Ultra", "Motbakke"];
+    private static readonly string[] RunagainTerrainTypes = ["Terreng"];
 
     private static readonly Uri LoppkartanMarkersUrl = new("https://www.loppkartan.se/markers-se.json");
 
@@ -41,7 +42,11 @@ public class QueueScrapeRaceJobs(
         all.AddRange(await FetchRunagainJobsAsync(httpClient, cancellationToken));
         all.AddRange(await FetchLoppkartanJobsAsync(httpClient, cancellationToken));
 
-        logger.LogInformation("QueueScrapeRaceJobs: {Count} total jobs discovered across all sources", all.Count);
+        // Deduplicate: the same race may appear multiple times (e.g. last year + this year).
+        // Keep the entry with the latest date for each stable key.
+        all = DeduplicateJobs(all);
+
+        logger.LogInformation("QueueScrapeRaceJobs: {Count} total jobs after deduplication", all.Count);
 
         const int ChunkSize = 100;
         var messages = all
@@ -81,7 +86,7 @@ public class QueueScrapeRaceJobs(
         var jobsByUrl = new Dictionary<string, ScrapeJob>(StringComparer.OrdinalIgnoreCase);
         var now = DateTime.UtcNow;
 
-        for (int monthOffset = 0; monthOffset <= 12; monthOffset++)
+        for (int monthOffset = -12; monthOffset <= 12; monthOffset++)
         {
             var date = now.AddMonths(monthOffset);
             try
@@ -128,49 +133,47 @@ public class QueueScrapeRaceJobs(
     {
         var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var jobs = new List<ScrapeJob>();
-        var nowTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var oneYearAgoTimestamp = DateTimeOffset.UtcNow.AddYears(-1).ToUnixTimeSeconds();
 
-        foreach (var raceType in RunagainRaceTypes)
+        var raceTypeFilter = string.Join(", ", RunagainRaceTypes.Select(t => $"'{t}'"));
+        var terrainFilter = string.Join(", ", RunagainTerrainTypes.Select(t => $"'{t}'"));
+        var filter = $"(race_type IN [{raceTypeFilter}] OR terrain_type IN [{terrainFilter}]) AND timestamp >= {oneYearAgoTimestamp}";
+        const int pageSize = 500;
+
+        for (int offset = 0; ; offset += pageSize)
         {
-            var filter = $"race_type IN ['{raceType}'] AND timestamp >= {nowTimestamp}";
-            const int pageSize = 500;
-
-            for (int offset = 0; ; offset += pageSize)
+            string json;
+            try
             {
-                string json;
-                try
+                var request = new HttpRequestMessage(HttpMethod.Post, RunagainApiUrl)
                 {
-                    var request = new HttpRequestMessage(HttpMethod.Post, RunagainApiUrl)
-                    {
-                        Content = new StringContent(
-                            System.Text.Json.JsonSerializer.Serialize(new { search = "", filter, offset, sort = "date", limit = pageSize }),
-                            System.Text.Encoding.UTF8,
-                            "application/json")
-                    };
-                    var response = await httpClient.SendAsync(request, cancellationToken);
-                    response.EnsureSuccessStatusCode();
-                    json = await response.Content.ReadAsStringAsync(cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    logger.LogWarning(ex, "RunAgain: failed to fetch search results (offset {Offset})", offset);
-                    break;
-                }
-
-                var page = RaceScrapeDiscovery.ParseRunagainSearchResults(json);
-                if (page.Count == 0)
-                    break;
-
-                foreach (var job in page)
-                {
-                    if (job.RunagainUrl is not null && seenUrls.Add(job.RunagainUrl.AbsoluteUri))
-                        jobs.Add(job);
-                }
-
-                // Check if we've reached the end
-                if (page.Count < pageSize)
-                    break;
+                    Content = new StringContent(
+                        System.Text.Json.JsonSerializer.Serialize(new { search = "", filter, offset, sort = "date", limit = pageSize }),
+                        System.Text.Encoding.UTF8,
+                        "application/json")
+                };
+                var response = await httpClient.SendAsync(request, cancellationToken);
+                response.EnsureSuccessStatusCode();
+                json = await response.Content.ReadAsStringAsync(cancellationToken);
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "RunAgain: failed to fetch search results (offset {Offset})", offset);
+                break;
+            }
+
+            var page = RaceScrapeDiscovery.ParseRunagainSearchResults(json);
+            if (page.Count == 0)
+                break;
+
+            foreach (var job in page)
+            {
+                if (job.RunagainUrl is not null && seenUrls.Add(job.RunagainUrl.AbsoluteUri))
+                    jobs.Add(job);
+            }
+
+            if (page.Count < pageSize)
+                break;
         }
 
         logger.LogInformation("RunAgain: discovered {Count} unique events", jobs.Count);
@@ -308,5 +311,55 @@ public class QueueScrapeRaceJobs(
             logger.LogWarning(ex, "Loppkartan: failed to fetch markers");
             return [];
         }
+    }
+
+    /// <summary>
+    /// Deduplicates jobs by a stable key derived from source URLs or external IDs.
+    /// When the same race appears multiple times (e.g. 2025 and 2026 editions),
+    /// the entry with the latest date is kept.
+    /// </summary>
+    private static List<ScrapeJob> DeduplicateJobs(List<ScrapeJob> jobs)
+    {
+        var byKey = new Dictionary<string, ScrapeJob>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var job in jobs)
+        {
+            var key = GetDeduplicationKey(job);
+            if (key is null)
+            {
+                // No stable key — keep as-is (will be a separate message).
+                byKey[Guid.NewGuid().ToString()] = job;
+                continue;
+            }
+
+            if (byKey.TryGetValue(key, out var existing))
+            {
+                // Keep whichever has the later date (prefer non-null over null).
+                if (string.Compare(job.Date, existing.Date, StringComparison.Ordinal) > 0)
+                    byKey[key] = job;
+            }
+            else
+            {
+                byKey[key] = job;
+            }
+        }
+
+        return [.. byKey.Values];
+    }
+
+    private static string? GetDeduplicationKey(ScrapeJob job)
+    {
+        // Scope dedup per source so the same race from different sources
+        // (e.g. UTMB + TraceDeTrail) is kept as separate jobs.
+        if (job.UtmbUrl is not null) return $"utmb|{job.UtmbUrl.AbsoluteUri}";
+        if (job.TraceDeTrailEventUrl is not null) return $"tdt|{job.TraceDeTrailEventUrl.AbsoluteUri}";
+        if (job.RunagainUrl is not null) return $"ra|{job.RunagainUrl.AbsoluteUri}";
+        if (job.WebsiteUrl is not null) return $"web|{job.WebsiteUrl.AbsoluteUri}";
+
+        // Fall back to external IDs.
+        if (job.ExternalIds is { Count: > 0 })
+            return string.Join("|", job.ExternalIds.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value}"));
+
+        return null;
     }
 }
