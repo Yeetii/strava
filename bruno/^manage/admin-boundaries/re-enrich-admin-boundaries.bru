@@ -1,0 +1,15 @@
+meta {
+  name: Re-enrich Admin Boundaries
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/manage/adminBoundaries/reEnrich
+  body: none
+  auth: none
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}
