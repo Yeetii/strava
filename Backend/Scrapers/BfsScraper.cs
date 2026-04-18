@@ -261,13 +261,13 @@ internal sealed class BfsScraper(ILogger logger)
 
             if (pagesToFetch.Count == 0) break;
 
-            logger.LogInformation("BFS depth {Depth}: fetching {Count} pages", depth, pagesToFetch.Count);
+            logger.LogDebug("BFS depth {Depth}: fetching {Count} pages", depth, pagesToFetch.Count);
             foreach (var p in pagesToFetch)
                 logger.LogDebug("BFS depth {Depth}: {Url}", depth, p.Url);
 
             var fetchTasks = pagesToFetch.Select(e => TryFetchStringAsync(httpClient, e.Url, cancellationToken));
             var htmlResults = await Task.WhenAll(fetchTasks);
-            logger.LogInformation("BFS depth {Depth}: fetched {Ok}/{Total} pages", depth, htmlResults.Count(r => r is not null), htmlResults.Length);
+            logger.LogDebug("BFS depth {Depth}: fetched {Ok}/{Total} pages", depth, htmlResults.Count(r => r is not null), htmlResults.Length);
 
             var nextLevel = new List<(Uri Url, bool IsCourseLink)>();
             for (int i = 0; i < pagesToFetch.Count; i++)
@@ -359,7 +359,7 @@ internal sealed class BfsScraper(ILogger logger)
             currentLevel = nextLevel;
         }
 
-        logger.LogInformation("BFS done. Visited {Pages} pages, found {Gpx} GPX URLs, {ExtProbes} external probes",
+        logger.LogDebug("BFS crawl done. Visited {Pages} pages, found {Gpx} GPX URLs, {ExtProbes} external probes",
             visitedPages.Count, gpxUrlToPage.Count, externalGpxProbes.Count);
 
         // Probe external "GPX"-labelled links: fetch the page and scrape it for GPX files.
@@ -389,7 +389,7 @@ internal sealed class BfsScraper(ILogger logger)
                 gpxUrlToPage.TryAdd(innerLink.AbsoluteUri, (sourceHtml, sourcePageUrl));
         }
 
-        logger.LogInformation("BFS: external probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
+        logger.LogDebug("BFS: external probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
 
         // Probe Google Drive folder links: fetch the folder page, extract file IDs from data-id attributes,
         // and construct download URLs. Attributed to the internal page that linked to the folder.
@@ -400,31 +400,31 @@ internal sealed class BfsScraper(ILogger logger)
             if (folderHtml is null) continue;
 
             var downloadUrls = ExtractGoogleDriveDownloadUrls(folderHtml);
-            logger.LogInformation("BFS: Drive folder yielded {Count} download URLs", downloadUrls.Count);
+            logger.LogDebug("BFS: Drive folder yielded {Count} download URLs", downloadUrls.Count);
             foreach (var dlUrl in downloadUrls)
                 gpxUrlToPage.TryAdd(dlUrl.AbsoluteUri, (sourceHtml, sourcePageUrl));
         }
 
         if (driveFolderProbes.Count > 0)
-            logger.LogInformation("BFS: Drive folder probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
+            logger.LogDebug("BFS: Drive folder probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
 
         // Fetch external CSS stylesheets from the start page so background-image URLs are found by image extraction.
         string? cssContent = null;
         if (startPageHtml is not null)
         {
             var cssUrls = RaceHtmlScraper.ExtractStylesheetUrls(startPageHtml, startUrl);
-            logger.LogInformation("BFS: found {Count} CSS stylesheets to fetch", cssUrls.Count);
+            logger.LogDebug("BFS: found {Count} CSS stylesheets to fetch", cssUrls.Count);
             if (cssUrls.Count > 0)
             {
                 var cssTasks = cssUrls.Take(5).Select(u => TryFetchStringAsync(httpClient, u, cancellationToken));
                 var cssResults = await Task.WhenAll(cssTasks);
                 cssContent = string.Join("\n", cssResults.Where(c => c is not null));
-                logger.LogInformation("BFS: CSS fetched, total {Len} chars", cssContent.Length);
+                logger.LogDebug("BFS: CSS fetched, total {Len} chars", cssContent.Length);
             }
         }
 
-        logger.LogInformation("BFS: extracting image from {GpxPages} gpx pages, {CoursePages} course pages ({ContentOnly} content-only)",
-            pagesWithGpx.Count, coursePages.Count, coursePages.Count(cp => cp.IsContentOnly));
+        logger.LogDebug("BFS: extracting metadata from {GpxPages} gpx pages, {CoursePages} course pages",
+            pagesWithGpx.Count, coursePages.Count);
 
         // Extract image: prefer the start page (landing page) first, then fall back to
         // course pages and GPX pages only when the start page has no image.
@@ -454,26 +454,18 @@ internal sealed class BfsScraper(ILogger logger)
             }
         }
 
-        logger.LogInformation("BFS: image done, extracting logo");
         // Extract logo from the start page.
         var logoUrl = startPageHtml is not null ? RaceHtmlScraper.ExtractLogo(startPageHtml, startUrl) : null;
-
-        logger.LogInformation("BFS: logo done, extracting date");
         var startPageDate = startPageHtml is not null ? RaceHtmlScraper.ExtractDate(startPageHtml) : null;
 
-        logger.LogInformation("BFS: date done, extracting name");
         // Extract event name from headings/title/meta across start page and course pages.
         var courseHtmls = coursePages.Select(cp => (cp.Url, cp.Html)).ToList();
         var extractedName = RaceHtmlScraper.ExtractEventName(startUrl, startPageHtml, courseHtmls);
 
-        logger.LogInformation("BFS: name done, extracting elevation & price");
         var startPageElevation = startPageHtml is not null ? RaceHtmlScraper.ExtractElevationGain(startPageHtml) : null;
         var price = startPageHtml is not null ? RaceHtmlScraper.ExtractPrice(startPageHtml, startUrl) : null;
         var startFee = price?.Amount.ToString();
         var currency = price?.Currency;
-
-        logger.LogInformation("BFS: image={Image}, logo={Logo}, date={Date}, name={Name}, elevation={Elevation}, price={Fee} {Currency}, gpxUrls={GpxCount}",
-            imageUrl, logoUrl, startPageDate, extractedName, startPageElevation, startFee, currency, gpxUrlToPage.Count);
 
         if (gpxUrlToPage.Count == 0)
             return new BfsResult([], imageUrl, logoUrl, startPageDate, coursePages, extractedName, startFee, currency, startPageElevation);
@@ -491,12 +483,12 @@ internal sealed class BfsScraper(ILogger logger)
         }
 
         // Fetch all GPX URLs concurrently.
-        logger.LogInformation("BFS: fetching {Count} GPX URLs", gpxUrlToPage.Count);
-        foreach (var url in gpxUrlToPage.Keys)
-            logger.LogDebug("BFS: GPX URL {Url}", url);
         var gpxTasks = gpxUrlToPage.Keys.Select(url => TryFetchGpxFromUrlAsync(httpClient, new Uri(url), cancellationToken));
         var gpxResults = await Task.WhenAll(gpxTasks);
-        logger.LogInformation("BFS: fetched GPX, {Parsed} parsed successfully", gpxResults.Count(r => r.HasValue));
+        var parsedCount = gpxResults.Count(r => r.HasValue);
+        var failedCount = gpxUrlToPage.Count - parsedCount;
+        if (failedCount > 0)
+            logger.LogError("BFS: {Failed}/{Total} GPX URLs were fetched but could not be parsed", failedCount, gpxUrlToPage.Count);
 
         var routes = gpxResults
             .Where(r => r.HasValue)
@@ -523,7 +515,8 @@ internal sealed class BfsScraper(ILogger logger)
                 .First())
             .ToList();
 
-        logger.LogInformation("BFS: returning {Routes} routes (deduped from {Raw})", deduped.Count, routes.Count);
+        logger.LogInformation("BFS: {Url} — visited {Pages} pages, {GpxFound} GPX found, {Parsed} parsed, {Routes} routes (deduped from {Raw}), name={Name}, date={Date}",
+            startUrl, visitedPages.Count, gpxUrlToPage.Count, parsedCount, deduped.Count, routes.Count, extractedName, startPageDate);
         return new BfsResult(routes, imageUrl, logoUrl, startPageDate, coursePages, extractedName, startFee, currency, startPageElevation);
     }
 
@@ -590,7 +583,11 @@ internal sealed class BfsScraper(ILogger logger)
 
             var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token);
             if (bytes.Length > MaxResponseBytes) return null;
-            return System.Text.Encoding.UTF8.GetString(bytes);
+            var text = System.Text.Encoding.UTF8.GetString(bytes);
+            // Strip UTF-8 BOM — XmlReader chokes on it when reading from a StringReader.
+            if (text.Length > 0 && text[0] == '\uFEFF')
+                text = text[1..];
+            return text;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

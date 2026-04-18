@@ -1,4 +1,5 @@
 using BAMCIS.GeoJSON;
+using Shared.Models;
 
 namespace Shared.Geo;
 
@@ -227,5 +228,82 @@ public static class GeometryDecimator
         const double tolerance = 1e-9;
         return Math.Abs(left.Longitude - right.Longitude) < tolerance
             && Math.Abs(left.Latitude - right.Latitude) < tolerance;
+    }
+
+    // --- RDP simplification for Coordinate lists (GPX tracks) -----------------
+
+    /// <summary>
+    /// Simplifies a list of coordinates using the Ramer-Douglas-Peucker algorithm.
+    /// <paramref name="epsilon"/> is the maximum perpendicular distance (in degrees)
+    /// a point may deviate from the simplified line before it is kept.
+    /// </summary>
+    public static IReadOnlyList<Coordinate> SimplifyTrack(IReadOnlyList<Coordinate> points, double epsilon)
+    {
+        if (epsilon <= 0 || points.Count < 3)
+            return points;
+
+        var keep = new bool[points.Count];
+        keep[0] = true;
+        keep[points.Count - 1] = true;
+
+        var stack = new Stack<(int start, int end)>();
+        stack.Push((0, points.Count - 1));
+
+        while (stack.Count > 0)
+        {
+            var (start, end) = stack.Pop();
+            if (end - start < 2)
+                continue;
+
+            double maxDist = 0;
+            int index = start;
+
+            for (int i = start + 1; i < end; i++)
+            {
+                double dist = PerpendicularDistanceCoord(points[i], points[start], points[end]);
+                if (dist > maxDist)
+                {
+                    maxDist = dist;
+                    index = i;
+                }
+            }
+
+            if (maxDist > epsilon)
+            {
+                keep[index] = true;
+                stack.Push((start, index));
+                stack.Push((index, end));
+            }
+        }
+
+        var result = new List<Coordinate>();
+        for (int i = 0; i < points.Count; i++)
+        {
+            if (keep[i])
+                result.Add(points[i]);
+        }
+
+        return result;
+    }
+
+    private static double PerpendicularDistanceCoord(Coordinate point, Coordinate lineStart, Coordinate lineEnd)
+    {
+        double dx = lineEnd.Lng - lineStart.Lng;
+        double dy = lineEnd.Lat - lineStart.Lat;
+
+        double lengthSq = dx * dx + dy * dy;
+        if (lengthSq == 0)
+        {
+            double px = point.Lng - lineStart.Lng;
+            double py = point.Lat - lineStart.Lat;
+            return Math.Sqrt(px * px + py * py);
+        }
+
+        double t = ((point.Lng - lineStart.Lng) * dx + (point.Lat - lineStart.Lat) * dy) / lengthSq;
+        t = Math.Clamp(t, 0, 1);
+
+        double ex = point.Lng - (lineStart.Lng + t * dx);
+        double ey = point.Lat - (lineStart.Lat + t * dy);
+        return Math.Sqrt(ex * ex + ey * ey);
     }
 }

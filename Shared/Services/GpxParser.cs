@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Xml;
 using System.Xml.Linq;
+using Shared.Geo;
 using Shared.Models;
 
 namespace Shared.Services;
@@ -39,6 +40,13 @@ public static class GpxParser
 
         if (points.Count < 2)
             return null;
+
+        // Simplify dense GPX tracks to keep document sizes manageable.
+        // 0.0001° ≈ 11 m — preserves route shape while cutting 10k+ point tracks significantly.
+        const double rdpEpsilon = 0.0001;
+        const int simplifyThreshold = 2000;
+        if (points.Count > simplifyThreshold)
+            points = GeometryDecimator.SimplifyTrack(points, rdpEpsilon).ToList();
 
         var parsedName = document
             .Descendants()

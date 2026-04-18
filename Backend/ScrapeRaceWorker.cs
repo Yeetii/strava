@@ -130,16 +130,33 @@ public class ScrapeRaceWorker
             if (scrapersRun == 0)
                 _logger.LogInformation("No scrapers produced output for {Key}", organizerKey);
 
-            await actions.CompleteMessageAsync(message, cancellationToken);
+            await TryCompleteAsync(actions, message, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "ScrapeRaceWorker failed for {Key} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
                 organizerKey, message.MessageId, message.DeliveryCount);
+            await TryDeadLetterAsync(actions, message, organizerKey, ex);
+        }
+    }
+
+    // ── Settlement helpers ───────────────────────────────────────────────
+
+    private async Task TryCompleteAsync(ServiceBusMessageActions actions, ServiceBusReceivedMessage message, CancellationToken ct)
+    {
+        try { await actions.CompleteMessageAsync(message, ct); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Could not complete message (manual trigger?)"); }
+    }
+
+    private async Task TryDeadLetterAsync(ServiceBusMessageActions actions, ServiceBusReceivedMessage message, string key, Exception inner)
+    {
+        try
+        {
             await actions.DeadLetterMessageAsync(message,
                 deadLetterReason: nameof(ScrapeRaceWorker),
-                deadLetterErrorDescription: $"{organizerKey}: {ex.Message}");
+                deadLetterErrorDescription: $"{key}: {inner.Message}");
         }
+        catch (Exception ex) { _logger.LogDebug(ex, "Could not dead-letter message (manual trigger?)"); }
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
