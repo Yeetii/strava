@@ -88,7 +88,8 @@ public class VisitedPathsWorker(
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process visited paths for activity {ActivityId}", activityId);
+            _logger.LogError(ex, "Failed to process visited paths for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
+                activityId, job.MessageId, job.DeliveryCount);
             await actions.DeadLetterMessageAsync(job,
                 deadLetterReason: nameof(VisitedPathsWorker),
                 deadLetterErrorDescription: $"Activity {activityId}: {ex.Message}");

@@ -61,7 +61,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process summit job for activity {ActivityId}", activity.Id);
+            _logger.LogError(ex, "Failed to process summit job for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
+                activity.Id, job.MessageId, job.DeliveryCount);
             await actions.DeadLetterMessageAsync(job,
                 deadLetterReason: nameof(SummitsWorker),
                 deadLetterErrorDescription: $"Activity {activity.Id}: {ex.Message}");

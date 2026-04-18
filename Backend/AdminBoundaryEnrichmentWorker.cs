@@ -38,7 +38,8 @@ public class AdminBoundaryEnrichmentWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to enrich admin boundary {BoundaryId}", document.Id);
+                logger.LogError(ex, "Failed to enrich admin boundary {BoundaryId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
+                    document.Id, message.MessageId, message.DeliveryCount);
                 await actions.DeadLetterMessageAsync(message,
                     deadLetterReason: nameof(AdminBoundaryEnrichmentWorker),
                     deadLetterErrorDescription: $"Boundary {document.Id}: {ex.Message}",

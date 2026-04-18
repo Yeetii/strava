@@ -30,7 +30,8 @@ public class ActivityEventWorker(UserAuthenticationService _userAuthService, ILo
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to process activity event");
+                _logger.LogError(ex, "Failed to process activity event (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
+                    message.MessageId, message.DeliveryCount);
                 await actions.DeadLetterMessageAsync(message,
                     deadLetterReason: nameof(ActivityEventWorker),
                     deadLetterErrorDescription: ex.Message);
