@@ -1,5 +1,4 @@
 using Azure.Messaging.ServiceBus;
-using BAMCIS.GeoJSON;
 using Backend.Scrapers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
@@ -9,34 +8,33 @@ using Shared.Constants;
 
 namespace Backend;
 
+/// <summary>
+/// Reads an organizer key from the Service Bus queue, fetches the <see cref="RaceOrganizerDocument"/>
+/// from Cosmos, runs the scraper pipeline, and writes <see cref="ScraperOutput"/> back to the document.
+/// Assembly into final <see cref="StoredFeature"/> documents is a separate downstream step.
+/// </summary>
 public class ScrapeRaceWorker
 {
-    private const int Zoom = RaceCollectionClient.DefaultZoom;
-
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly RaceCollectionClient _racesCollectionClient;
+    private readonly RaceOrganizerClient _organizerClient;
     private readonly ILogger<ScrapeRaceWorker> _logger;
 
-    // Scraper pipeline in priority order:
-    // 1. UTMB  2. ITRA (TraceDeTrail direct)  3. TraceDeTrail event page → BFS
-    // 4. BFS (Loppkartan / RunAgain organizer website / generic)
-    private readonly IReadOnlyList<IRaceScraper> _scrapers;
+    private readonly IReadOnlyList<(string Key, IRaceScraper Scraper)> _scrapers;
 
     public ScrapeRaceWorker(
         IHttpClientFactory httpClientFactory,
-        RaceCollectionClient racesCollectionClient,
+        RaceOrganizerClient organizerClient,
         ILogger<ScrapeRaceWorker> logger)
     {
         _httpClientFactory = httpClientFactory;
-        _racesCollectionClient = racesCollectionClient;
+        _organizerClient = organizerClient;
         _logger = logger;
 
         var bfsScraper = new BfsScraper(logger);
         _scrapers = [
-            new UtmbScraper(logger),
-            new ItraScraper(logger),
-            new TraceDeTrailEventScraper(logger, bfsScraper),
-            bfsScraper,
+            ("utmb", new UtmbScraper(logger)),
+            ("itra", new ItraScraper(logger)),
+            ("bfs", bfsScraper),
         ];
     }
 
@@ -46,317 +44,218 @@ public class ScrapeRaceWorker
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
-        ScrapeJob? job;
-        try
+        var organizerKey = message.Body.ToString().Trim();
+        if (string.IsNullOrWhiteSpace(organizerKey))
         {
-            job = message.Body.ToObjectFromJson<ScrapeJob>();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to deserialize ScrapeJob message (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                message.MessageId, message.DeliveryCount);
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "DeserializationFailed", deadLetterErrorDescription: ex.Message);
+            _logger.LogWarning("Empty organizer key (MessageId={MessageId})", message.MessageId);
+            await actions.DeadLetterMessageAsync(message, deadLetterReason: "EmptyOrganizerKey");
             return;
         }
 
-        if (job is null)
+        // 1. Fetch organizer document from Cosmos.
+        var doc = await _organizerClient.GetByIdMaybe(
+            organizerKey, new Microsoft.Azure.Cosmos.PartitionKey(organizerKey), cancellationToken);
+
+        if (doc is null)
         {
-            _logger.LogError("ScrapeJob message deserialized to null (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                message.MessageId, message.DeliveryCount);
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "NullScrapeJob", deadLetterErrorDescription: "ScrapeJob message deserialized to null");
+            _logger.LogWarning("Organizer document not found: {Key} (MessageId={MessageId})", organizerKey, message.MessageId);
+            await actions.DeadLetterMessageAsync(message, deadLetterReason: "DocumentNotFound",
+                deadLetterErrorDescription: $"No document for key '{organizerKey}'");
             return;
         }
 
+        // 2. Synthesize a ScrapeJob from the merged discovery data.
+        var job = BuildScrapeJobFromDocument(doc);
+
+        // 3. Run scraper pipeline — write output per scraper that returns results.
+        var httpClient = _httpClientFactory.CreateClient();
+        int scrapersRun = 0;
+
         try
         {
-            var httpClient = _httpClientFactory.CreateClient();
-
-            // Run all scrapers that can handle this job.
-            // Take routes from the highest-priority scraper that returns them,
-            // but collect WebsiteUrl and image/logo from any scraper that provides them.
-            RaceScraperResult? routeResult = null;
-            Uri? websiteUrl = null;
-            Uri? scrapedImageUrl = null;
-            Uri? scrapedLogoUrl = null;
-            string? scrapedName = null;
-            string? scrapedDate = null;
-            string? scrapedStartFee = null;
-            string? scrapedCurrency = null;
-
-            foreach (var scraper in _scrapers)
+            foreach (var (scraperKey, scraper) in _scrapers)
             {
                 if (!scraper.CanHandle(job)) continue;
 
-                var result = await scraper.ScrapeAsync(job, httpClient, cancellationToken);
+                RaceScraperResult? result;
+                try
+                {
+                    result = await scraper.ScrapeAsync(job, httpClient, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Scraper {Scraper} failed for {Key}", scraperKey, organizerKey);
+                    continue;
+                }
+
                 if (result is null) continue;
 
-                websiteUrl ??= result.WebsiteUrl;
-                scrapedImageUrl ??= result.ImageUrl;
-                scrapedLogoUrl ??= result.LogoUrl;
-                scrapedName ??= result.ExtractedName;
-                scrapedDate ??= result.ExtractedDate;
-                scrapedStartFee ??= result.StartFee;
-                scrapedCurrency ??= result.Currency;
-
-                if (routeResult is null && result.Routes.Count > 0)
-                    routeResult = result;
+                var output = ToScraperOutput(result);
+                await _organizerClient.WriteScraperOutputAsync(organizerKey, scraperKey, output, cancellationToken);
+                scrapersRun++;
+                _logger.LogInformation("Scraper/{Scraper}: wrote {RouteCount} routes for {Key}",
+                    scraperKey, output.Routes?.Count ?? 0, organizerKey);
             }
 
-            // Merge the website URL into the route result.
-            if (routeResult is not null)
-            {
-                var merged = routeResult with { WebsiteUrl = websiteUrl ?? routeResult.WebsiteUrl };
+            if (scrapersRun == 0)
+                _logger.LogInformation("No scrapers produced output for {Key}", organizerKey);
 
-                // Separate routes that have coordinates (→ LineString) from
-                // course-only routes without coordinates (→ Point via fallback).
-                var withCoords = merged.Routes.Where(r => r.Coordinates.Count >= 2).ToList();
-                var withoutCoords = merged.Routes.Where(r => r.Coordinates.Count < 2).ToList();
-
-                if (withCoords.Count > 0)
-                    await UpsertRoutesAsync(merged with { Routes = withCoords }, job, cancellationToken);
-
-                foreach (var course in withoutCoords)
-                    await UpsertCoursePointAsync(course, merged.WebsiteUrl, job, cancellationToken);
-
-                await actions.CompleteMessageAsync(message, cancellationToken);
-                return;
-            }
-
-            // All scrapers yielded no routes — fall back to a point feature.
-            await UpsertPointFallbackAsync(job, websiteUrl, scrapedImageUrl, scrapedLogoUrl, scrapedName, scrapedDate, scrapedStartFee, scrapedCurrency, cancellationToken);
             await actions.CompleteMessageAsync(message, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogError(ex, "ScrapeRaceWorker failed (UTMB={Utmb}, ITRA={Itra}, Event={Event}, Website={Web}, MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                job.UtmbUrl, job.TraceDeTrailItraUrls, job.TraceDeTrailEventUrl, job.WebsiteUrl, message.MessageId, message.DeliveryCount);
+            _logger.LogError(ex, "ScrapeRaceWorker failed for {Key} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
+                organizerKey, message.MessageId, message.DeliveryCount);
             await actions.DeadLetterMessageAsync(message,
                 deadLetterReason: nameof(ScrapeRaceWorker),
-                deadLetterErrorDescription: $"UTMB={job.UtmbUrl}, ITRA={job.TraceDeTrailItraUrls}, Event={job.TraceDeTrailEventUrl}, Website={job.WebsiteUrl}: {ex.Message}");
+                deadLetterErrorDescription: $"{organizerKey}: {ex.Message}");
         }
     }
 
-    // ── Upsert helpers ────────────────────────────────────────────────────────
+    // ── Helpers ────────────────────────────────────────────────────────────
 
-    private async Task UpsertRoutesAsync(
-        RaceScraperResult result,
-        ScrapeJob job,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// Builds a <see cref="ScrapeJob"/> from all discovery sources in the organizer document,
+    /// picking the best (first non-null) value for each field across sources.
+    /// </summary>
+    internal static ScrapeJob BuildScrapeJobFromDocument(RaceOrganizerDocument doc)
     {
-        for (int i = 0; i < result.Routes.Count; i++)
+        var allDiscoveries = doc.Discovery?.Values.SelectMany(list => list).ToList() ?? [];
+
+        // Source URLs may contain UTMB, ITRA, TraceDeTrail, RunAgain, or generic website URLs.
+        Uri? utmbUrl = null;
+        var itraUrls = new List<Uri>();
+        Uri? traceDeTrailEventUrl = null;
+        Uri? runagainUrl = null;
+        Uri? websiteUrl = null;
+
+        foreach (var d in allDiscoveries)
         {
-            var route = result.Routes[i];
-            var websiteUrl = result.WebsiteUrl ?? route.SourceUrl
-                ?? job.UtmbUrl ?? job.TraceDeTrailEventUrl ?? job.RunagainUrl ?? job.WebsiteUrl;
-            var idUrl = result.WebsiteUrl ?? job.TraceDeTrailEventUrl ?? route.SourceUrl
-                ?? job.UtmbUrl ?? job.RunagainUrl ?? job.WebsiteUrl;
-            var routeIndex = result.Routes.Count > 1 ? i : (int?)null;
+            if (d.SourceUrls is null) continue;
+            foreach (var urlStr in d.SourceUrls)
+            {
+                if (!Uri.TryCreate(urlStr, UriKind.Absolute, out var url)) continue;
+                var host = url.Host.ToLowerInvariant();
 
-            var featureId = idUrl is not null
-                ? RaceScrapeDiscovery.BuildFeatureId(idUrl, routeIndex)
-                : RaceScrapeDiscovery.BuildFeatureId(job.Name, route.Distance ?? job.Distance);
-
-            var properties = BuildBaseProperties(job);
-
-            if (websiteUrl is not null)
-                properties[RaceScrapeDiscovery.PropWebsite] = websiteUrl.AbsoluteUri;
-            if (!string.IsNullOrWhiteSpace(route.Name))
-                properties[RaceScrapeDiscovery.PropName] = route.Name;
-            if (!string.IsNullOrWhiteSpace(route.Distance))
-                properties[RaceScrapeDiscovery.PropDistance] = route.Distance;
-            else if (!string.IsNullOrWhiteSpace(job.Distance))
-                properties[RaceScrapeDiscovery.PropDistance] = job.Distance;
-            if (route.ElevationGain.HasValue && !job.ElevationGain.HasValue)
-                properties[RaceScrapeDiscovery.PropElevationGain] = route.ElevationGain.Value;
-            if (route.GpxUrl is not null)
-                properties["gpxUrl"] = route.GpxUrl.AbsoluteUri;
-
-            // Scraped image/logo/date override discovery-time values.
-            if (route.ImageUrl is not null)
-                properties[RaceScrapeDiscovery.PropImage] = route.ImageUrl.AbsoluteUri;
-            if (route.LogoUrl is not null)
-                properties[RaceScrapeDiscovery.PropLogo] = route.LogoUrl.AbsoluteUri;
-            if (!string.IsNullOrWhiteSpace(route.Date))
-                properties[RaceScrapeDiscovery.PropDate] = route.Date;
-            if (!string.IsNullOrWhiteSpace(route.StartFee) && string.IsNullOrWhiteSpace(job.StartFee))
-                properties[RaceScrapeDiscovery.PropStartFee] = route.StartFee;
-            if (!string.IsNullOrWhiteSpace(route.Currency) && string.IsNullOrWhiteSpace(job.Currency))
-                properties[RaceScrapeDiscovery.PropCurrency] = route.Currency;
-
-            var lineString = new LineString(route.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
-            var feature = new Feature(lineString, properties, null, new FeatureId(featureId));
-            var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
-            await _racesCollectionClient.UpsertDocument(stored, cancellationToken);
-            _logger.LogInformation("ScrapeRaceWorker: upserted route {FeatureId}", featureId);
+                if (host.Contains("utmb.world")) utmbUrl ??= url;
+                else if (host.Contains("itra.run")) itraUrls.Add(url);
+                else if (host.Contains("tracedetrail.fr") && url.AbsolutePath.Contains("/en/outdoor-trail-running/"))
+                    traceDeTrailEventUrl ??= url;
+                else if (host.Contains("runagain.com")) runagainUrl ??= url;
+                else websiteUrl ??= url;
+            }
         }
+
+        // If no websiteUrl found from source URLs, use the document's canonical URL.
+        if (websiteUrl is null && Uri.TryCreate(doc.Url, UriKind.Absolute, out var docUrl))
+            websiteUrl = docUrl;
+
+        // Merge discovery fields — first non-null wins.
+        string? name = null, date = null, distance = null, country = null, location = null;
+        string? raceType = null, imageUrl = null, logoUrl = null, organizer = null, description = null;
+        string? startFee = null, currency = null, county = null, typeLocal = null;
+        double? lat = null, lng = null, elevationGain = null;
+        bool? registrationOpen = null;
+        Dictionary<string, string>? externalIds = null;
+        List<string>? playgrounds = null;
+        int? runningStones = null;
+        string? utmbWorldSeriesCategory = null;
+
+        foreach (var d in allDiscoveries)
+        {
+            name ??= d.Name;
+            date ??= d.Date;
+            distance ??= d.Distance;
+            country ??= d.Country;
+            location ??= d.Location;
+            raceType ??= d.RaceType;
+            imageUrl ??= d.ImageUrl;
+            logoUrl ??= d.LogoUrl;
+            organizer ??= d.Organizer;
+            description ??= d.Description;
+            startFee ??= d.StartFee;
+            currency ??= d.Currency;
+            county ??= d.County;
+            typeLocal ??= d.TypeLocal;
+            lat ??= d.Latitude;
+            lng ??= d.Longitude;
+            elevationGain ??= d.ElevationGain;
+            registrationOpen ??= d.RegistrationOpen;
+            playgrounds ??= d.Playgrounds;
+            runningStones ??= d.RunningStones;
+            utmbWorldSeriesCategory ??= d.UtmbWorldSeriesCategory;
+
+            if (d.ExternalIds is { Count: > 0 })
+            {
+                externalIds ??= new(StringComparer.Ordinal);
+                foreach (var (k, v) in d.ExternalIds)
+                    externalIds.TryAdd(k, v);
+            }
+        }
+
+        return new ScrapeJob(
+            Name: name,
+            ExternalIds: externalIds,
+            Distance: distance,
+            ElevationGain: elevationGain,
+            Country: country,
+            Location: location,
+            RaceType: raceType,
+            RegistrationOpen: registrationOpen,
+            Date: date,
+            ImageUrl: imageUrl,
+            LogoUrl: logoUrl,
+            Latitude: lat,
+            Longitude: lng,
+            Playgrounds: playgrounds,
+            RunningStones: runningStones,
+            UtmbWorldSeriesCategory: utmbWorldSeriesCategory,
+            County: county,
+            TypeLocal: typeLocal,
+            Organizer: organizer,
+            Description: description,
+            StartFee: startFee,
+            Currency: currency,
+            UtmbUrl: utmbUrl,
+            TraceDeTrailItraUrls: itraUrls.Count > 0 ? itraUrls : null,
+            TraceDeTrailEventUrl: traceDeTrailEventUrl,
+            RunagainUrl: runagainUrl,
+            WebsiteUrl: websiteUrl);
     }
 
-    /// <summary>Upsert a course-page route (no GPX coordinates) as a Point feature.</summary>
-    private async Task UpsertCoursePointAsync(
-        ScrapedRoute course,
-        Uri? resultWebsiteUrl,
-        ScrapeJob job,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// Converts a <see cref="RaceScraperResult"/> into a <see cref="ScraperOutput"/> for storage.
+    /// </summary>
+    private static ScraperOutput ToScraperOutput(RaceScraperResult result)
     {
-        if (job.Latitude is null || job.Longitude is null)
+        return new ScraperOutput
         {
-            _logger.LogDebug("ScrapeRaceWorker: skipping course point — no job lat/lng");
-            return;
-        }
-
-        var websiteUrl = resultWebsiteUrl ?? course.SourceUrl
-            ?? job.UtmbUrl ?? job.TraceDeTrailEventUrl ?? job.RunagainUrl ?? job.WebsiteUrl;
-        var idUrl = resultWebsiteUrl ?? job.TraceDeTrailEventUrl ?? course.SourceUrl
-            ?? job.UtmbUrl ?? job.RunagainUrl ?? job.WebsiteUrl;
-
-        var featureId = idUrl is not null
-            ? RaceScrapeDiscovery.BuildFeatureId(idUrl)
-            : RaceScrapeDiscovery.BuildFeatureId(job.Name, course.Distance ?? job.Distance);
-
-        var properties = BuildBaseProperties(job);
-
-        if (websiteUrl is not null)
-            properties[RaceScrapeDiscovery.PropWebsite] = websiteUrl.AbsoluteUri;
-        if (!string.IsNullOrWhiteSpace(course.Name))
-            properties[RaceScrapeDiscovery.PropName] = course.Name;
-        if (!string.IsNullOrWhiteSpace(course.Distance))
-            properties[RaceScrapeDiscovery.PropDistance] = course.Distance;
-        else if (!string.IsNullOrWhiteSpace(job.Distance))
-            properties[RaceScrapeDiscovery.PropDistance] = job.Distance;
-        if (course.SourceUrl is not null)
-            properties["courseUrl"] = course.SourceUrl.AbsoluteUri;
-        if (course.ElevationGain.HasValue && !job.ElevationGain.HasValue)
-            properties[RaceScrapeDiscovery.PropElevationGain] = course.ElevationGain.Value;
-        if (course.ImageUrl is not null)
-            properties[RaceScrapeDiscovery.PropImage] = course.ImageUrl.AbsoluteUri;
-        if (course.LogoUrl is not null)
-            properties[RaceScrapeDiscovery.PropLogo] = course.LogoUrl.AbsoluteUri;
-        if (!string.IsNullOrWhiteSpace(course.Date))
-            properties[RaceScrapeDiscovery.PropDate] = course.Date;
-        if (!string.IsNullOrWhiteSpace(course.StartFee) && string.IsNullOrWhiteSpace(job.StartFee))
-            properties[RaceScrapeDiscovery.PropStartFee] = course.StartFee;
-        if (!string.IsNullOrWhiteSpace(course.Currency) && string.IsNullOrWhiteSpace(job.Currency))
-            properties[RaceScrapeDiscovery.PropCurrency] = course.Currency;
-
-        var point = new Point(new Position(job.Longitude.Value, job.Latitude.Value));
-        var feature = new Feature(point, properties, null, new FeatureId(featureId));
-        var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
-        await _racesCollectionClient.UpsertDocument(stored, cancellationToken);
-        _logger.LogInformation("ScrapeRaceWorker: upserted course point {FeatureId}", featureId);
-    }
-
-    private async Task UpsertPointFallbackAsync(ScrapeJob job, Uri? websiteUrl, Uri? scrapedImageUrl, Uri? scrapedLogoUrl, string? scrapedName, string? scrapedDate, string? scrapedStartFee, string? scrapedCurrency, CancellationToken cancellationToken)
-    {
-        if (job.Latitude is null || job.Longitude is null)
-        {
-            _logger.LogDebug("ScrapeRaceWorker: no routes and no coordinates — skipping job");
-            return;
-        }
-
-        var sourceUrl = websiteUrl ?? job.WebsiteUrl ?? job.UtmbUrl ?? job.TraceDeTrailEventUrl ?? job.RunagainUrl;
-        var featureId = sourceUrl is not null
-            ? RaceScrapeDiscovery.BuildFeatureId(sourceUrl)
-            : RaceScrapeDiscovery.BuildFeatureId(job.Name, job.Distance);
-
-        if (string.IsNullOrEmpty(featureId))
-        {
-            _logger.LogWarning("ScrapeRaceWorker: point fallback skipped — could not build feature ID");
-            return;
-        }
-
-        var properties = BuildBaseProperties(job);
-
-        // Scraped name overrides the discovery-time name.
-        if (scrapedName is not null)
-            properties[RaceScrapeDiscovery.PropName] = scrapedName;
-
-        // Scraped date overrides the discovery-time date.
-        if (scrapedDate is not null)
-            properties[RaceScrapeDiscovery.PropDate] = scrapedDate;
-
-        if (sourceUrl is not null)
-            properties[RaceScrapeDiscovery.PropWebsite] = sourceUrl.AbsoluteUri;
-
-        // Scraped image/logo override discovery-time values.
-        if (scrapedImageUrl is not null)
-            properties[RaceScrapeDiscovery.PropImage] = scrapedImageUrl.AbsoluteUri;
-        if (scrapedLogoUrl is not null)
-            properties[RaceScrapeDiscovery.PropLogo] = scrapedLogoUrl.AbsoluteUri;
-        if (!string.IsNullOrWhiteSpace(scrapedStartFee) && string.IsNullOrWhiteSpace(job.StartFee))
-            properties[RaceScrapeDiscovery.PropStartFee] = scrapedStartFee;
-        if (!string.IsNullOrWhiteSpace(scrapedCurrency) && string.IsNullOrWhiteSpace(job.Currency))
-            properties[RaceScrapeDiscovery.PropCurrency] = scrapedCurrency;
-
-        var point = new Point(new Position(job.Longitude.Value, job.Latitude.Value));
-        var feature = new Feature(point, properties, null, new FeatureId(featureId));
-        var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
-        await _racesCollectionClient.UpsertDocument(stored, cancellationToken);
-        _logger.LogInformation("ScrapeRaceWorker: upserted point feature {FeatureId}", featureId);
-    }
-
-    // Builds the base properties dictionary from a ScrapeJob (used by all upsert paths).
-    private static Dictionary<string, dynamic> BuildBaseProperties(ScrapeJob job)
-    {
-        var baseName = job.Name ?? job.Location ?? "Unnamed";
-        var properties = new Dictionary<string, dynamic>
-        {
-            [RaceScrapeDiscovery.PropName] = baseName,
-            [RaceScrapeDiscovery.LastScrapedUtcProperty] = DateTime.UtcNow.ToString("o")
+            ScrapedAtUtc = DateTime.UtcNow.ToString("o"),
+            WebsiteUrl = result.WebsiteUrl?.AbsoluteUri,
+            ImageUrl = result.ImageUrl?.AbsoluteUri,
+            LogoUrl = result.LogoUrl?.AbsoluteUri,
+            ExtractedName = result.ExtractedName,
+            ExtractedDate = result.ExtractedDate,
+            StartFee = result.StartFee,
+            Currency = result.Currency,
+            Routes = result.Routes.Count > 0
+                ? result.Routes.Select(r => new ScrapedRouteOutput
+                {
+                    Coordinates = r.Coordinates.Count >= 2
+                        ? r.Coordinates.Select(c => new[] { c.Lng, c.Lat }).ToList()
+                        : null,
+                    SourceUrl = r.SourceUrl?.AbsoluteUri,
+                    Name = r.Name,
+                    Distance = r.Distance,
+                    ElevationGain = r.ElevationGain,
+                    GpxUrl = r.GpxUrl?.AbsoluteUri,
+                    ImageUrl = r.ImageUrl?.AbsoluteUri,
+                    LogoUrl = r.LogoUrl?.AbsoluteUri,
+                    Date = r.Date,
+                    StartFee = r.StartFee,
+                    Currency = r.Currency,
+                }).ToList()
+                : null,
         };
-
-        if (!string.IsNullOrWhiteSpace(job.Location))
-            properties[RaceScrapeDiscovery.PropLocation] = job.Location;
-        if (!string.IsNullOrWhiteSpace(job.County))
-            properties["county"] = job.County;
-        var normalizedDate = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(job.Date);
-        if (!string.IsNullOrWhiteSpace(normalizedDate))
-            properties[RaceScrapeDiscovery.PropDate] = normalizedDate;
-        var normalizedRaceType = RaceScrapeDiscovery.NormalizeRaceType(job.RaceType);
-        if (!string.IsNullOrWhiteSpace(normalizedRaceType))
-            properties[RaceScrapeDiscovery.PropRaceType] = normalizedRaceType;
-        if (!string.IsNullOrWhiteSpace(job.TypeLocal))
-            properties["typeLocal"] = job.TypeLocal;
-        var normalizedCountry = RaceScrapeDiscovery.NormalizeCountryToIso2(job.Country);
-        if (!string.IsNullOrWhiteSpace(normalizedCountry))
-            properties[RaceScrapeDiscovery.PropCountry] = normalizedCountry;
-        if (!string.IsNullOrWhiteSpace(job.Distance))
-            properties[RaceScrapeDiscovery.PropDistance] = job.Distance;
-        if (!string.IsNullOrWhiteSpace(job.ImageUrl))
-            properties[RaceScrapeDiscovery.PropImage] = job.ImageUrl;
-        if (job.Playgrounds is { Count: > 0 })
-            properties[RaceScrapeDiscovery.PropPlaygrounds] = job.Playgrounds;
-        if (job.RunningStones > 0)
-            properties[RaceScrapeDiscovery.PropRunningStones] = job.RunningStones;
-        if (job.ElevationGain.HasValue)
-            properties[RaceScrapeDiscovery.PropElevationGain] = job.ElevationGain.Value;
-        if (!string.IsNullOrWhiteSpace(job.LogoUrl))
-            properties[RaceScrapeDiscovery.PropLogo] = job.LogoUrl;
-        if (job.ExternalIds is { Count: > 0 })
-            properties["externalIds"] = job.ExternalIds;
-        if (!string.IsNullOrWhiteSpace(job.Organizer))
-            properties[RaceScrapeDiscovery.PropOrganizer] = job.Organizer;
-        if (!string.IsNullOrWhiteSpace(job.Description))
-            properties[RaceScrapeDiscovery.PropDescription] = job.Description;
-        if (job.RegistrationOpen.HasValue)
-            properties["registrationOpen"] = job.RegistrationOpen.Value;
-        if (!string.IsNullOrWhiteSpace(job.UtmbWorldSeriesCategory))
-            properties["utmbWorldSeriesCategory"] = job.UtmbWorldSeriesCategory;
-        if (!string.IsNullOrWhiteSpace(job.StartFee))
-        {
-            properties[RaceScrapeDiscovery.PropStartFee] = job.StartFee;
-            if (!string.IsNullOrWhiteSpace(job.Currency))
-                properties[RaceScrapeDiscovery.PropCurrency] = job.Currency;
-        }
-
-        var sources = new List<string>();
-        if (job.UtmbUrl is not null) sources.Add("utmb");
-        if (job.TraceDeTrailItraUrls is { Count: > 0 } || job.TraceDeTrailEventUrl is not null) sources.Add("tracedetrail");
-        if (job.RunagainUrl is not null) sources.Add("runagain");
-        if (job.WebsiteUrl is not null && job.RunagainUrl is null 
-            && job.TraceDeTrailItraUrls is { Count: 0 } && job.TraceDeTrailEventUrl is null) sources.Add("loppkartan");
-        if (sources.Count > 0)
-            properties[RaceScrapeDiscovery.PropSources] = sources;
-
-        return properties;
     }
 }

@@ -1202,4 +1202,152 @@ public static partial class RaceHtmlScraper
     // Matches JSON-LD "price" and "priceCurrency" in offers.
     [GeneratedRegex(@"""price""\s*:\s*""?(?<price>\d[\d\s]{0,6}\d|\d{1,5})""?.*?""priceCurrency""\s*:\s*""(?<currency>[A-Z]{3})""", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex JsonLdPriceRegex();
+
+    // ── TraceDeTrail event page extractors ─────────────────────────────────
+
+    /// <summary>
+    /// Extracts the location text from the TraceDeTrail event page.
+    /// Looks for <c>&lt;div id="eventLocalite"&gt;...text...&lt;/div&gt;</c>.
+    /// </summary>
+    public static string? ExtractTraceDeTrailLocation(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        var match = EventLocaliteRegex().Match(html);
+        if (!match.Success)
+            return null;
+
+        var text = HtmlTagRegex().Replace(match.Groups["content"].Value, " ").Trim();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    /// <summary>
+    /// Extracts the maximum ITRA points from the event page by parsing image filenames
+    /// like <c>itra_pts_race3.png</c> → 3.
+    /// </summary>
+    public static int? ExtractTraceDeTrailItraPoints(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        int max = 0;
+        foreach (Match match in ItraPointsImageRegex().Matches(html))
+        {
+            if (int.TryParse(match.Groups["pts"].Value, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var pts) && pts > max)
+                max = pts;
+        }
+        return max > 0 ? max : null;
+    }
+
+    /// <summary>
+    /// Extracts the maximum elevation gain (D+) from the event page.
+    /// Looks for <c>&lt;i class="fas fa-arrow-circle-up"&gt;&lt;/i&gt; 4492 m</c> patterns.
+    /// </summary>
+    public static double? ExtractTraceDeTrailElevationGain(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        double max = 0;
+        foreach (Match match in ElevationGainRegex().Matches(html))
+        {
+            if (double.TryParse(match.Groups["meters"].Value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var m) && m > max)
+                max = m;
+        }
+        return max > 0 ? max : null;
+    }
+
+    // <div id="eventLocalite" ...>...content...</div>
+    [GeneratedRegex(@"<div\b[^>]*\bid\s*=\s*[""']eventLocalite[""'][^>]*>(?<content>.*?)</div>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex EventLocaliteRegex();
+
+    // itra_pts_race3.png → captures "3"
+    [GeneratedRegex(@"itra_pts_race(?<pts>\d+)\.png", RegexOptions.IgnoreCase)]
+    private static partial Regex ItraPointsImageRegex();
+
+    // <i class="fas fa-arrow-circle-up"></i> 4492 m
+    [GeneratedRegex(@"fa-arrow-circle-up[""'][^>]*>\s*</i>\s*(?<meters>[\d\s]+?)\s*m\b", RegexOptions.IgnoreCase)]
+    private static partial Regex ElevationGainRegex();
+
+    // ── TraceDeTrail per-course extraction ──────────────────────────────────
+
+    /// <summary>
+    /// Extracts per-course data from a TraceDeTrail event page.
+    /// Each course tab contains name, distance, D+, ITRA points, and a trace ID.
+    /// </summary>
+    public static IReadOnlyList<TraceDeTrailCourseInfo> ExtractTraceDeTrailCourses(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var courses = new List<TraceDeTrailCourseInfo>();
+        var paneStarts = TabPaneStartRegex().Matches(html);
+        if (paneStarts.Count == 0)
+            return [];
+
+        for (int i = 0; i < paneStarts.Count; i++)
+        {
+            var start = paneStarts[i].Index;
+            var end = i + 1 < paneStarts.Count ? paneStarts[i + 1].Index : html.Length;
+            var section = html[start..end];
+
+            // Name: <div class="traceNom">42k</div>
+            string? name = null;
+            var nameMatch = TraceNomRegex().Match(section);
+            if (nameMatch.Success)
+                name = HtmlTagRegex().Replace(nameMatch.Groups["name"].Value, "").Trim();
+
+            // Distance: <i class="fas fa-arrows-alt-h"></i> 41.49 km
+            string? distance = null;
+            var distMatch = TraceDistanceRegex().Match(section);
+            if (distMatch.Success && double.TryParse(distMatch.Groups["dist"].Value,
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var distKm))
+                distance = RaceScrapeDiscovery.FormatDistanceKm(distKm);
+
+            // Elevation gain: reuse existing regex
+            double? elevationGain = null;
+            var elevMatch = ElevationGainRegex().Match(section);
+            if (elevMatch.Success && double.TryParse(elevMatch.Groups["meters"].Value,
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var meters))
+                elevationGain = meters;
+
+            // ITRA points: reuse existing regex
+            int? itraPoints = null;
+            var itraMatch = ItraPointsImageRegex().Match(section);
+            if (itraMatch.Success && int.TryParse(itraMatch.Groups["pts"].Value,
+                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var pts))
+                itraPoints = pts;
+
+            // Trace ID from link: /en/trace/296087
+            int? traceId = null;
+            var traceMatch = TraceViewUrlRegex().Match(section);
+            if (traceMatch.Success && int.TryParse(traceMatch.Groups["id"].Value,
+                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var tid))
+                traceId = tid;
+
+            if (name is not null || distance is not null || traceId is not null)
+                courses.Add(new(name, distance, elevationGain, itraPoints, traceId));
+        }
+
+        return courses;
+    }
+
+    // Matches the start of each tab-pane div (course section boundary)
+    [GeneratedRegex(@"<div\b[^>]*\bclass\s*=\s*""[^""]*\btab-pane\b", RegexOptions.IgnoreCase)]
+    private static partial Regex TabPaneStartRegex();
+
+    // <div class="traceNom">42k</div>
+    [GeneratedRegex(@"<div[^>]*\bclass\s*=\s*[""']traceNom[""'][^>]*>(?<name>.*?)</div>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex TraceNomRegex();
+
+    // <i class="fas fa-arrows-alt-h"></i> 41.49 km
+    [GeneratedRegex(@"fa-arrows-alt-h[""'][^>]*>\s*</i>\s*(?<dist>[\d.]+)\s*km", RegexOptions.IgnoreCase)]
+    private static partial Regex TraceDistanceRegex();
+
+    // tracedetrail.fr/en/trace/296087 or /fr/trace/296087
+    [GeneratedRegex(@"tracedetrail\.fr/(?:en|fr)/trace/(?<id>\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex TraceViewUrlRegex();
 }

@@ -336,6 +336,24 @@ public static partial class RaceScrapeDiscovery
         return string.Join("-", parts);
     }
 
+    /// <summary>
+    /// Derives the event key for a ScrapeJob by picking the best available URL.
+    /// Priority: WebsiteUrl → UtmbUrl → TraceDeTrailEventUrl → RunagainUrl → name-based fallback.
+    /// </summary>
+    public static (string EventKey, string CanonicalUrl)? DeriveEventKeyFromJob(ScrapeJob job)
+    {
+        Uri? bestUrl = job.WebsiteUrl ?? job.UtmbUrl ?? job.TraceDeTrailEventUrl ?? job.RunagainUrl;
+        if (bestUrl is not null)
+            return (RaceOrganizerClient.DeriveOrganizerKey(bestUrl), bestUrl.AbsoluteUri);
+
+        // No URL at all — derive from name (last resort).
+        var fallbackKey = BuildFeatureId(job.Name, job.Distance);
+        if (!string.IsNullOrEmpty(fallbackKey))
+            return (fallbackKey, $"name://{fallbackKey}");
+
+        return null;
+    }
+
     // Parses the response from https://api.utmb.world/search/races?lang=en&limit=400
     // Each race object has:
     //   slug            – the race page URL, e.g. "https://julianalps.utmb.world/races/120K"
@@ -978,6 +996,7 @@ public record ScrapeJob(
     double? Latitude = null,
     double? Longitude = null,
     IReadOnlyList<string>? Playgrounds = null,
+    int? ItraPoints = null,
     int? RunningStones = null,
     string? UtmbWorldSeriesCategory = null,
     string? County = null,
@@ -991,9 +1010,61 @@ public record ScrapeJob(
     IReadOnlyList<Uri>? TraceDeTrailItraUrls = null,
     Uri? TraceDeTrailEventUrl = null,
     Uri? RunagainUrl = null,
-    Uri? WebsiteUrl = null);         // generic race website (e.g. from Loppkartan)
+    Uri? WebsiteUrl = null)         // generic race website (e.g. from Loppkartan)
+{
+    /// <summary>
+    /// Converts this ScrapeJob to a <see cref="SourceDiscovery"/> for storage in a working document.
+    /// </summary>
+    public Shared.Models.SourceDiscovery ToSourceDiscovery() => new()
+    {
+        DiscoveredAtUtc = DateTime.UtcNow.ToString("o"),
+        Name = Name,
+        Date = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(Date) ?? Date,
+        Latitude = Latitude,
+        Longitude = Longitude,
+        Distance = Distance,
+        ElevationGain = ElevationGain,
+        Country = RaceScrapeDiscovery.NormalizeCountryToIso2(Country) ?? Country,
+        Location = Location,
+        RaceType = RaceScrapeDiscovery.NormalizeRaceType(RaceType) ?? RaceType,
+        ImageUrl = ImageUrl,
+        LogoUrl = LogoUrl,
+        Organizer = Organizer,
+        Description = Description,
+        StartFee = StartFee,
+        Currency = Currency,
+        County = County,
+        TypeLocal = TypeLocal,
+        RegistrationOpen = RegistrationOpen,
+        ExternalIds = ExternalIds is { Count: > 0 } ? new Dictionary<string, string>(ExternalIds) : null,
+        SourceUrls = GetSourceUrls(),
+        ItraPoints = ItraPoints,
+        Playgrounds = Playgrounds is { Count: > 0 } ? [.. Playgrounds] : null,
+        RunningStones = RunningStones,
+        UtmbWorldSeriesCategory = UtmbWorldSeriesCategory,
+    };
+
+    private List<string>? GetSourceUrls()
+    {
+        var urls = new List<string>();
+        if (UtmbUrl is not null) urls.Add(UtmbUrl.AbsoluteUri);
+        if (TraceDeTrailItraUrls is { Count: > 0 })
+            urls.AddRange(TraceDeTrailItraUrls.Select(u => u.AbsoluteUri));
+        if (TraceDeTrailEventUrl is not null) urls.Add(TraceDeTrailEventUrl.AbsoluteUri);
+        if (RunagainUrl is not null) urls.Add(RunagainUrl.AbsoluteUri);
+        if (WebsiteUrl is not null) urls.Add(WebsiteUrl.AbsoluteUri);
+        return urls.Count > 0 ? urls : null;
+    }
+}
 
 public record TraceDeTrailTraceData(
     IReadOnlyList<(double Lng, double Lat)> Points,
     double? TotalDistanceKm,
     double? ElevationGain);
+
+public record TraceDeTrailCourseInfo(
+    string? Name,
+    string? Distance,
+    double? ElevationGain,
+    int? ItraPoints,
+    int? TraceId);

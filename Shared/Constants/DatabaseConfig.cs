@@ -12,6 +12,7 @@ namespace Shared.Constants
         public const string VisitedAreasContainer = "visitedAreas";
         public const string PeaksGroupsContainer = "peaksGroups";
         public const string RacesContainer = "races";
+        public const string RaceOrganizersContainer = "raceOrganizers";
 
         // Shared cache for all Overpass-derived features (peaks, paths, protected areas, admin boundaries).
         // Requires the container to have DefaultTimeToLive = 2592000 (30 days) configured in Cosmos.

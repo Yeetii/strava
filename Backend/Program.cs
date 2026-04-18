@@ -89,6 +89,14 @@ var host = new HostBuilder()
             return new RaceCollectionClient(container, loggerFactory);
         });
 
+        services.AddSingleton(serviceProvider =>
+        {
+            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.RaceOrganizersContainer);
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            return new RaceOrganizerClient(container, loggerFactory);
+        });
+
         services.AddSingleton<AdminBoundaryMetricsEnricher>();
 
         services.AddScoped(serviceProvider =>
