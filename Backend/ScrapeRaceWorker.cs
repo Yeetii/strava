@@ -11,12 +11,14 @@ namespace Backend;
 /// <summary>
 /// Reads an organizer key from the Service Bus queue, fetches the <see cref="RaceOrganizerDocument"/>
 /// from Cosmos, runs the scraper pipeline, and writes <see cref="ScraperOutput"/> back to the document.
-/// Assembly into final <see cref="StoredFeature"/> documents is a separate downstream step.
+/// After scraping completes, enqueues the organizer key onto the assembleRace queue so the
+/// <see cref="AssembleRaceWorker"/> can produce final <see cref="StoredFeature"/> documents.
 /// </summary>
 public class ScrapeRaceWorker
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RaceOrganizerClient _organizerClient;
+    private readonly ServiceBusSender _assembleSender;
     private readonly ILogger<ScrapeRaceWorker> _logger;
 
     private readonly IReadOnlyList<(string Key, IRaceScraper Scraper)> _scrapers;
@@ -28,10 +30,12 @@ public class ScrapeRaceWorker
     public ScrapeRaceWorker(
         IHttpClientFactory httpClientFactory,
         RaceOrganizerClient organizerClient,
+        ServiceBusClient serviceBusClient,
         ILogger<ScrapeRaceWorker> logger)
     {
         _httpClientFactory = httpClientFactory;
         _organizerClient = organizerClient;
+        _assembleSender = serviceBusClient.CreateSender(ServiceBusConfig.AssembleRace);
         _logger = logger;
 
         _bfsScraper = new BfsScraper(logger);
@@ -129,6 +133,11 @@ public class ScrapeRaceWorker
 
             if (scrapersRun == 0)
                 _logger.LogInformation("No scrapers produced output for {Key}", organizerKey);
+
+            // Enqueue the organizer key for assembly — whether or not any scraper ran.
+            await _assembleSender.SendMessageAsync(
+                new ServiceBusMessage(organizerKey) { ContentType = "text/plain" },
+                cancellationToken);
 
             await TryCompleteAsync(actions, message, cancellationToken);
         }

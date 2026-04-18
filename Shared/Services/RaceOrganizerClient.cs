@@ -124,4 +124,18 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
             }
         }
     }
+
+    /// <summary>
+    /// Patches the <c>lastAssembledUtc</c> field on an existing organizer document.
+    /// </summary>
+    public async Task PatchLastAssembledAsync(
+        string organizerKey,
+        CancellationToken cancellationToken = default)
+    {
+        var pk = new PartitionKey(organizerKey);
+        await _container.PatchItemAsync<RaceOrganizerDocument>(
+            organizerKey, pk,
+            [PatchOperation.Set("/lastAssembledUtc", DateTime.UtcNow.ToString("o"))],
+            cancellationToken: cancellationToken);
+    }
 }
