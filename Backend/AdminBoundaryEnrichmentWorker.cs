@@ -43,7 +43,6 @@ public class AdminBoundaryEnrichmentWorker(
                     deadLetterReason: nameof(AdminBoundaryEnrichmentWorker),
                     deadLetterErrorDescription: $"Boundary {document.Id}: {ex.Message}",
                     cancellationToken: cancellationToken);
-                throw;
             }
         }
     }

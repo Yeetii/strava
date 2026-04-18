@@ -93,10 +93,10 @@ public class VisitedAreasWorker(
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to process visited areas for activity {ActivityId}", activityId);
             await actions.DeadLetterMessageAsync(job,
                 deadLetterReason: nameof(VisitedAreasWorker),
                 deadLetterErrorDescription: $"Activity {activityId}: {ex.Message}");
-            throw;
         }
     }
 

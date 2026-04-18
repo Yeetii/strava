@@ -46,43 +46,53 @@ public class VisitedPathsWorker(
         List<Feature> nearbyPaths)
     {
         var activityId = job.Body.ToString();
-        var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
-
-        if (activity == null || string.IsNullOrWhiteSpace(activity.Polyline ?? activity.SummaryPolyline))
+        try
         {
-            _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
+            var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
+
+            if (activity == null || string.IsNullOrWhiteSpace(activity.Polyline ?? activity.SummaryPolyline))
+            {
+                _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
+                await actions.CompleteMessageAsync(job);
+                return;
+            }
+
+            var activityPoints = GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToList();
+            var visitedPaths = FindVisitedPaths(activityPoints, nearbyPaths).ToList();
+
+            _logger.LogInformation("Activity {ActivityId} visits {PathCount} paths", activityId, visitedPaths.Count);
+
+            var documents = new List<VisitedPath>();
+            foreach (var pathFeature in visitedPaths)
+            {
+                var pathId = pathFeature.Id.Value;
+                var documentId = activity.UserId + "-" + pathId;
+                var partitionKey = new PartitionKey(activity.UserId);
+                var doc = await _visitedPathsCollection.GetByIdMaybe(documentId, partitionKey)
+                    ?? new VisitedPath
+                    {
+                        Id = documentId,
+                        UserId = activity.UserId,
+                        PathId = pathId,
+                        Name = pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
+                        Type = pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
+                        ActivityIds = []
+                    };
+                doc.ActivityIds.Add(activity.Id);
+                documents.Add(doc);
+            }
+
+            await actions.RenewMessageLockAsync(job);
+            await _visitedPathsCollection.BulkUpsert(documents);
             await actions.CompleteMessageAsync(job);
-            return;
         }
-
-        var activityPoints = GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToList();
-        var visitedPaths = FindVisitedPaths(activityPoints, nearbyPaths).ToList();
-
-        _logger.LogInformation("Activity {ActivityId} visits {PathCount} paths", activityId, visitedPaths.Count);
-
-        var documents = new List<VisitedPath>();
-        foreach (var pathFeature in visitedPaths)
+        catch (Exception ex)
         {
-            var pathId = pathFeature.Id.Value;
-            var documentId = activity.UserId + "-" + pathId;
-            var partitionKey = new PartitionKey(activity.UserId);
-            var doc = await _visitedPathsCollection.GetByIdMaybe(documentId, partitionKey)
-                ?? new VisitedPath
-                {
-                    Id = documentId,
-                    UserId = activity.UserId,
-                    PathId = pathId,
-                    Name = pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
-                    Type = pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
-                    ActivityIds = []
-                };
-            doc.ActivityIds.Add(activity.Id);
-            documents.Add(doc);
+            _logger.LogError(ex, "Failed to process visited paths for activity {ActivityId}", activityId);
+            await actions.DeadLetterMessageAsync(job,
+                deadLetterReason: nameof(VisitedPathsWorker),
+                deadLetterErrorDescription: $"Activity {activityId}: {ex.Message}");
         }
-
-        await actions.RenewMessageLockAsync(job);
-        await _visitedPathsCollection.BulkUpsert(documents);
-        await actions.CompleteMessageAsync(job);
     }
 
     private static IEnumerable<Feature> FindVisitedPaths(List<Coordinate> activityPoints, IEnumerable<Feature> paths)

@@ -38,8 +38,8 @@ namespace Backend
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to fetch activity {ActivityId} for user {UserId}", fetchJob.ActivityId, fetchJob.UserId);
                 await actions.DeadLetterMessageAsync(message, deadLetterReason: nameof(StravaActivityFetcher), deadLetterErrorDescription: ex.Message);
-                throw;
             }
         }
     }

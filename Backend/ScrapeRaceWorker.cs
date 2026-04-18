@@ -53,14 +53,16 @@ public class ScrapeRaceWorker
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to deserialize ScrapeJob message");
             await actions.DeadLetterMessageAsync(message, deadLetterReason: "DeserializationFailed", deadLetterErrorDescription: ex.Message);
-            throw;
+            return;
         }
 
         if (job is null)
         {
+            _logger.LogError("ScrapeJob message deserialized to null");
             await actions.DeadLetterMessageAsync(message, deadLetterReason: "NullScrapeJob", deadLetterErrorDescription: "ScrapeJob message deserialized to null");
-            throw new InvalidOperationException("ScrapeJob message deserialized to null");
+            return;
         }
 
         try
@@ -101,10 +103,11 @@ public class ScrapeRaceWorker
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            _logger.LogError(ex, "ScrapeRaceWorker failed (UTMB={Utmb}, ITRA={Itra}, Event={Event}, Website={Web})",
+                job.UtmbUrl, job.TraceDeTrailItraUrls, job.TraceDeTrailEventUrl, job.WebsiteUrl);
             await actions.DeadLetterMessageAsync(message,
                 deadLetterReason: nameof(ScrapeRaceWorker),
                 deadLetterErrorDescription: $"UTMB={job.UtmbUrl}, ITRA={job.TraceDeTrailItraUrls}, Event={job.TraceDeTrailEventUrl}, Website={job.WebsiteUrl}: {ex.Message}");
-            throw;
         }
     }
 

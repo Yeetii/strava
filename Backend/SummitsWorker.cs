@@ -61,10 +61,10 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to process summit job for activity {ActivityId}", activity.Id);
             await actions.DeadLetterMessageAsync(job,
                 deadLetterReason: nameof(SummitsWorker),
                 deadLetterErrorDescription: $"Activity {activity.Id}: {ex.Message}");
-            throw;
         }
     }
 
