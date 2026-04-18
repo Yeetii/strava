@@ -19,6 +19,14 @@ public static partial class RaceHtmlScraper
         "info", "details", "programme",
     ];
 
+    // Links matching a course keyword but also matching one of these are skipped
+    // (result pages, start lists, registration, etc.).
+    private static readonly string[] CourseExcludeKeywords = [
+        "resultat", "result", "startlist", "startlista", "cart", "varukorg", 
+        "villkor", "terms", "kontakt", "contact",
+        "blogg", "blog", "nyheter", "news", "tips",
+    ];
+
     // Keywords used to identify generic download links.
     private static readonly string[] DownloadKeywords = ["ladda ner", "hämta", "download"];
 
@@ -135,6 +143,12 @@ public static partial class RaceHtmlScraper
                 isMatch = UrlDistanceRegex().IsMatch(href) || LinkTextDistanceRegex().IsMatch(text);
 
             if (!isMatch) continue;
+
+            // Skip links that match exclude keywords (results, start lists, etc.).
+            var isExcluded = CourseExcludeKeywords.Any(kw =>
+                href.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                text.Contains(kw, StringComparison.OrdinalIgnoreCase));
+            if (isExcluded) continue;
             if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
             if (uri.Scheme is not ("http" or "https")) continue;
             if (seen.Add(uri.AbsoluteUri))
@@ -353,12 +367,15 @@ public static partial class RaceHtmlScraper
 
         var html = allHtmls[0]; // start page is primary
 
-        // 1. JSON-LD "name" from Event/SportsEvent schema.
-        var jsonLdName = JsonLdNameRegex().Match(html);
-        if (jsonLdName.Success)
+        // 1. JSON-LD "name" from Event/SportsEvent schema — only look inside ld+json blocks.
+        foreach (Match ldBlock in LdJsonBlockRegex().Matches(html))
         {
-            var name = CleanExtractedName(jsonLdName.Groups["name"].Value);
-            if (name is not null) return name;
+            var jsonLdName = JsonLdNameRegex().Match(ldBlock.Groups["json"].Value);
+            if (jsonLdName.Success)
+            {
+                var name = CleanExtractedName(jsonLdName.Groups["name"].Value);
+                if (name is not null) return name;
+            }
         }
 
         // 2. OG title / site_name meta tags — apply domain-aware segment picking.
@@ -981,6 +998,10 @@ public static partial class RaceHtmlScraper
     // Matches JSON-LD "name" field (Event, SportsEvent schemas).
     [GeneratedRegex(@"""name""\s*:\s*""(?<name>[^""]{3,100})""", RegexOptions.IgnoreCase)]
     private static partial Regex JsonLdNameRegex();
+
+    // Matches <script type="application/ld+json">...</script> blocks.
+    [GeneratedRegex(@"<script[^>]*type\s*=\s*[""']application/ld\+json[""'][^>]*>(?<json>.*?)</script>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex LdJsonBlockRegex();
 
     // Matches <meta property="og:title" content="..."> and og:site_name (either attribute order).
     [GeneratedRegex(@"<meta\b[^>]*(?:(?:property|name)\s*=\s*[""'](?:og:title|og:site_name)[""'][^>]*content\s*=\s*[""'](?<title>[^""']+)[""']|content\s*=\s*[""'](?<title>[^""']+)[""'][^>]*(?:property|name)\s*=\s*[""'](?:og:title|og:site_name)[""'])", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
