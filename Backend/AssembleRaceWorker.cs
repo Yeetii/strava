@@ -387,7 +387,7 @@ public class AssembleRaceWorker(
     /// </summary>
     public static string? PickBestDate(string? scraperKey, string? routeDate, string? discoveryDate)
     {
-        // Only consider bfs route dates for the "newer date from dfs" preference.
+        // Only consider bfs route dates for the "newer date from bfs" preference.
         var candidateRouteDate = scraperKey == "bfs" ? routeDate : null;
 
         if (string.IsNullOrWhiteSpace(candidateRouteDate))
