@@ -512,7 +512,10 @@ internal sealed class BfsScraper(ILogger logger) : IRaceScraper
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(30));
-            using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
+                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Peakshunters/1.0)");
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             response.EnsureSuccessStatusCode();
 
             // Skip binary content that can't be HTML/GPX/XML.
