@@ -46,6 +46,9 @@ public class ReNormalizeRaceTypes(
 
         var updated = 0;
         var skipped = 0;
+        var batch = new List<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)>();
+        const int batchSize = 20;
+
         foreach (var race in races)
         {
             string? rawType = race.Properties.TryGetValue("typeLocal", out var tl) ? tl?.ToString() : null;
@@ -62,17 +65,24 @@ public class ReNormalizeRaceTypes(
 
             logger.LogInformation("Race {Id}: \"{Old}\" -> \"{New}\"", race.Id, oldNormalized ?? "(null)", newNormalized ?? "(null)");
 
-            if (newNormalized != null)
-                race.Properties["raceType"] = newNormalized;
-            else
-                race.Properties.Remove("raceType");
+            var pk = new PartitionKeyBuilder().Add(race.X).Add(race.Y).Build();
+            PatchOperation[] patchOps = newNormalized != null
+                ? [PatchOperation.Set("/properties/raceType", newNormalized)]
+                : [PatchOperation.Remove("/properties/raceType")];
 
-            await raceCollectionClient.UpsertDocument(race);
+            batch.Add((race.Id, pk, patchOps));
             updated++;
 
-            if (updated % 50 == 0)
+            if (batch.Count >= batchSize)
+            {
+                await raceCollectionClient.PatchDocuments(batch);
+                batch.Clear();
                 logger.LogInformation("Progress: {Updated} updated, {Skipped} skipped of {Total}", updated, skipped, races.Count);
+            }
         }
+
+        if (batch.Count > 0)
+            await raceCollectionClient.PatchDocuments(batch);
 
         logger.LogInformation("Re-normalized race types: {Updated}/{Total} updated", updated, races.Count);
 

@@ -25,6 +25,9 @@ public class AdminBoundaryEnrichmentWorker(
 
         var documents = await storedFeaturesCollection.GetByIdsAsync(ids);
 
+        var patches = new List<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)>();
+        var completableMessages = new List<ServiceBusReceivedMessage>();
+
         foreach (var document in documents)
         {
             var message = messages.First(m => m.Body.ToString() == document.Id);
@@ -33,8 +36,8 @@ public class AdminBoundaryEnrichmentWorker(
                 logger.LogInformation("Enriching admin boundary {BoundaryId}", document.Id);
                 var ops = await enricher.CalculatePatchOperationsAsync(document, cancellationToken);
                 var pk = new PartitionKeyBuilder().Add((double)document.X).Add((double)document.Y).Build();
-                await storedFeaturesCollection.PatchDocument(document.Id, pk, ops, cancellationToken);
-                await actions.CompleteMessageAsync(message, cancellationToken);
+                patches.Add((document.Id, pk, ops));
+                completableMessages.Add(message);
             }
             catch (Exception ex)
             {
@@ -46,5 +49,10 @@ public class AdminBoundaryEnrichmentWorker(
                     cancellationToken: cancellationToken);
             }
         }
+
+        await storedFeaturesCollection.PatchDocuments(patches, cancellationToken);
+
+        foreach (var message in completableMessages)
+            await actions.CompleteMessageAsync(message, cancellationToken);
     }
 }

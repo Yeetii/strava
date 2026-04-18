@@ -42,7 +42,7 @@ AND (
             batchSize,
             cancellationToken: cancellationToken);
 
-        var processed = 0;
+        var patches = new List<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)>();
         var failed = new List<string>();
 
         foreach (var boundary in boundaries.Where(EnrichNewAdminBoundaries.ShouldEnrich))
@@ -52,8 +52,7 @@ AND (
                 _logger.LogInformation("Backfilling admin boundary {BoundaryId}", boundary.Id);
                 var ops = await _enricher.CalculatePatchOperationsAsync(boundary, cancellationToken);
                 var pk = new PartitionKeyBuilder().Add((double)boundary.X).Add((double)boundary.Y).Build();
-                await _storedFeaturesCollection.PatchDocument(boundary.Id, pk, ops, cancellationToken);
-                processed++;
+                patches.Add((boundary.Id, pk, ops));
             }
             catch (Exception ex)
             {
@@ -61,6 +60,9 @@ AND (
                 failed.Add(boundary.Id);
             }
         }
+
+        await _storedFeaturesCollection.PatchDocuments(patches, cancellationToken);
+        var processed = patches.Count;
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new

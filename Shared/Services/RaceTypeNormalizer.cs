@@ -51,7 +51,8 @@ public static class RaceTypeNormalizer
         ["gress"] = "grass",
         ["rando"] = "", ["marchenordique"] = "", ["ultra"] = "",
         ["half marathon"] = "", ["marathon"] = "",
-        ["courseroute"] = "", ["other"] = "",
+        ["courseroute"] = "", 
         ["bane"] = "",
+        ["övrigt"] = "", ["other"] = "",
     };
 }

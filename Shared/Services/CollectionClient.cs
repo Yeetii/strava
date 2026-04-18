@@ -194,4 +194,21 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             CosmosWriteThrottle.Semaphore.Release();
         }
     }
+
+    public async Task PatchDocuments(IEnumerable<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)> patches, CancellationToken cancellationToken = default)
+    {
+        await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+        try
+        {
+            foreach (var (id, partitionKey, operations) in patches)
+            {
+                await _container.PatchItemAsync<T>(id, partitionKey, operations, cancellationToken: cancellationToken);
+            }
+            await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+        }
+        finally
+        {
+            CosmosWriteThrottle.Semaphore.Release();
+        }
+    }
 }
