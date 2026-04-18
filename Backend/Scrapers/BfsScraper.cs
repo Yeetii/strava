@@ -5,7 +5,7 @@ namespace Backend.Scrapers;
 
 // Performs a breadth-first search from a race website URL to discover GPX route files.
 // Depth 3 / max 30 pages.
-internal sealed class BfsScraper(ILogger logger) : IRaceScraper
+internal sealed class BfsScraper(ILogger logger)
 {
     private const int MaxDepth = 3;
     private const int MaxPages = 30;
@@ -19,19 +19,76 @@ internal sealed class BfsScraper(ILogger logger) : IRaceScraper
         return NormalizeHost(candidate.Host).Equals(NormalizeHost(origin.Host), StringComparison.OrdinalIgnoreCase);
     }
 
-    public bool CanHandle(ScrapeJob job) => job.WebsiteUrl is not null;
+    /// <summary>
+    /// Social/platform domains where a bare URL (no slug) is useless to BFS-crawl.
+    /// URLs with a meaningful path (e.g. facebook.com/events/123) are still allowed.
+    /// </summary>
+    private static readonly string[] SocialDomains =
+        ["facebook.com", "fb.me", "fb.com", "youtube.com", "youtu.be",
+         "instagram.com", "twitter.com", "x.com", "tiktok.com", "linkedin.com"];
 
-    public async Task<RaceScraperResult?> ScrapeAsync(ScrapeJob job, HttpClient httpClient, CancellationToken cancellationToken)
+    private static bool IsBareSocialDomain(Uri uri)
     {
-        if (job.WebsiteUrl is null) return null;
-        return await ScrapeFromUrlAsync(job, job.WebsiteUrl, httpClient, cancellationToken);
+        var host = uri.Host.ToLowerInvariant();
+        if (host.StartsWith("www.")) host = host[4..];
+        if (!SocialDomains.Any(d => host.Equals(d, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        var path = uri.AbsolutePath.TrimEnd('/');
+        return string.IsNullOrEmpty(path);
     }
 
-    // Runs BFS from an explicit URL.  Called by TraceDeTrailEventScraper as well.
-    public async Task<RaceScraperResult?> ScrapeFromUrlAsync(ScrapeJob job, Uri startUrl, HttpClient httpClient, CancellationToken cancellationToken)
+    /// <summary>
+    /// BFS-scrapes each URL in <paramref name="urls"/> and merges the results.
+    /// </summary>
+    public async Task<RaceScraperResult?> ScrapeAsync(
+        IReadOnlyList<Uri> urls,
+        string? eventName,
+        string? distance,
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
+    {
+        if (urls.Count == 0) return null;
+
+        var filtered = urls.Where(u => !IsBareSocialDomain(u)).ToList();
+        if (filtered.Count == 0) return null;
+
+        var allRoutes = new List<ScrapedRoute>();
+        Uri? imageUrl = null, logoUrl = null, websiteUrl = null;
+        string? extractedName = null, extractedDate = null, startFee = null, currency = null;
+
+        foreach (var url in filtered)
+        {
+            var result = await ScrapeOneUrlAsync(url, eventName, distance, httpClient, cancellationToken);
+            if (result is null) continue;
+
+            allRoutes.AddRange(result.Routes);
+            imageUrl ??= result.ImageUrl;
+            logoUrl ??= result.LogoUrl;
+            websiteUrl ??= result.WebsiteUrl;
+            extractedName ??= result.ExtractedName;
+            extractedDate ??= result.ExtractedDate;
+            startFee ??= result.StartFee;
+            currency ??= result.Currency;
+        }
+
+        if (imageUrl is null && allRoutes.Count == 0 && extractedName is null)
+            return null;
+
+        return new RaceScraperResult(allRoutes,
+            WebsiteUrl: websiteUrl, ImageUrl: imageUrl, LogoUrl: logoUrl,
+            ExtractedName: extractedName, ExtractedDate: extractedDate,
+            StartFee: startFee, Currency: currency);
+    }
+
+    private async Task<RaceScraperResult?> ScrapeOneUrlAsync(
+        Uri startUrl,
+        string? fallbackName,
+        string? distance,
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
     {
         var bfsResult = await FindGpxRoutesAsync(httpClient, startUrl, cancellationToken);
-        var eventName = bfsResult.ExtractedName ?? job.Name ?? job.Location ?? "Unnamed";
+        var eventName = bfsResult.ExtractedName ?? fallbackName ?? "Unnamed";
 
         if (bfsResult.Routes.Count == 0)
         {
@@ -92,7 +149,7 @@ internal sealed class BfsScraper(ILogger logger) : IRaceScraper
 
         var baseName = eventName;
         var routeDistancesKm = bfsResult.Routes.Select(r => GpxParser.CalculateDistanceKm(r.Route.Coordinates)).ToList();
-        var distanceAssignments = RaceScrapeDiscovery.AssignDistancesToRoutes(routeDistancesKm, job.Distance);
+        var distanceAssignments = RaceScrapeDiscovery.AssignDistancesToRoutes(routeDistancesKm, distance);
 
         var routes = new List<ScrapedRoute>(bfsResult.Routes.Count);
         for (int i = 0; i < bfsResult.Routes.Count; i++)

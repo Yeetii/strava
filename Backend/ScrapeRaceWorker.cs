@@ -20,6 +20,10 @@ public class ScrapeRaceWorker
     private readonly ILogger<ScrapeRaceWorker> _logger;
 
     private readonly IReadOnlyList<(string Key, IRaceScraper Scraper)> _scrapers;
+    private readonly BfsScraper _bfsScraper;
+
+    // Domains handled by specialized scrapers or discovery — BFS skips these.
+    private static readonly string[] SpecialDomains = ["utmb.world", "itra.run", "tracedetrail.fr", "runagain.com"];
 
     public ScrapeRaceWorker(
         IHttpClientFactory httpClientFactory,
@@ -30,11 +34,10 @@ public class ScrapeRaceWorker
         _organizerClient = organizerClient;
         _logger = logger;
 
-        var bfsScraper = new BfsScraper(logger);
+        _bfsScraper = new BfsScraper(logger);
         _scrapers = [
             ("utmb", new UtmbScraper(logger)),
             ("itra", new ItraScraper(logger)),
-            ("bfs", bfsScraper),
         ];
     }
 
@@ -73,6 +76,7 @@ public class ScrapeRaceWorker
 
         try
         {
+            // 3a. Specialized scrapers (utmb, itra).
             foreach (var (scraperKey, scraper) in _scrapers)
             {
                 if (!scraper.CanHandle(job)) continue;
@@ -95,6 +99,32 @@ public class ScrapeRaceWorker
                 scrapersRun++;
                 _logger.LogInformation("Scraper/{Scraper}: wrote {RouteCount} routes for {Key}",
                     scraperKey, output.Routes?.Count ?? 0, organizerKey);
+            }
+
+            // 3b. BFS scraper — scrape every general URL from the organizer doc.
+            var bfsUrls = CollectBfsUrls(doc);
+            if (bfsUrls.Count > 0)
+            {
+                _logger.LogInformation("BFS: scraping {Count} URLs for {Key}", bfsUrls.Count, organizerKey);
+                RaceScraperResult? bfsResult;
+                try
+                {
+                    bfsResult = await _bfsScraper.ScrapeAsync(bfsUrls, job.Name, job.Distance, httpClient, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Scraper bfs failed for {Key}", organizerKey);
+                    bfsResult = null;
+                }
+
+                if (bfsResult is not null)
+                {
+                    var output = ToScraperOutput(bfsResult);
+                    await _organizerClient.WriteScraperOutputAsync(organizerKey, "bfs", output, cancellationToken);
+                    scrapersRun++;
+                    _logger.LogInformation("Scraper/bfs: wrote {RouteCount} routes for {Key}",
+                        output.Routes?.Count ?? 0, organizerKey);
+                }
             }
 
             if (scrapersRun == 0)
@@ -221,6 +251,50 @@ public class ScrapeRaceWorker
             TraceDeTrailEventUrl: traceDeTrailEventUrl,
             RunagainUrl: runagainUrl,
             WebsiteUrl: websiteUrl);
+    }
+
+    /// <summary>
+    /// Collects all general-purpose URLs from the organizer document for BFS scraping.
+    /// Includes the canonical URL (from the organizer id/domain) and all source URLs,
+    /// excluding domains handled by specialized scrapers or discovery (utmb, itra, tracedetrail, runagain).
+    /// </summary>
+    internal static IReadOnlyList<Uri> CollectBfsUrls(RaceOrganizerDocument doc)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var urls = new List<Uri>();
+
+        void TryAdd(Uri uri)
+        {
+            var host = uri.Host.ToLowerInvariant();
+            if (SpecialDomains.Any(d => host.Contains(d)))
+                return;
+            if (seen.Add(uri.GetLeftPart(UriPartial.Path)))
+                urls.Add(uri);
+        }
+
+        // The organizer's canonical URL (derived from the domain key).
+        if (Uri.TryCreate(doc.Url, UriKind.Absolute, out var docUrl))
+            TryAdd(docUrl);
+
+        // All source URLs from all discovery sources.
+        if (doc.Discovery is not null)
+        {
+            foreach (var discoveries in doc.Discovery.Values)
+            {
+                foreach (var d in discoveries)
+                {
+                    if (d.SourceUrls is null) continue;
+                    foreach (var urlStr in d.SourceUrls)
+                    {
+                        if (Uri.TryCreate(urlStr, UriKind.Absolute, out var url)
+                            && url.Scheme is "http" or "https")
+                            TryAdd(url);
+                    }
+                }
+            }
+        }
+
+        return urls;
     }
 
     /// <summary>
