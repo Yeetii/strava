@@ -10,7 +10,9 @@ public record RaceScraperResult(
     Uri? ImageUrl = null,
     Uri? LogoUrl = null,
     string? ExtractedName = null,
-    string? ExtractedDate = null);
+    string? ExtractedDate = null,
+    string? StartFee = null,
+    string? Currency = null);
 
 // Represents a single GPX route returned by a scraper.
 public record ScrapedRoute(
@@ -23,4 +25,6 @@ public record ScrapedRoute(
     Uri? GpxUrl = null,
     Uri? ImageUrl = null,
     Uri? LogoUrl = null,
-    string? Date = null);
+    string? Date = null,
+    string? StartFee = null,
+    string? Currency = null);

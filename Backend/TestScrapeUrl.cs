@@ -40,6 +40,8 @@ public class TestScrapeUrl(
             logoUrl = result?.LogoUrl?.AbsoluteUri,
             extractedName = result?.ExtractedName,
             extractedDate = result?.ExtractedDate,
+            startFee = result?.StartFee,
+            currency = result?.Currency,
             routes = result?.Routes.Select(r => new
             {
                 name = r.Name,
@@ -51,6 +53,8 @@ public class TestScrapeUrl(
                 imageUrl = r.ImageUrl?.AbsoluteUri,
                 logoUrl = r.LogoUrl?.AbsoluteUri,
                 date = r.Date,
+                startFee = r.StartFee,
+                currency = r.Currency,
             }) ?? [],
         };
 

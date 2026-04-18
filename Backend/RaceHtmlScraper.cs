@@ -57,6 +57,38 @@ public static partial class RaceHtmlScraper
         return null;
     }
 
+    /// <summary>
+    /// Extracts distinct distance strings from the visible text of an HTML page.
+    /// Returns normalised "X km" strings (e.g. "27 km", "100 km").
+    /// </summary>
+    public static IReadOnlyList<string> ExtractDistancesFromContent(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        // Strip <head>, script/style blocks so only visible content remains.
+        var clean = HeadSectionRegex().Replace(html, " ");
+        clean = ScriptStyleRegex().Replace(clean, " ");
+        var visibleText = HtmlTagRegex().Replace(clean, " ");
+
+        var seen = new HashSet<int>(); // rounded km values for dedup
+        var results = new List<string>();
+        foreach (Match m in ContentDistanceRegex().Matches(visibleText))
+        {
+            var num = m.Groups["num"].Value;
+            var unit = m.Groups["unit"].Value.ToLowerInvariant();
+            if (!double.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                continue;
+            if (value < 1 || value > 500) continue; // filter out noise
+            if (unit is "mi" or "miles" or "mile")
+                value *= 1.60934;
+            var rounded = (int)Math.Round(value);
+            if (seen.Add(rounded))
+                results.Add(RaceScrapeDiscovery.FormatDistanceKm(value));
+        }
+        return results;
+    }
+
     // Extracts .gpx URLs from an HTML page.
     // Looks in href attributes and also in JSON-escaped script content.
     public static IReadOnlyCollection<Uri> ExtractGpxUrlsFromHtml(string html, Uri pageUrl)
@@ -91,6 +123,7 @@ public static partial class RaceHtmlScraper
         foreach (Match match in AnchorRegex().Matches(html))
         {
             var href = match.Groups["href"].Value;
+            if (href.StartsWith('#')) continue; // same-page anchor — already have the page content
             var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
 
             var isMatch = CourseKeywords.Any(kw =>
@@ -133,6 +166,7 @@ public static partial class RaceHtmlScraper
         foreach (Match match in AnchorRegex().Matches(html))
         {
             var href = match.Groups["href"].Value;
+            if (href.StartsWith('#')) continue; // same-page anchor — already have the page content
             var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
 
             if (!text.Contains("gpx", StringComparison.OrdinalIgnoreCase)) continue;
@@ -158,6 +192,7 @@ public static partial class RaceHtmlScraper
         foreach (Match match in AnchorRegex().Matches(html))
         {
             var href = match.Groups["href"].Value;
+            if (href.StartsWith('#')) continue; // same-page anchor
             var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
 
             var isMatch = DownloadKeywords.Any(kw =>
@@ -342,17 +377,31 @@ public static partial class RaceHtmlScraper
                 foreach (var seg in segments)
                 {
                     var segLower = seg.ToLowerInvariant();
+                    var segNorm = StripDiacritics(segLower);
                     var words = seg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    var overlap = words.Count(w => domainWords.Contains(w.ToLowerInvariant()));
-                    if (overlap == 0 && domainHost.Length >= 5
-                        && (segLower.Replace(" ", "").Contains(domainHost)
-                            || domainHost.Contains(segLower.Replace(" ", ""))))
-                        overlap = 2;
+                    var overlap = words.Count(w =>
+                        domainWords.Contains(w.ToLowerInvariant())
+                        || domainWords.Contains(StripDiacritics(w.ToLowerInvariant())));
+                    if (overlap == 0 && domainHost.Length >= 5)
+                    {
+                        var segCompact = segNorm.Replace(" ", "");
+                        if (segCompact.Contains(domainHost) || domainHost.Contains(segCompact))
+                            overlap = 2;
+                    }
                     if (overlap > 0)
                         return CleanExtractedName(seg) ?? raw;
                 }
             }
-            return segments.Count > 0 ? CleanExtractedName(segments[0]) ?? raw : raw;
+            // Fallback: pick the first non-navigation segment, preferring domain-matching ones.
+            var fallback = segments
+                .Where(s => !NavigationTerms.Any(t => s.Equals(t, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (fallback.Count > 0)
+            {
+                var domainMatch = fallback.FirstOrDefault(s => HasDomainAffinity(s, domainWords));
+                var pick = domainMatch ?? fallback[0];
+                return CleanExtractedName(pick) ?? raw;
+            }
         }
 
         // 3. Collect name candidates from all structured sources:
@@ -376,7 +425,8 @@ public static partial class RaceHtmlScraper
             foreach (var seg in TitleSeparatorRegex().Split(raw))
             {
                 var cleaned = CleanExtractedName(seg.Trim());
-                if (cleaned is not null && cleaned.Length >= 3 && cleaned.Length <= 80)
+                if (cleaned is not null && cleaned.Length >= 3 && cleaned.Length <= 80
+                    && !NavigationTerms.Any(t => cleaned.Equals(t, StringComparison.OrdinalIgnoreCase)))
                     candidates.Add(cleaned);
             }
         }
@@ -426,7 +476,8 @@ public static partial class RaceHtmlScraper
 
         var viable = candidateCounts
             .Where(kv => kv.Value >= threshold)
-            .OrderByDescending(kv => kv.Key.Length) // prefer longer names
+            .OrderByDescending(kv => HasDomainAffinity(kv.Key, domainWords) ? 1 : 0)
+            .ThenByDescending(kv => kv.Key.Length) // prefer longer names
             .ThenByDescending(kv => kv.Value)       // then by frequency
             .ToList();
 
@@ -443,14 +494,31 @@ public static partial class RaceHtmlScraper
     }
 
     private static readonly string[] NavigationTerms = [
-        "home", "menu", "contact", "about", "login", "register", "results",
+        "home", "hjem", "menu", "contact", "about", "login", "register", "results",
         "inscription", "résultats", "accueil", "hem", "start",
     ];
+
+    /// <summary>True when the candidate text overlaps with the domain name (diacritic-insensitive).</summary>
+    private static bool HasDomainAffinity(string candidate, HashSet<string> domainWords)
+    {
+        if (domainWords.Count == 0) return false;
+        var words = candidate.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Any(w => domainWords.Contains(w.ToLowerInvariant())
+                        || domainWords.Contains(StripDiacritics(w.ToLowerInvariant()))))
+            return true;
+        var domainHost = string.Join("", domainWords);
+        if (domainHost.Length < 5) return false;
+        var compact = StripDiacritics(candidate.ToLowerInvariant()).Replace(" ", "");
+        return compact.Contains(domainHost) || domainHost.Contains(compact);
+    }
 
     private static string? CleanExtractedName(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var text = System.Net.WebUtility.HtmlDecode(raw).Trim();
+        // Decode JSON unicode escapes like \u00e4 → ä (common in JSON-LD / JS-embedded content).
+        text = JsonUnicodeEscapeRegex().Replace(text, m =>
+            ((char)int.Parse(m.Groups[1].Value, System.Globalization.NumberStyles.HexNumber)).ToString());
         text = CollapseWhitespaceRegex().Replace(text, " ");
         // Strip trailing boilerplate like "- Home", "| Official Site".
         text = TitleSeparatorRegex().Split(text)[0].Trim();
@@ -468,6 +536,35 @@ public static partial class RaceHtmlScraper
         {
             return host;
         }
+    }
+
+    /// <summary>Remove diacritics so that e.g. "fjällmaraton" becomes "fjallmaraton".</summary>
+    private static string StripDiacritics(string text)
+    {
+        // First replace characters that don't decompose under NFD (stroke/ligature letters).
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            var mapped = c switch
+            {
+                'ø' or 'ö' => "o", 'Ø' or 'Ö' => "O",
+                'æ' => "ae", 'Æ' => "AE",
+                'ð' => "d", 'Ð' => "D",
+                'þ' => "th", 'Þ' => "TH",
+                'đ' => "d", 'Đ' => "D",
+                'ł' => "l", 'Ł' => "L",
+                _ => null
+            };
+            if (mapped is not null) sb.Append(mapped);
+            else sb.Append(c);
+        }
+        // Then strip combining marks (handles ä→a, é→e, etc.).
+        var normalized = sb.ToString().Normalize(System.Text.NormalizationForm.FormD);
+        sb.Clear();
+        foreach (var c in normalized)
+            if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
     }
 
     private static HashSet<string> ExtractDomainWords(Uri url)
@@ -509,6 +606,11 @@ public static partial class RaceHtmlScraper
         if (string.IsNullOrWhiteSpace(html))
             return null;
 
+        // Cap input size — dates are in the first portion of the page; large pages cause regex slowdowns.
+        const int MaxChars = 150_000;
+        if (html.Length > MaxChars)
+            html = html[..MaxChars];
+
         // 1. JSON-LD startDate (most reliable).
         foreach (Match m in JsonLdStartDateRegex().Matches(html))
         {
@@ -531,20 +633,26 @@ public static partial class RaceHtmlScraper
         }
 
         // 4. Visible text: score each candidate by heading context, font-size hints, and frequency.
-        // Strip script/style blocks so JSON-LD dates and CSS aren't matched as visible text.
-        var visibleHtml = ScriptStyleRegex().Replace(html, " ");
+        // Strip <head>, script/style blocks, and HTML comments so non-visible dates aren't matched.
+        var cleanHtml = HeadSectionRegex().Replace(html, " ");
+        cleanHtml = ScriptStyleRegex().Replace(cleanHtml, " ");
+        // Strip all HTML tags so dates inside attributes (src, content, href) aren't matched.
+        var visibleText = HtmlTagRegex().Replace(cleanHtml, " ");
         var candidates = new Dictionary<string, int>(StringComparer.Ordinal); // normalized date → score
-        foreach (Match m in VisibleDateRegex().Matches(visibleHtml))
+        foreach (Match m in VisibleDateRegex().Matches(visibleText))
         {
             var normalized = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Value.Trim());
             if (normalized is null) continue;
 
             int score = 1; // base occurrence score
 
-            // Check surrounding context for heading tags or large font-size.
-            var contextStart = Math.Max(0, m.Index - 200);
-            var contextLen = Math.Min(visibleHtml.Length - contextStart, m.Length + 400);
-            var context = visibleHtml.AsSpan(contextStart, contextLen);
+            // Check surrounding context in the HTML (with tags) for heading tags or large font-size.
+            var htmlIdx = cleanHtml.IndexOf(m.Value, StringComparison.OrdinalIgnoreCase);
+            var contextStart = htmlIdx >= 0 ? Math.Max(0, htmlIdx - 200) : 0;
+            var contextLen = htmlIdx >= 0
+                ? Math.Min(cleanHtml.Length - contextStart, m.Value.Length + 400)
+                : 0;
+            var context = htmlIdx >= 0 ? cleanHtml.AsSpan(contextStart, contextLen) : ReadOnlySpan<char>.Empty;
 
             if (context.Contains("<h1", StringComparison.OrdinalIgnoreCase))
                 score += 10;
@@ -578,6 +686,22 @@ public static partial class RaceHtmlScraper
     }
 
     /// <summary>
+    /// Extracts absolute URLs for external CSS stylesheets referenced via &lt;link rel="stylesheet"&gt;.
+    /// </summary>
+    public static List<Uri> ExtractStylesheetUrls(string html, Uri pageUrl)
+    {
+        var urls = new List<Uri>();
+        foreach (Match m in StylesheetLinkRegex().Matches(html))
+        {
+            var href = m.Groups["href"].Value.Trim();
+            if (!string.IsNullOrEmpty(href) && Uri.TryCreate(pageUrl, href, out var uri)
+                && uri.Scheme is "http" or "https")
+                urls.Add(uri);
+        }
+        return urls;
+    }
+
+    /// <summary>
     /// Returns the most prominent image URL from an HTML page.
     /// Prefers large images (by explicit width/height), Open Graph meta images,
     /// and images whose src/alt/class hints at a hero/banner. Skips tiny icons, trackers, and data URIs.
@@ -595,8 +719,12 @@ public static partial class RaceHtmlScraper
             if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(content), out var uri)
                 && uri.Scheme is "http" or "https" && !IsTrackingPixel(uri))
             {
-                // If the OG image looks like a logo, keep it as fallback instead of returning immediately.
-                if (uri.AbsolutePath.Contains("logo", StringComparison.OrdinalIgnoreCase))
+                // Demote OG images that are likely logos/graphics rather than hero photos.
+                var p = uri.AbsolutePath;
+                if (p.Contains("logo", StringComparison.OrdinalIgnoreCase)
+                    || p.Contains("/elementor/thumbs/", StringComparison.OrdinalIgnoreCase)
+                    || p.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                    || p.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
                 {
                     ogCandidate ??= uri;
                     continue;
@@ -605,27 +733,51 @@ public static partial class RaceHtmlScraper
             }
         }
 
-        // 2. Score all <img> tags and pick the best.
+        // 2. Find ALL image URLs anywhere in the HTML (img src, background-image, data-settings JSON, style attrs, etc.)
+        //    Decode HTML entities and JSON slash escaping so all URL forms become plain https://...
+        var decoded = html.Replace("&quot;", "\"").Replace("&amp;", "&").Replace("&#039;", "'").Replace("\\/", "/");
         Uri? best = null;
-        var bestScore = -1;
+        var bestScore = int.MinValue;
 
-        foreach (Match m in ImgRegex().Matches(html))
+        void Consider(Uri uri, double position, int bonus = 0)
         {
-            var tag = m.Value;
-            var src = ImgSrcRegex().Match(tag).Groups["src"].Value;
-            if (string.IsNullOrWhiteSpace(src) || src.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(src), out var uri)
+            if (IsTrackingPixel(uri)) return;
+            var score = ScoreImageUrl(uri) + (int)Math.Round(2 * (1 - position)) + bonus;
+            if (score > bestScore) { bestScore = score; best = uri; }
+        }
+
+        // 2a. background-image: url(...) — can contain relative URLs, so resolve against page.
+        foreach (Match m in CssBackgroundImageRegex().Matches(decoded))
+        {
+            var rawUrl = m.Groups["url"].Value.Trim();
+            if (!Uri.TryCreate(pageUrl, rawUrl, out var uri)
                 || uri.Scheme is not ("http" or "https"))
                 continue;
-            if (IsTrackingPixel(uri)) continue;
+            var ext = uri.AbsolutePath.AsSpan();
+            var dot = ext.LastIndexOf('.');
+            if (dot < 0) continue;
+            ext = ext.Slice(dot);
+            if (!ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+                && !ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+                && !ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)
+                && !ext.Equals(".png", StringComparison.OrdinalIgnoreCase)
+                && !ext.Equals(".gif", StringComparison.OrdinalIgnoreCase)
+                && !ext.Equals(".svg", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var position = (double)m.Index / Math.Max(decoded.Length, 1);
+            // Bonus: background-image is usually a hero/banner, worth boosting.
+            Consider(uri, position, bonus: 3);
+        }
 
-            var score = ScoreImage(tag, uri);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                best = uri;
-            }
+        // 2b. Absolute image URLs anywhere in the HTML (img src, JSON, style attrs, etc.)
+        foreach (Match m in AnyImageUrlRegex().Matches(decoded))
+        {
+            var rawUrl = UnescapeJsonSlash(m.Groups["url"].Value);
+            if (!Uri.TryCreate(pageUrl, rawUrl, out var uri)
+                || uri.Scheme is not ("http" or "https"))
+                continue;
+            var position = (double)m.Index / Math.Max(decoded.Length, 1);
+            Consider(uri, position);
         }
 
         return best ?? ogCandidate;
@@ -675,41 +827,47 @@ public static partial class RaceHtmlScraper
             || path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) && path.Contains("1x1", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static int ScoreImage(string imgTag, Uri uri)
+    private static int ScoreImageUrl(Uri uri)
     {
-        var score = 0;
-        var tagLower = imgTag.ToLowerInvariant();
         var path = uri.AbsolutePath.ToLowerInvariant();
 
-        // Penalize known non-content images.
-        if (tagLower.Contains("icon") || tagLower.Contains("avatar") || tagLower.Contains("emoji"))
-            return -1;
+        // Hard reject known non-content paths.
         if (path.Contains("icon") || path.Contains("avatar") || path.Contains("emoji")
-            || path.Contains("spinner") || path.Contains("loading"))
-            return -1;
+            || path.Contains("spinner") || path.Contains("loading")
+            || path.Contains("map") || path.Contains("karta")
+            || path.Contains("download") || path.Contains("upload"))
+            return -100;
 
-        // Penalize logos — they exist but shouldn't win over real content images.
-        if (tagLower.Contains("logo") || path.Contains("logo"))
+        var score = 0;
+
+        // Penalize logos.
+        if (path.Contains("logo"))
+            score -= 10;
+
+        // Penalize Elementor thumbnail crops and WordPress thumbnail sizes.
+        if (path.Contains("/elementor/thumbs/") || path.Contains("-150x150")
+            || path.Contains("-100x100") || path.Contains("-300x"))
             score -= 5;
 
-        // Explicit dimensions — larger = more prominent.
-        var widthMatch = ImgWidthRegex().Match(imgTag);
-        var heightMatch = ImgHeightRegex().Match(imgTag);
-        if (widthMatch.Success && int.TryParse(widthMatch.Groups["val"].Value, out var w))
-        {
-            if (w < 50) return -1; // tiny
-            score += w > 400 ? 3 : w > 200 ? 2 : 1;
-        }
-        if (heightMatch.Success && int.TryParse(heightMatch.Groups["val"].Value, out var h))
-        {
-            if (h < 50) return -1;
-            score += h > 300 ? 3 : h > 150 ? 2 : 1;
-        }
-
-        // Hero/banner hints.
-        if (tagLower.Contains("hero") || tagLower.Contains("banner") || tagLower.Contains("featured")
-            || tagLower.Contains("cover") || tagLower.Contains("header-image"))
+        // Photographic formats are almost always real content; png/gif/svg are often logos/graphics.
+        if (path.EndsWith(".jpg") || path.EndsWith(".jpeg") || path.EndsWith(".webp")
+            || path.EndsWith(".jpg.webp") || path.EndsWith(".jpeg.webp"))
             score += 5;
+        else if (path.EndsWith(".png"))
+            score -= 3;
+        else if (path.EndsWith(".gif") || path.EndsWith(".svg") || path.EndsWith(".ico"))
+            score -= 10;
+
+        // Dimensions embedded in path (common WordPress/Elementor pattern: image-1024x768.jpg).
+        var dimMatch = PathDimensionRegex().Match(path);
+        if (dimMatch.Success
+            && int.TryParse(dimMatch.Groups["w"].Value, out var w)
+            && int.TryParse(dimMatch.Groups["h"].Value, out var h))
+        {
+            var pixels = w * h;
+            if (pixels < 50 * 50) return -100; // tiny
+            score += pixels > 500_000 ? 4 : pixels > 100_000 ? 2 : 0;
+        }
 
         return score;
     }
@@ -733,8 +891,31 @@ public static partial class RaceHtmlScraper
     private static partial Regex HtmlTagRegex();
 
     // Removes <script>...</script>, <style>...</style> blocks, and HTML comments.
-    [GeneratedRegex(@"<(?:script|style)\b[^>]*>[\s\S]*?</(?:script|style)>|<!--[\s\S]*?-->", RegexOptions.IgnoreCase)]
+    // Uses [^<]* with <(?!/) lookahead to avoid catastrophic backtracking on large pages.
+    [GeneratedRegex(@"<(?:script|style)\b[^>]*>(?:[^<]|<(?!/(?:script|style)>))*</(?:script|style)>|<!--(?:[^-]|-(?!->))*-->", RegexOptions.IgnoreCase)]
     private static partial Regex ScriptStyleRegex();
+
+    // Removes the <head>...</head> section (meta tags, title, link tags, etc.).
+    [GeneratedRegex(@"<head\b[^>]*>(?:[^<]|<(?!/head>))*</head>", RegexOptions.IgnoreCase)]
+    private static partial Regex HeadSectionRegex();
+
+    // Extracts WxH dimensions embedded in image file paths (e.g. image-1024x768.jpg, photo_800x600.webp).
+    [GeneratedRegex(@"-(?<w>\d{2,4})x(?<h>\d{2,4})\.", RegexOptions.IgnoreCase)]
+    private static partial Regex PathDimensionRegex();
+
+    // Matches <link rel="stylesheet" href="..."> tags.
+    [GeneratedRegex(@"<link\b[^>]*\brel\s*=\s*[""']stylesheet[""'][^>]*\bhref\s*=\s*[""'](?<href>[^""']+)[""']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex StylesheetLinkRegex();
+
+    // Broad regex: finds any image URL (absolute) anywhere in HTML — img src, background-image, JSON, style attrs, etc.
+    // Matches common image extensions: jpg, jpeg, webp, png, gif, svg.
+    [GeneratedRegex(@"(?<url>https?://[^\s""'<>\)]+\.(?:jpe?g|webp|png|gif|svg)(?:\.webp)?)", RegexOptions.IgnoreCase)]
+    private static partial Regex AnyImageUrlRegex();
+
+    // Matches background-image: url('...') in CSS/style attrs — captures the URL (absolute or relative).
+    // Uses [^;]{0,80} to avoid crossing HTML attribute boundaries on entity-decoded pages.
+    [GeneratedRegex(@"background(?:-image)?\s*:[^;]{0,80}url\(\s*[""']?(?<url>[^""')\s]+)[""']?\s*\)", RegexOptions.IgnoreCase)]
+    private static partial Regex CssBackgroundImageRegex();
 
     // Matches <meta property="og:image" content="..."> and twitter:image variants.
     [GeneratedRegex(@"<meta\b[^>]*(?:property|name)\s*=\s*[""'](?:og:image|twitter:image)[""'][^>]*content\s*=\s*[""'](?<url>[^""']+)[""']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
@@ -747,14 +928,6 @@ public static partial class RaceHtmlScraper
     // Extracts the src attribute from an <img> tag.
     [GeneratedRegex(@"src\s*=\s*[""'](?<src>[^""']+)[""']", RegexOptions.IgnoreCase)]
     private static partial Regex ImgSrcRegex();
-
-    // Matches width attribute or width in style.
-    [GeneratedRegex(@"width\s*[:=]\s*[""']?(?<val>\d+)", RegexOptions.IgnoreCase)]
-    private static partial Regex ImgWidthRegex();
-
-    // Matches height attribute or height in style.
-    [GeneratedRegex(@"height\s*[:=]\s*[""']?(?<val>\d+)", RegexOptions.IgnoreCase)]
-    private static partial Regex ImgHeightRegex();
 
     // Matches <link rel="icon" href="..."> or <link rel="shortcut icon" href="...">.
     [GeneratedRegex(@"<link\b[^>]*rel\s*=\s*[""'](?:shortcut\s+)?icon[""'][^>]*href\s*=\s*[""'](?<href>[^""']+)[""']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
@@ -797,6 +970,10 @@ public static partial class RaceHtmlScraper
     [GeneratedRegex(@"\b\d+(?:\.\d+)?\s*(?:km|k|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex LinkTextDistanceRegex();
 
+    // Matches distance in visible page content with named groups: "27 km", "100K", "42.195 km", "10 miles".
+    [GeneratedRegex(@"\b(?<num>\d+(?:\.\d+)?)\s*(?<unit>km|k|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex ContentDistanceRegex();
+
     // Matches inline font-size declarations like "font-size: 24px" or "font-size:1.5em".
     [GeneratedRegex(@"font-size\s*:\s*(?<size>\d+(?:\.\d+)?)\s*(?<unit>px|em|rem)", RegexOptions.IgnoreCase)]
     private static partial Regex FontSizeRegex();
@@ -825,12 +1002,16 @@ public static partial class RaceHtmlScraper
     [GeneratedRegex(@"\s+")]
     private static partial Regex CollapseWhitespaceRegex();
 
+    // Matches JSON-style unicode escapes like \u00e4.
+    [GeneratedRegex(@"\\u([0-9a-fA-F]{4})")]
+    private static partial Regex JsonUnicodeEscapeRegex();
+
     // Matches elevation gain keywords followed by a number, or a number followed by elevation keywords.
     // Patterns: "elevation gain: 1200 m", "Elevation Gain ↙ 900 m ↘ 1050 m", "höjdmeter: 1200", "D+ 1200m".
     // Allows up to 40 chars gap between keyword and number (tags are stripped first).
     private static readonly string[] ElevationKeywords =
         ["elevation gain", "ascent", "dénivelé positif", "dénivelé", "denivelé", "denivele",
-         "aufstieg", "höjdmeter", "höhenmeter", "hohenmeter", "stigning", "d+"];
+         "aufstieg", "höjdmeter", "höhenmeter", "hohenmeter", "stigning", "totalstigning", "d+"];
 
     [GeneratedRegex(@"\b(\d[\d\s]{0,6}\d|\d{1,5})\s*(?:m\b|meter\b|hm\b)", RegexOptions.IgnoreCase)]
     private static partial Regex ElevationNumberRegex();
@@ -871,4 +1052,133 @@ public static partial class RaceHtmlScraper
         }
         return best;
     }
+
+    /// <summary>
+    /// Extracts a price from visible HTML text.
+    /// Looks for patterns like "500 kr", "€50", "SEK 300", "$120", "300 NOK", "1 200 SEK".
+    /// Returns (amount, currency) or null.
+    /// </summary>
+    public static (int Amount, string Currency)? ExtractPrice(string? html, Uri? pageUrl = null)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return null;
+
+        var tld = pageUrl?.Host.Split('.').LastOrDefault()?.ToLowerInvariant();
+
+        // Strip non-visible content.
+        var clean = HeadSectionRegex().Replace(html, " ");
+        clean = ScriptStyleRegex().Replace(clean, " ");
+        var text = HtmlTagRegex().Replace(clean, " ");
+
+        // 1. JSON-LD "offers" → "price" + "priceCurrency".
+        var priceMatch = JsonLdPriceRegex().Match(html);
+        if (priceMatch.Success)
+        {
+            var raw = priceMatch.Groups["price"].Value.Replace(" ", "");
+            var curr = priceMatch.Groups["currency"].Value.Trim().ToUpperInvariant();
+            if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var p) && p > 0 && p < 100_000)
+            {
+                if (string.IsNullOrEmpty(curr)) curr = KrCurrencyForTld(tld);
+                return (p, NormalizeCurrency(curr, tld));
+            }
+        }
+
+        // 2. Visible text patterns.
+        var best = (Amount: 0, Currency: string.Empty);
+        var bestScore = 0;
+
+        foreach (Match m in PriceRegex().Matches(text))
+        {
+            var prefix = m.Groups["pre"].Value.Trim();
+            var numRaw = m.Groups["num"].Value.Replace(" ", "").Replace("\u00a0", "");
+            var suffix = m.Groups["post"].Value.Trim();
+
+            if (!int.TryParse(numRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount))
+                continue;
+            if (amount < 10 || amount > 100_000) continue;
+
+            var currency = ResolveCurrency(prefix, suffix, tld);
+            if (currency is null) continue;
+
+            // Prefer prices near registration keywords; among those, take the max amount.
+            var idx = m.Index;
+            var ctxStart = Math.Max(0, idx - 120);
+            var ctxLen = Math.Min(text.Length - ctxStart, m.Length + 240);
+            var ctx = text.AsSpan(ctxStart, ctxLen);
+            var score = 1;
+            if (HasPriceContext(ctx)) score += 5;
+            if (amount >= 100) score += 1; // more likely a real entry fee
+
+            if (score > bestScore || (score == bestScore && amount > best.Amount))
+            {
+                best = (amount, NormalizeCurrency(currency, tld));
+                bestScore = score;
+            }
+        }
+
+        return bestScore > 0 ? best : null;
+    }
+
+    private static bool HasPriceContext(ReadOnlySpan<char> ctx)
+    {
+        return ctx.Contains("pris", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("price", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("fee", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("avgift", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("anmälan", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("anmälning", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("registration", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("inscription", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("tarif", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("startavgift", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("p\u00e5melding", StringComparison.OrdinalIgnoreCase) // påmelding
+            || ctx.Contains("deltaker", StringComparison.OrdinalIgnoreCase)
+            || ctx.Contains("entry", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ResolveCurrency(string prefix, string suffix, string? tld)
+    {
+        // Check prefix first (€, $, £, CHF, SEK, NOK, DKK, EUR, USD, GBP)
+        var token = prefix.Length > 0 ? prefix : suffix;
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        token = token.Trim('.', ',', ':').Trim();
+        return token.ToUpperInvariant() switch
+        {
+            "KR" or "KR." => KrCurrencyForTld(tld),
+            "SEK" => "SEK",
+            "NOK" => "NOK",
+            "DKK" => "DKK",
+            "€" or "EUR" => "EUR",
+            "$" or "USD" => "USD",
+            "£" or "GBP" => "GBP",
+            "CHF" => "CHF",
+            "ISK" => "ISK",
+            _ => null
+        };
+    }
+
+    private static string KrCurrencyForTld(string? tld) => tld switch
+    {
+        "no" => "NOK",
+        "dk" => "DKK",
+        "is" => "ISK",
+        _ => "SEK", // .se, .com, and everything else
+    };
+
+    private static string NormalizeCurrency(string currency, string? tld = null) => currency.ToUpperInvariant() switch
+    {
+        "KR" or "KR." => KrCurrencyForTld(tld),
+        "€" => "EUR",
+        "$" => "USD",
+        "£" => "GBP",
+        _ => currency.ToUpperInvariant()
+    };
+
+    // Matches price amounts with optional currency prefix/suffix.
+    // "500 kr", "€50", "SEK 300", "1 200 NOK", "kr 500", "$120", "600,- NOK".
+    [GeneratedRegex(@"(?<pre>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|kr\.?)\s?)?(?<num>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post>kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK)?", RegexOptions.IgnoreCase)]
+    private static partial Regex PriceRegex();
+
+    // Matches JSON-LD "price" and "priceCurrency" in offers.
+    [GeneratedRegex(@"""price""\s*:\s*""?(?<price>\d[\d\s]{0,6}\d|\d{1,5})""?.*?""priceCurrency""\s*:\s*""(?<currency>[A-Z]{3})""", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex JsonLdPriceRegex();
 }

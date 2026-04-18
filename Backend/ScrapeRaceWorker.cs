@@ -80,6 +80,8 @@ public class ScrapeRaceWorker
             Uri? scrapedLogoUrl = null;
             string? scrapedName = null;
             string? scrapedDate = null;
+            string? scrapedStartFee = null;
+            string? scrapedCurrency = null;
 
             foreach (var scraper in _scrapers)
             {
@@ -93,6 +95,8 @@ public class ScrapeRaceWorker
                 scrapedLogoUrl ??= result.LogoUrl;
                 scrapedName ??= result.ExtractedName;
                 scrapedDate ??= result.ExtractedDate;
+                scrapedStartFee ??= result.StartFee;
+                scrapedCurrency ??= result.Currency;
 
                 if (routeResult is null && result.Routes.Count > 0)
                     routeResult = result;
@@ -119,7 +123,7 @@ public class ScrapeRaceWorker
             }
 
             // All scrapers yielded no routes — fall back to a point feature.
-            await UpsertPointFallbackAsync(job, websiteUrl, scrapedImageUrl, scrapedLogoUrl, scrapedName, scrapedDate, cancellationToken);
+            await UpsertPointFallbackAsync(job, websiteUrl, scrapedImageUrl, scrapedLogoUrl, scrapedName, scrapedDate, scrapedStartFee, scrapedCurrency, cancellationToken);
             await actions.CompleteMessageAsync(message, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -174,6 +178,10 @@ public class ScrapeRaceWorker
                 properties[RaceScrapeDiscovery.PropLogo] = route.LogoUrl.AbsoluteUri;
             if (!string.IsNullOrWhiteSpace(route.Date))
                 properties[RaceScrapeDiscovery.PropDate] = route.Date;
+            if (!string.IsNullOrWhiteSpace(route.StartFee) && string.IsNullOrWhiteSpace(job.StartFee))
+                properties[RaceScrapeDiscovery.PropStartFee] = route.StartFee;
+            if (!string.IsNullOrWhiteSpace(route.Currency) && string.IsNullOrWhiteSpace(job.Currency))
+                properties[RaceScrapeDiscovery.PropCurrency] = route.Currency;
 
             var lineString = new LineString(route.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
             var feature = new Feature(lineString, properties, null, new FeatureId(featureId));
@@ -225,6 +233,10 @@ public class ScrapeRaceWorker
             properties[RaceScrapeDiscovery.PropLogo] = course.LogoUrl.AbsoluteUri;
         if (!string.IsNullOrWhiteSpace(course.Date))
             properties[RaceScrapeDiscovery.PropDate] = course.Date;
+        if (!string.IsNullOrWhiteSpace(course.StartFee) && string.IsNullOrWhiteSpace(job.StartFee))
+            properties[RaceScrapeDiscovery.PropStartFee] = course.StartFee;
+        if (!string.IsNullOrWhiteSpace(course.Currency) && string.IsNullOrWhiteSpace(job.Currency))
+            properties[RaceScrapeDiscovery.PropCurrency] = course.Currency;
 
         var point = new Point(new Position(job.Longitude.Value, job.Latitude.Value));
         var feature = new Feature(point, properties, null, new FeatureId(featureId));
@@ -233,7 +245,7 @@ public class ScrapeRaceWorker
         _logger.LogInformation("ScrapeRaceWorker: upserted course point {FeatureId}", featureId);
     }
 
-    private async Task UpsertPointFallbackAsync(ScrapeJob job, Uri? websiteUrl, Uri? scrapedImageUrl, Uri? scrapedLogoUrl, string? scrapedName, string? scrapedDate, CancellationToken cancellationToken)
+    private async Task UpsertPointFallbackAsync(ScrapeJob job, Uri? websiteUrl, Uri? scrapedImageUrl, Uri? scrapedLogoUrl, string? scrapedName, string? scrapedDate, string? scrapedStartFee, string? scrapedCurrency, CancellationToken cancellationToken)
     {
         if (job.Latitude is null || job.Longitude is null)
         {
@@ -270,6 +282,10 @@ public class ScrapeRaceWorker
             properties[RaceScrapeDiscovery.PropImage] = scrapedImageUrl.AbsoluteUri;
         if (scrapedLogoUrl is not null)
             properties[RaceScrapeDiscovery.PropLogo] = scrapedLogoUrl.AbsoluteUri;
+        if (!string.IsNullOrWhiteSpace(scrapedStartFee) && string.IsNullOrWhiteSpace(job.StartFee))
+            properties[RaceScrapeDiscovery.PropStartFee] = scrapedStartFee;
+        if (!string.IsNullOrWhiteSpace(scrapedCurrency) && string.IsNullOrWhiteSpace(job.Currency))
+            properties[RaceScrapeDiscovery.PropCurrency] = scrapedCurrency;
 
         var point = new Point(new Position(job.Longitude.Value, job.Latitude.Value));
         var feature = new Feature(point, properties, null, new FeatureId(featureId));
