@@ -1,0 +1,16 @@
+meta {
+  name: Test Scrape URL
+  type: http
+  seq: 1
+}
+
+get {
+  url: http://localhost:123/api/scrape/test?url=https://fjallmaraton.se/en/the-fjallmaraton-week/fjallmaraton-100k/
+  body: none
+  auth: none
+}
+
+params:query {
+  url: https://fjallmaraton.se/en/the-fjallmaraton-week/fjallmaraton-100k/
+  ~code: {{functionKey}}
+}

@@ -21,28 +21,46 @@ public class VisitedPathsWorker(
     // 50m ≈ 0.00045° – use a slightly larger threshold for a rough but fast check
     private const double ProximityThresholdDegrees = 0.0005;
 
+    // Grid cell size matches the proximity threshold for O(1) lookups
+    private const double GridCellSize = ProximityThresholdDegrees;
+
+    private record ActivitySlim(string Id, string UserId, string? Polyline, string? SummaryPolyline);
+
+    private static bool HasRealLockToken(ServiceBusReceivedMessage message) =>
+        message.LockToken != Guid.Empty.ToString();
+
     [Function(nameof(VisitedPathsWorker))]
     public async Task Run(
         [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
         ServiceBusReceivedMessage[] jobs,
         ServiceBusMessageActions actions)
     {
-        var ids = jobs.Select(x => x.Body.ToString());
-        var activities = await _activitiesCollection.GetByIdsAsync(ids);
+        var ids = jobs.Select(x => x.Body.ToString()).ToList();
+        var activities = await FetchActivitySlims(ids);
         var activitiesList = activities
             .Where(a => !string.IsNullOrWhiteSpace(a.Polyline ?? a.SummaryPolyline))
             .ToList();
 
-        var nearbyPaths = (await FetchNearbyPaths(activitiesList)).ToList();
+        // Decode polylines once and reuse
+        var decodedActivities = activitiesList.ToDictionary(
+            a => a.Id,
+            a => GeoSpatialFunctions.DecodePolyline(a.Polyline ?? a.SummaryPolyline).ToList());
 
-        var processingTasks = jobs.Select(job => ProcessJob(job, actions, activitiesList, nearbyPaths));
-        await Task.WhenAll(processingTasks);
+        var nearbyPaths = (await FetchNearbyPaths(decodedActivities)).ToList();
+
+        // Renew locks after the potentially slow shared data fetch
+        var realJobs = jobs.Where(HasRealLockToken).ToList();
+        await Task.WhenAll(realJobs.Select(j => actions.RenewMessageLockAsync(j)));
+
+        foreach (var job in jobs)
+            await ProcessJob(job, actions, activitiesList, decodedActivities, nearbyPaths);
     }
 
     private async Task ProcessJob(
         ServiceBusReceivedMessage job,
         ServiceBusMessageActions actions,
-        List<Activity> activitiesList,
+        List<ActivitySlim> activitiesList,
+        Dictionary<string, List<Coordinate>> decodedActivities,
         List<Feature> nearbyPaths)
     {
         var activityId = job.Body.ToString();
@@ -50,94 +68,156 @@ public class VisitedPathsWorker(
         {
             var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
 
-            if (activity == null || string.IsNullOrWhiteSpace(activity.Polyline ?? activity.SummaryPolyline))
+            if (activity == null || !decodedActivities.TryGetValue(activityId, out var activityPoints) || activityPoints.Count == 0)
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
-                await actions.CompleteMessageAsync(job);
+                if (HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
-            var activityPoints = GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToList();
-            var visitedPaths = FindVisitedPaths(activityPoints, nearbyPaths).ToList();
+            var grid = BuildSpatialGrid(activityPoints);
+            var visitedPaths = FindVisitedPaths(grid, nearbyPaths).ToList();
 
             _logger.LogInformation("Activity {ActivityId} visits {PathCount} paths", activityId, visitedPaths.Count);
 
-            var documents = new List<VisitedPath>();
+            if (visitedPaths.Count == 0)
+            {
+                if (HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+                return;
+            }
+
+            // Batch-read existing VisitedPath documents
+            var visitedPathIds = visitedPaths
+                .Select(p => activity.UserId + "-" + p.Id.Value)
+                .ToList();
+            var existingDocs = (await _visitedPathsCollection.GetByIdsAsync(visitedPathIds))
+                .ToDictionary(d => d.Id);
+
+            var toUpsert = new List<VisitedPath>();
+            var toPatches = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
+            var partitionKey = new PartitionKey(activity.UserId);
+
             foreach (var pathFeature in visitedPaths)
             {
                 var pathId = pathFeature.Id.Value;
                 var documentId = activity.UserId + "-" + pathId;
-                var partitionKey = new PartitionKey(activity.UserId);
-                var doc = await _visitedPathsCollection.GetByIdMaybe(documentId, partitionKey)
-                    ?? new VisitedPath
+
+                if (existingDocs.TryGetValue(documentId, out var existing))
+                {
+                    if (!existing.ActivityIds.Contains(activity.Id))
+                    {
+                        toPatches.Add((documentId, [
+                            PatchOperation.Add("/activityIds/-", activity.Id)
+                        ]));
+                    }
+                }
+                else
+                {
+                    toUpsert.Add(new VisitedPath
                     {
                         Id = documentId,
                         UserId = activity.UserId,
                         PathId = pathId,
                         Name = pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
                         Type = pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
-                        ActivityIds = []
-                    };
-                doc.ActivityIds.Add(activity.Id);
-                documents.Add(doc);
+                        ActivityIds = [activity.Id]
+                    });
+                }
             }
 
-            await actions.RenewMessageLockAsync(job);
-            await _visitedPathsCollection.BulkUpsert(documents);
-            await actions.CompleteMessageAsync(job);
+            if (HasRealLockToken(job)) await actions.RenewMessageLockAsync(job);
+            await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
+            if (HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process visited paths for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
                 activityId, job.MessageId, job.DeliveryCount);
-            await actions.DeadLetterMessageAsync(job,
-                deadLetterReason: nameof(VisitedPathsWorker),
-                deadLetterErrorDescription: $"Activity {activityId}: {ex.Message}");
+            try
+            {
+                if (HasRealLockToken(job))
+                    await actions.DeadLetterMessageAsync(job,
+                        deadLetterReason: nameof(VisitedPathsWorker),
+                        deadLetterErrorDescription: $"Activity {activityId}: {ex.Message}");
+            }
+            catch (Exception deadLetterEx)
+            {
+                _logger.LogWarning(deadLetterEx, "Failed to dead-letter message for activity {ActivityId} (lock may have expired)", activityId);
+            }
         }
     }
 
-    private static IEnumerable<Feature> FindVisitedPaths(List<Coordinate> activityPoints, IEnumerable<Feature> paths)
+    private static HashSet<(int, int)> BuildSpatialGrid(List<Coordinate> points)
+    {
+        var grid = new HashSet<(int, int)>(points.Count);
+        foreach (var p in points)
+            grid.Add(((int)Math.Floor(p.Lat / GridCellSize), (int)Math.Floor(p.Lng / GridCellSize)));
+        return grid;
+    }
+
+    private static IEnumerable<Feature> FindVisitedPaths(HashSet<(int, int)> activityGrid, IEnumerable<Feature> paths)
     {
         foreach (var path in paths)
         {
             if (path.Geometry is not LineString line)
                 continue;
 
-            var pathPoints = line.Coordinates
-                .Select(p => new Coordinate(p.Longitude, p.Latitude))
-                .ToList();
-
-            if (ActivityVisitsPath(activityPoints, pathPoints))
+            if (PathIntersectsGrid(activityGrid, line.Coordinates))
                 yield return path;
         }
     }
 
-    private static bool ActivityVisitsPath(List<Coordinate> activityPoints, List<Coordinate> pathPoints)
+    private static bool PathIntersectsGrid(HashSet<(int, int)> activityGrid, IEnumerable<Position> pathCoords)
     {
-        foreach (var ap in activityPoints)
+        foreach (var p in pathCoords)
         {
-            foreach (var pp in pathPoints)
+            int latCell = (int)Math.Floor(p.Latitude / GridCellSize);
+            int lngCell = (int)Math.Floor(p.Longitude / GridCellSize);
+
+            // Check the cell and all 8 neighbors to account for points near cell boundaries
+            for (int dLat = -1; dLat <= 1; dLat++)
             {
-                if (Math.Abs(ap.Lat - pp.Lat) < ProximityThresholdDegrees
-                    && Math.Abs(ap.Lng - pp.Lng) < ProximityThresholdDegrees)
+                for (int dLng = -1; dLng <= 1; dLng++)
                 {
-                    return true;
+                    if (activityGrid.Contains((latCell + dLat, lngCell + dLng)))
+                        return true;
                 }
             }
         }
         return false;
     }
 
-    private async Task<IEnumerable<Feature>> FetchNearbyPaths(IEnumerable<Activity> activities)
+    private async Task<List<ActivitySlim>> FetchActivitySlims(List<string> ids)
+    {
+        const int MaxIdsPerQuery = 256;
+        var all = new List<ActivitySlim>();
+
+        var chunks = ids
+            .Select((id, i) => (id, i))
+            .GroupBy(x => x.i / MaxIdsPerQuery)
+            .Select(g => g.Select(x => x.id).ToList());
+
+        foreach (var chunk in chunks)
+        {
+            var queryText = "SELECT c.id, c.userId, c.polyline, c.summaryPolyline FROM c WHERE c.id IN (" +
+                            string.Join(",", chunk.Select((_, i) => $"@id{i}")) + ")";
+
+            var queryDef = new QueryDefinition(queryText);
+            for (int i = 0; i < chunk.Count; i++)
+                queryDef.WithParameter($"@id{i}", chunk[i]);
+
+            var results = await _activitiesCollection.ExecuteQueryAsync<ActivitySlim>(queryDef);
+            all.AddRange(results);
+        }
+        return all;
+    }
+
+    private async Task<IEnumerable<Feature>> FetchNearbyPaths(Dictionary<string, List<Coordinate>> decodedActivities)
     {
         var tileIndices = new HashSet<(int x, int y)>();
-        foreach (var activity in activities)
+        foreach (var points in decodedActivities.Values)
         {
-            var polyline = activity.SummaryPolyline ?? activity.Polyline;
-            if (string.IsNullOrEmpty(polyline))
-                continue;
-
-            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyline(polyline), PathTileZoom))
+            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(points, PathTileZoom))
                 tileIndices.Add(tile);
         }
 

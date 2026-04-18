@@ -1,0 +1,25 @@
+meta {
+  name: Trigger VisitedPathsWorker
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/VisitedPathsWorker
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": "{{activityId}}"
+  }
+}
+
+vars:pre-request {
+  activityId: cbcb
+}

@@ -48,6 +48,12 @@ public static partial class RaceScrapeDiscovery
         // Strip ordinal suffixes (1st, 2nd, 3rd, 4th, etc.) before parsing
         var cleaned = OrdinalSuffixRegex().Replace(trimmed, "$1");
 
+        // Replace non-English month names with English equivalents for InvariantCulture parsing.
+        cleaned = ReplaceLocalizedMonths(cleaned);
+        // Strip "den " prefix and trailing period after day number (e.g. "den 24. mai" → "24 may").
+        cleaned = DenPrefixRegex().Replace(cleaned, "");
+        cleaned = DayPeriodRegex().Replace(cleaned, "$1 ");
+
         if (DateOnly.TryParse(cleaned, CultureInfo.InvariantCulture, out var dateOnly))
             return dateOnly.ToString("yyyy-MM-dd");
 
@@ -57,6 +63,45 @@ public static partial class RaceScrapeDiscovery
 
         return null;
     }
+
+    // Maps non-English month names/abbreviations to English for date parsing.
+    private static readonly (string Pattern, string Replacement)[] MonthReplacements =
+    [
+        // Norwegian
+        ("januar", "january"), ("februar", "february"), ("mars", "march"),
+        ("april", "april"), ("mai", "may"), ("juni", "june"),
+        ("juli", "july"), ("august", "august"), ("september", "september"),
+        ("oktober", "october"), ("november", "november"), ("desember", "december"),
+        // Swedish
+        ("januari", "january"), ("februari", "february"), ("maj", "may"),
+        ("augusti", "august"), ("december", "december"),
+        // German
+        ("märz", "march"), ("marz", "march"), ("juni", "june"),
+        ("juli", "july"), ("oktober", "october"), ("dezember", "december"),
+        // French
+        ("janvier", "january"), ("février", "february"), ("fevrier", "february"),
+        ("mars", "march"), ("avril", "april"), ("mai", "may"),
+        ("juin", "june"), ("juillet", "july"), ("août", "august"), ("aout", "august"),
+        ("septembre", "september"), ("octobre", "october"),
+        ("novembre", "november"), ("décembre", "december"), ("decembre", "december"),
+    ];
+
+    private static string ReplaceLocalizedMonths(string input)
+    {
+        foreach (var (pattern, replacement) in MonthReplacements)
+        {
+            var idx = input.IndexOf(pattern, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+                return string.Concat(input.AsSpan(0, idx), replacement, input.AsSpan(idx + pattern.Length));
+        }
+        return input;
+    }
+
+    [GeneratedRegex(@"\bden\s+", RegexOptions.IgnoreCase)]
+    private static partial Regex DenPrefixRegex();
+
+    [GeneratedRegex(@"(\d)\.?\s+(?=[a-zA-Z])", RegexOptions.None)]
+    private static partial Regex DayPeriodRegex();
 
     // Formats a numeric distance in km to a human-readable string, e.g. 10.1 → "10.1 km", 5.0 → "5 km".
     public static string FormatDistanceKm(double distanceKm)
@@ -785,7 +830,7 @@ public static partial class RaceScrapeDiscovery
 
     // Returns true if the token is a marathon keyword and sets km to the corresponding distance.
     // "marathon" → 42 km, "halvmarathon" / "half marathon" / "half-marathon" → 21 km.
-    private static bool TryParseMarathonKeyword(string token, out double km)
+    public static bool TryParseMarathonKeyword(string token, out double km)
     {
         if (token.Equals("marathon", StringComparison.OrdinalIgnoreCase))
         {

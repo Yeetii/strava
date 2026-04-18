@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
@@ -22,7 +23,7 @@ namespace Backend
             [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
             ServiceBusMessageActions actions)
         {
-            var fetchJob = message.Body.ToObjectFromJson<ActivityFetchJob>();
+            var fetchJob = message.Body.ToObjectFromJson<ActivityFetchJob>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             try
             {
                 var accessTokenResponse = await _backendApiClient.GetAsync($"{fetchJob.UserId}/accessToken");

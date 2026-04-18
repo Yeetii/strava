@@ -1,0 +1,25 @@
+meta {
+  name: Trigger SummitsWorker
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/SummitsWorker
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": "{{activityId}}"
+  }
+}
+
+vars:pre-request {
+  activityId: 
+}

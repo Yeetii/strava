@@ -1,0 +1,25 @@
+meta {
+  name: Trigger AdminBoundaryEnrichmentWorker
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/AdminBoundaryEnrichmentWorker
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": "{{boundaryId}}"
+  }
+}
+
+vars:pre-request {
+  boundaryId: 
+}

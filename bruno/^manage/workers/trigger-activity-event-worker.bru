@@ -1,0 +1,25 @@
+meta {
+  name: Trigger ActivityEventWorker
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/ActivityEventWorker
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": "{{activityId}}"
+  }
+}
+
+vars:pre-request {
+  activityId: 
+}

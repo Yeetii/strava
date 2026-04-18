@@ -211,4 +211,42 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             CosmosWriteThrottle.Semaphore.Release();
         }
     }
+
+    public async Task ExecuteBatch(
+        PartitionKey partitionKey,
+        IEnumerable<T>? creates = null,
+        IEnumerable<(string Id, IReadOnlyList<PatchOperation> Operations)>? patches = null,
+        CancellationToken cancellationToken = default)
+    {
+        var batch = _container.CreateTransactionalBatch(partitionKey);
+        int count = 0;
+
+        foreach (var item in creates ?? [])
+        {
+            batch.CreateItem(item);
+            count++;
+        }
+        foreach (var (id, operations) in patches ?? [])
+        {
+            batch.PatchItem(id, operations);
+            count++;
+        }
+
+        if (count == 0) return;
+
+        await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+        try
+        {
+            using var response = await batch.ExecuteAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new CosmosException(
+                    $"Batch failed with status {response.StatusCode}",
+                    response.StatusCode, 0, response.ActivityId, response.RequestCharge);
+            await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+        }
+        finally
+        {
+            CosmosWriteThrottle.Semaphore.Release();
+        }
+    }
 }

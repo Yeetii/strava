@@ -73,9 +73,13 @@ public class ScrapeRaceWorker
 
             // Run all scrapers that can handle this job.
             // Take routes from the highest-priority scraper that returns them,
-            // but collect WebsiteUrl from any scraper that provides one.
+            // but collect WebsiteUrl and image/logo from any scraper that provides them.
             RaceScraperResult? routeResult = null;
             Uri? websiteUrl = null;
+            Uri? scrapedImageUrl = null;
+            Uri? scrapedLogoUrl = null;
+            string? scrapedName = null;
+            string? scrapedDate = null;
 
             foreach (var scraper in _scrapers)
             {
@@ -85,6 +89,10 @@ public class ScrapeRaceWorker
                 if (result is null) continue;
 
                 websiteUrl ??= result.WebsiteUrl;
+                scrapedImageUrl ??= result.ImageUrl;
+                scrapedLogoUrl ??= result.LogoUrl;
+                scrapedName ??= result.ExtractedName;
+                scrapedDate ??= result.ExtractedDate;
 
                 if (routeResult is null && result.Routes.Count > 0)
                     routeResult = result;
@@ -94,13 +102,24 @@ public class ScrapeRaceWorker
             if (routeResult is not null)
             {
                 var merged = routeResult with { WebsiteUrl = websiteUrl ?? routeResult.WebsiteUrl };
-                await UpsertRoutesAsync(merged, job, cancellationToken);
+
+                // Separate routes that have coordinates (→ LineString) from
+                // course-only routes without coordinates (→ Point via fallback).
+                var withCoords = merged.Routes.Where(r => r.Coordinates.Count >= 2).ToList();
+                var withoutCoords = merged.Routes.Where(r => r.Coordinates.Count < 2).ToList();
+
+                if (withCoords.Count > 0)
+                    await UpsertRoutesAsync(merged with { Routes = withCoords }, job, cancellationToken);
+
+                foreach (var course in withoutCoords)
+                    await UpsertCoursePointAsync(course, merged.WebsiteUrl, job, cancellationToken);
+
                 await actions.CompleteMessageAsync(message, cancellationToken);
                 return;
             }
 
             // All scrapers yielded no routes — fall back to a point feature.
-            await UpsertPointFallbackAsync(job, websiteUrl, cancellationToken);
+            await UpsertPointFallbackAsync(job, websiteUrl, scrapedImageUrl, scrapedLogoUrl, scrapedName, scrapedDate, cancellationToken);
             await actions.CompleteMessageAsync(message, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -143,10 +162,18 @@ public class ScrapeRaceWorker
                 properties[RaceScrapeDiscovery.PropDistance] = route.Distance;
             else if (!string.IsNullOrWhiteSpace(job.Distance))
                 properties[RaceScrapeDiscovery.PropDistance] = job.Distance;
-            if (route.ElevationGain.HasValue)
+            if (route.ElevationGain.HasValue && !job.ElevationGain.HasValue)
                 properties[RaceScrapeDiscovery.PropElevationGain] = route.ElevationGain.Value;
             if (route.GpxUrl is not null)
                 properties["gpxUrl"] = route.GpxUrl.AbsoluteUri;
+
+            // Scraped image/logo/date override discovery-time values.
+            if (route.ImageUrl is not null)
+                properties[RaceScrapeDiscovery.PropImage] = route.ImageUrl.AbsoluteUri;
+            if (route.LogoUrl is not null)
+                properties[RaceScrapeDiscovery.PropLogo] = route.LogoUrl.AbsoluteUri;
+            if (!string.IsNullOrWhiteSpace(route.Date))
+                properties[RaceScrapeDiscovery.PropDate] = route.Date;
 
             var lineString = new LineString(route.Coordinates.Select(c => new Position(c.Lng, c.Lat)).ToList());
             var feature = new Feature(lineString, properties, null, new FeatureId(featureId));
@@ -156,7 +183,57 @@ public class ScrapeRaceWorker
         }
     }
 
-    private async Task UpsertPointFallbackAsync(ScrapeJob job, Uri? websiteUrl, CancellationToken cancellationToken)
+    /// <summary>Upsert a course-page route (no GPX coordinates) as a Point feature.</summary>
+    private async Task UpsertCoursePointAsync(
+        ScrapedRoute course,
+        Uri? resultWebsiteUrl,
+        ScrapeJob job,
+        CancellationToken cancellationToken)
+    {
+        if (job.Latitude is null || job.Longitude is null)
+        {
+            _logger.LogDebug("ScrapeRaceWorker: skipping course point — no job lat/lng");
+            return;
+        }
+
+        var websiteUrl = resultWebsiteUrl ?? course.SourceUrl
+            ?? job.UtmbUrl ?? job.TraceDeTrailEventUrl ?? job.RunagainUrl ?? job.WebsiteUrl;
+        var idUrl = resultWebsiteUrl ?? job.TraceDeTrailEventUrl ?? course.SourceUrl
+            ?? job.UtmbUrl ?? job.RunagainUrl ?? job.WebsiteUrl;
+
+        var featureId = idUrl is not null
+            ? RaceScrapeDiscovery.BuildFeatureId(idUrl)
+            : RaceScrapeDiscovery.BuildFeatureId(job.Name, course.Distance ?? job.Distance);
+
+        var properties = BuildBaseProperties(job);
+
+        if (websiteUrl is not null)
+            properties[RaceScrapeDiscovery.PropWebsite] = websiteUrl.AbsoluteUri;
+        if (!string.IsNullOrWhiteSpace(course.Name))
+            properties[RaceScrapeDiscovery.PropName] = course.Name;
+        if (!string.IsNullOrWhiteSpace(course.Distance))
+            properties[RaceScrapeDiscovery.PropDistance] = course.Distance;
+        else if (!string.IsNullOrWhiteSpace(job.Distance))
+            properties[RaceScrapeDiscovery.PropDistance] = job.Distance;
+        if (course.SourceUrl is not null)
+            properties["courseUrl"] = course.SourceUrl.AbsoluteUri;
+        if (course.ElevationGain.HasValue && !job.ElevationGain.HasValue)
+            properties[RaceScrapeDiscovery.PropElevationGain] = course.ElevationGain.Value;
+        if (course.ImageUrl is not null)
+            properties[RaceScrapeDiscovery.PropImage] = course.ImageUrl.AbsoluteUri;
+        if (course.LogoUrl is not null)
+            properties[RaceScrapeDiscovery.PropLogo] = course.LogoUrl.AbsoluteUri;
+        if (!string.IsNullOrWhiteSpace(course.Date))
+            properties[RaceScrapeDiscovery.PropDate] = course.Date;
+
+        var point = new Point(new Position(job.Longitude.Value, job.Latitude.Value));
+        var feature = new Feature(point, properties, null, new FeatureId(featureId));
+        var stored = new StoredFeature(feature, FeatureKinds.Race, Zoom);
+        await _racesCollectionClient.UpsertDocument(stored, cancellationToken);
+        _logger.LogInformation("ScrapeRaceWorker: upserted course point {FeatureId}", featureId);
+    }
+
+    private async Task UpsertPointFallbackAsync(ScrapeJob job, Uri? websiteUrl, Uri? scrapedImageUrl, Uri? scrapedLogoUrl, string? scrapedName, string? scrapedDate, CancellationToken cancellationToken)
     {
         if (job.Latitude is null || job.Longitude is null)
         {
@@ -176,8 +253,23 @@ public class ScrapeRaceWorker
         }
 
         var properties = BuildBaseProperties(job);
+
+        // Scraped name overrides the discovery-time name.
+        if (scrapedName is not null)
+            properties[RaceScrapeDiscovery.PropName] = scrapedName;
+
+        // Scraped date overrides the discovery-time date.
+        if (scrapedDate is not null)
+            properties[RaceScrapeDiscovery.PropDate] = scrapedDate;
+
         if (sourceUrl is not null)
             properties[RaceScrapeDiscovery.PropWebsite] = sourceUrl.AbsoluteUri;
+
+        // Scraped image/logo override discovery-time values.
+        if (scrapedImageUrl is not null)
+            properties[RaceScrapeDiscovery.PropImage] = scrapedImageUrl.AbsoluteUri;
+        if (scrapedLogoUrl is not null)
+            properties[RaceScrapeDiscovery.PropLogo] = scrapedLogoUrl.AbsoluteUri;
 
         var point = new Point(new Position(job.Longitude.Value, job.Latitude.Value));
         var feature = new Feature(point, properties, null, new FeatureId(featureId));

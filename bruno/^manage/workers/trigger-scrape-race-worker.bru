@@ -1,0 +1,25 @@
+meta {
+  name: Trigger ScrapeRaceWorker
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/ScrapeRaceWorker
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": "{{raceId}}"
+  }
+}
+
+vars:pre-request {
+  raceId: 
+}

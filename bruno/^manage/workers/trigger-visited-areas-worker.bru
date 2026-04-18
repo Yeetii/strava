@@ -1,0 +1,25 @@
+meta {
+  name: Trigger VisitedAreasWorker
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/VisitedAreasWorker
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": "{{activityId}}"
+  }
+}
+
+vars:pre-request {
+  activityId: 
+}
