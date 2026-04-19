@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Shared.Services;
@@ -58,6 +59,15 @@ public static partial class RaceScrapeDiscovery
         cleaned = DenPrefixRegex().Replace(cleaned, "");
         cleaned = DayPeriodRegex().Replace(cleaned, "$1 ");
 
+        var dottedMatch = DottedDateRegex().Match(cleaned);
+        if (dottedMatch.Success)
+        {
+            var day = dottedMatch.Groups[1].Value.PadLeft(2, '0');
+            var month = dottedMatch.Groups[2].Value.PadLeft(2, '0');
+            var year = dottedMatch.Groups[3].Value;
+            return $"{year}-{month}-{day}";
+        }
+
         if (DateOnly.TryParse(cleaned, CultureInfo.InvariantCulture, out var dateOnly))
             return dateOnly.ToString("yyyy-MM-dd");
 
@@ -73,6 +83,37 @@ public static partial class RaceScrapeDiscovery
             return dt.ToString("yyyy-MM-dd");
 
         return null;
+    }
+
+    public static string? NormalizeDuvCalendarDateToYyyyMmDd(string? date)
+    {
+        if (string.IsNullOrWhiteSpace(date))
+            return null;
+
+        var cleaned = WebUtility.HtmlDecode(date).Trim();
+
+        var match = DuvDateRangeNoMonthRegex().Match(cleaned);
+        if (match.Success)
+        {
+            var candidate = $"{match.Groups["startDay"].Value}.{match.Groups["month"].Value}.{match.Groups["year"].Value}";
+            return NormalizeDateToYyyyMmDd(candidate);
+        }
+
+        match = DuvDateRangeMonthRegex().Match(cleaned);
+        if (match.Success)
+        {
+            var candidate = $"{match.Groups["startDay"].Value}.{match.Groups["startMonth"].Value}.{match.Groups["year"].Value}";
+            return NormalizeDateToYyyyMmDd(candidate);
+        }
+
+        match = DuvDateRangeFullRegex().Match(cleaned);
+        if (match.Success)
+        {
+            var candidate = $"{match.Groups["startDay"].Value}.{match.Groups["startMonth"].Value}.{match.Groups["year"].Value}";
+            return NormalizeDateToYyyyMmDd(candidate);
+        }
+
+        return NormalizeDateToYyyyMmDd(cleaned);
     }
 
     // Maps non-English month names/abbreviations to English for date parsing.
@@ -317,6 +358,22 @@ public static partial class RaceScrapeDiscovery
 
     [GeneratedRegex(@"(?i)(km|k|mi|m)\s*$")]
     private static partial Regex DistanceSuffixRegex();
+
+    [GeneratedRegex(@"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$")]
+    private static partial Regex DottedDateRegex();
+
+    [GeneratedRegex(@"^\s*(?<startDay>\d{1,2})\.-(?<endDay>\d{1,2})\.(?<month>\d{1,2})\.(?<year>\d{4})\s*$")]
+    private static partial Regex DuvDateRangeNoMonthRegex();
+
+    [GeneratedRegex(@"^\s*(?<startDay>\d{1,2})\.(?<startMonth>\d{1,2})\.-(?<endDay>\d{1,2})\.(?<endMonth>\d{1,2})\.(?<year>\d{4})\s*$")]
+    private static partial Regex DuvDateRangeMonthRegex();
+
+    [GeneratedRegex(@"^\s*(?<startDay>\d{1,2})\.(?<startMonth>\d{1,2})\.(?<year>\d{4})-(?<endDay>\d{1,2})\.(?<endMonth>\d{1,2})\.(?<endYear>\d{4})\s*$")]
+    private static partial Regex DuvDateRangeFullRegex();
+
+
+
+
 
     [GeneratedRegex(@"(\d+)(?:st|nd|rd|th)\b", RegexOptions.IgnoreCase)]
     private static partial Regex OrdinalSuffixRegex();
@@ -600,6 +657,9 @@ public static partial class RaceScrapeDiscovery
 
         return jobsByMarkerId.Values.ToList();
     }
+
+    public static IReadOnlyCollection<ScrapeJob> ParseDuvCalendarPage(string html, Uri baseUrl)
+        => DuvDiscoveryAgent.ParseCalendarPage(html, baseUrl);
 
     private static string? FindStringValue(JsonElement element, IEnumerable<string> keys)
     {

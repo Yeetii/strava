@@ -22,7 +22,7 @@ public class AssembleRaceWorker(
     ILogger<AssembleRaceWorker> logger)
 {
     // Discovery source priority (highest → lowest).
-    internal static readonly string[] DiscoveryPriority = ["utmb", "tracedetrail", "runagain", "loppkartan"];
+    internal static readonly string[] DiscoveryPriority = ["utmb", "tracedetrail", "runagain", "loppkartan", "duv"];
 
     // Scraper key priority (highest → lowest).
     internal static readonly string[] ScraperPriority = ["utmb", "itra", "mistral", "bfs"];

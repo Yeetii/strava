@@ -259,6 +259,38 @@ public static partial class RaceHtmlScraper
         return null;
     }
 
+    public static Uri? ExtractDuvEventWebPageUrl(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        var webPageRowMatch = DuvWebPageRowRegex().Match(html);
+        if (webPageRowMatch.Success)
+        {
+            var rowHtml = webPageRowMatch.Groups[1].Value;
+            foreach (Match anchorMatch in AnchorRegex().Matches(rowHtml))
+            {
+                var href = anchorMatch.Groups["href"].Value;
+                if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri) && uri.Scheme is "http" or "https")
+                    return uri;
+            }
+        }
+
+        // Fallback: return the first external anchor URL on the page.
+        foreach (Match anchorMatch in AnchorRegex().Matches(html))
+        {
+            var href = anchorMatch.Groups["href"].Value;
+            if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)
+                && uri.Scheme is "http" or "https"
+                && !string.Equals(uri.Host, pageUrl.Host, StringComparison.OrdinalIgnoreCase))
+            {
+                return uri;
+            }
+        }
+
+        return null;
+    }
+
     // Parses the response from GET https://tracedetrail.fr/trace/getTraceItra/{id}
     // Coordinates are in EPSG:3857 (Web Mercator). Only "gpx"-tagged points are the primary route.
     // Returns WGS84 (longitude, latitude) positions and total elevation stats from the last point.
@@ -925,6 +957,9 @@ public static partial class RaceHtmlScraper
     // Matches an <a> element capturing href attribute and inner text content.
     [GeneratedRegex(@"<a\b[^>]*\bhref\s*=\s*[""'](?<href>[^""']+)[""'][^>]*>(?<text>.*?)</a>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex AnchorRegex();
+
+    [GeneratedRegex(@"<tr[^>]*>\s*<td[^>]*><b>\s*Web page:\s*</b>\s*</td>\s*<td[^>]*>(.*?)</td>\s*</tr>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex DuvWebPageRowRegex();
 
     // Strips all HTML tags so anchor inner content can be inspected as plain text.
     [GeneratedRegex(@"<[^>]+>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]

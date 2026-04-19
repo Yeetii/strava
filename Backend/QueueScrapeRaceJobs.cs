@@ -30,7 +30,6 @@ public class QueueScrapeRaceJobs(
     private static readonly string[] RunagainTerrainTypes = ["Terreng"];
 
     private static readonly Uri LoppkartanMarkersUrl = new("https://www.loppkartan.se/markers-se.json");
-
     private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);
 
     [Function(nameof(QueueScrapeRaceJobs))]
@@ -44,12 +43,14 @@ public class QueueScrapeRaceJobs(
         // Fetch each source and write discoveries to Cosmos under /discovery/{source}.
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("utmb",
         //     await FetchUtmbJobsAsync(httpClient, cancellationToken), cancellationToken));
-        allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("tracedetrail",
-            await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken), cancellationToken));
+        // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("tracedetrail",
+        //     await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken), cancellationToken));
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("runagain",
         //     await FetchRunagainJobsAsync(httpClient, cancellationToken), cancellationToken));
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("loppkartan",
         //     await FetchLoppkartanJobsAsync(httpClient, cancellationToken), cancellationToken));
+        allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("duv",
+            await FetchDuvJobsAsync(httpClient, cancellationToken), cancellationToken));
 
         logger.LogInformation("Discovery complete: {Count} unique organizers across all sources", allOrganizerKeys.Count);
 
@@ -469,5 +470,65 @@ public class QueueScrapeRaceJobs(
             logger.LogWarning(ex, "Loppkartan: failed to fetch markers");
             return [];
         }
+    }
+
+    private async Task<IReadOnlyCollection<ScrapeJob>> FetchDuvJobsAsync(HttpClient httpClient, CancellationToken cancellationToken)
+    {
+        const int MaxPages = 10;
+        var jobsByUrl = new Dictionary<string, ScrapeJob>(StringComparer.OrdinalIgnoreCase);
+        for (int page = 1; page <= MaxPages; page++)
+        {
+            var pageUrl = page == 1
+                ? DuvDiscoveryAgent.CalendarUrl
+                : new UriBuilder(DuvDiscoveryAgent.CalendarUrl) { Query = $"page={page}" }.Uri;
+
+            try
+            {
+                var html = await httpClient.GetStringAsync(pageUrl, cancellationToken);
+                var jobs = DuvDiscoveryAgent.ParseCalendarPage(html, DuvDiscoveryAgent.CalendarUrl);
+                if (jobs.Count == 0)
+                    break;
+
+                foreach (var job in jobs)
+                {
+                    if (job.WebsiteUrl is null)
+                        continue;
+
+                    jobsByUrl.TryAdd(job.WebsiteUrl.AbsoluteUri, job);
+                }
+
+                if (!html.Contains($"calendar.php?&page={page + 1}", StringComparison.OrdinalIgnoreCase))
+                    break;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "DUV: failed to fetch calendar page {Page}", page);
+                break;
+            }
+        }
+
+        logger.LogInformation("DUV: discovered {Count} calendar events", jobsByUrl.Count);
+
+        var enriched = new List<ScrapeJob>(jobsByUrl.Count);
+        foreach (var job in jobsByUrl.Values)
+        {
+            if (job.WebsiteUrl is null)
+            {
+                enriched.Add(job);
+                continue;
+            }
+
+            try
+            {
+                enriched.Add(await DuvDiscoveryAgent.EnrichJobAsync(httpClient, job, cancellationToken));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "DUV: failed to fetch event detail page for {Url}", job.WebsiteUrl);
+                enriched.Add(job);
+            }
+        }
+
+        return enriched.ToArray();
     }
 }

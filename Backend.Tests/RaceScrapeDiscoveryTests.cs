@@ -1,4 +1,6 @@
 using Backend;
+using System.Net;
+using System.Net.Http;
 
 namespace Backend.Tests;
 
@@ -142,6 +144,169 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal("trail", marker.RaceType);
         Assert.Equal("Trail", marker.TypeLocal);
         Assert.Equal("Skåne", marker.County);
+    }
+
+    [Fact]
+    public void ParseDuvCalendarPage_ExtractsEventsFromHtml()
+    {
+        const string html = """
+            <table width='100%' border='1' cellpadding='2' cellspacing='1'>
+            <tr class='odd'>
+              <td class='boxed' nowrap='nowrap' align='left'>15.-20.04.2026</td>
+              <td class='boxed' align='left'><a href='eventdetail.php?event=129985'> South Wales 200</a></td>
+              <td class='boxed' align='left'>100mi</td>
+              <td class='boxed' align='left'>Chepstow (GBR)</td>
+              <td class='boxed' align='left'>&nbsp;</td>
+              <td class='boxed' align='left'>&nbsp; &nbsp;</td>
+            </tr>
+            </table>
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseDuvCalendarPage(html, new Uri("https://statistik.d-u-v.org/calendar.php"));
+
+        var job = Assert.Single(jobs);
+        Assert.Equal("South Wales 200", job.Name);
+        Assert.Equal("160.9 km", job.Distance);
+        Assert.Equal("2026-04-15", job.Date);
+        Assert.Equal("GB", job.Country);
+        Assert.Equal("Chepstow", job.Location);
+        Assert.Equal("https://statistik.d-u-v.org/eventdetail.php?event=129985", job.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal(new Dictionary<string, string> { ["duv"] = "129985" }, job.ExternalIds);
+    }
+
+    [Fact]
+    public void ExtractDuvEventWebPageUrl_ReturnsExternalWebsite()
+    {
+        const string html = """
+            <tr><td align='right' valign='top'><b>Web page: </b></td>
+                <td colspan='2'><a href='https://www.wildhorse200.com/south-wales-200/' target='_BLANK' rel='noopener'>https://www.wildhorse200.com/south-wales-200/</a></td></tr>
+            """;
+
+        var uri = RaceHtmlScraper.ExtractDuvEventWebPageUrl(html, new Uri("https://statistik.d-u-v.org/eventdetail.php?event=129985"));
+
+        Assert.Equal("https://www.wildhorse200.com/south-wales-200/", uri!.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractStartPositionUrl_ReturnsStartPosLinkFromEventDetailPage()
+    {
+        const string html = """
+            <a href='startpos.php?event=129985'>Show start location</a>
+            """;
+
+        var url = DuvDiscoveryAgent.ExtractStartPositionUrl(html, new Uri("https://statistik.d-u-v.org/eventdetail.php?event=129985"));
+
+        Assert.Equal("https://statistik.d-u-v.org/startpos.php?event=129985", url!.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractStartPositionCoordinates_ParsesJavascriptLatLng()
+    {
+        const string html = """
+            var RaceStart = new google.maps.LatLng(51.641857,-2.673804);
+            """;
+
+        var coords = DuvDiscoveryAgent.ExtractStartPositionCoordinates(html);
+
+        Assert.Equal(51.641857, coords?.lat);
+        Assert.Equal(-2.673804, coords?.lng);
+    }
+
+    [Fact]
+    public async Task EnrichJobAsync_UsesStartPosPageCoordinates()
+    {
+        const string detailHtml = """
+            <a href='startpos.php?event=129985'>Start location</a>
+            <a href='https://www.wildhorse200.com/south-wales-200/'>Web page</a>
+            """;
+        const string startPosHtml = """
+            var RaceStart = new google.maps.LatLng(51.641857,-2.673804);
+            """;
+
+        var job = new ScrapeJob(WebsiteUrl: new Uri("https://statistik.d-u-v.org/eventdetail.php?event=129985"));
+        using var client = new HttpClient(new MultiResponseHttpMessageHandler(
+            new Dictionary<Uri, string>
+            {
+                [job.WebsiteUrl!] = detailHtml,
+                [new Uri("https://statistik.d-u-v.org/startpos.php?event=129985")] = startPosHtml,
+            }));
+
+        var enriched = await DuvDiscoveryAgent.EnrichJobAsync(client, job, CancellationToken.None);
+
+        Assert.Equal("https://www.wildhorse200.com/south-wales-200/", enriched.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal(51.641857, enriched.Latitude);
+        Assert.Equal(-2.673804, enriched.Longitude);
+    }
+
+    private sealed class MultiResponseHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Dictionary<Uri, string> _responses;
+
+        public MultiResponseHttpMessageHandler(Dictionary<Uri, string> responses)
+        {
+            _responses = responses;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (!_responses.TryGetValue(request.RequestUri!, out var html))
+                throw new InvalidOperationException($"Unexpected request URL: {request.RequestUri}");
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(html)
+            };
+            return Task.FromResult(response);
+        }
+    }
+
+    [Fact]
+    public async Task EnrichJobAsync_UsesExternalWebsiteFromEventDetailPage()
+    {
+        const string html = """
+            <tr><td align='right' valign='top'><b>Web page: </b></td>
+                <td colspan='2'><a href='https://www.wildhorse200.com/south-wales-200/' target='_BLANK' rel='noopener'>https://www.wildhorse200.com/south-wales-200/</a></td></tr>
+            """;
+
+        var job = new ScrapeJob(WebsiteUrl: new Uri("https://statistik.d-u-v.org/eventdetail.php?event=129985"));
+        using var client = new HttpClient(new StubHttpMessageHandler(job.WebsiteUrl!, html));
+
+        var enriched = await DuvDiscoveryAgent.EnrichJobAsync(client, job, CancellationToken.None);
+
+        Assert.Equal("https://www.wildhorse200.com/south-wales-200/", enriched.WebsiteUrl!.AbsoluteUri);
+    }
+
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Uri _expectedUri;
+        private readonly string _html;
+
+        public StubHttpMessageHandler(Uri expectedUri, string html)
+        {
+            _expectedUri = expectedUri;
+            _html = html;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri != _expectedUri)
+                throw new InvalidOperationException($"Unexpected request URL: {request.RequestUri}");
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(_html)
+            };
+            return Task.FromResult(response);
+        }
+    }
+
+    [Theory]
+    [InlineData("15.-20.04.2026", "2026-04-15")]
+    [InlineData("18.04.-04.05.2026", "2026-04-18")]
+    [InlineData("01.05.2026", "2026-05-01")]
+    public void NormalizeDuvCalendarDateToYyyyMmDd_ParsesKnownDuvDateFormats(string input, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.NormalizeDuvCalendarDateToYyyyMmDd(input));
     }
 
     // ── NormalizeDateToYyyyMmDd ────────────────────────────────────────────────
