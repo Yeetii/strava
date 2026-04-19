@@ -25,7 +25,7 @@ public class AssembleRaceWorker(
     internal static readonly string[] DiscoveryPriority = ["utmb", "tracedetrail", "runagain", "loppkartan"];
 
     // Scraper key priority (highest → lowest).
-    internal static readonly string[] ScraperPriority = ["utmb", "itra", "bfs"];
+    internal static readonly string[] ScraperPriority = ["utmb", "itra", "mistral", "bfs"];
 
     [Function(nameof(AssembleRaceWorker))]
     public async Task Run(
