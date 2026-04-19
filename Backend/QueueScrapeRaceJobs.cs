@@ -22,6 +22,7 @@ public class QueueScrapeRaceJobs(
     private static readonly Uri UtmbApiUrl = new("https://api.utmb.world/search/races?lang=en&limit=400");
     private static readonly Uri TraceDeTrailCalendarUrl = new("https://tracedetrail.fr/event/getEventsCalendar/all/all/all");
     private const string TraceDeTrailCalendarReferer = "https://tracedetrail.fr/en/calendar";
+    private const int MaxTraceDeTrailRequestsPerRun = 450;
     private static readonly Uri RunagainApiUrl = new("https://cloudrun-pgjjiy2k6a-ew.a.run.app/find_runs");
     private static readonly string RunagainFirestoreBatchUrl = "https://firestore.googleapis.com/v1/projects/nestelop-production/databases/(default)/documents:batchGet";
     private static readonly string RunagainFirestoreDocPrefix = "projects/nestelop-production/databases/(default)/documents/RunCollection/";
@@ -41,14 +42,14 @@ public class QueueScrapeRaceJobs(
         var allOrganizerKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Fetch each source and write discoveries to Cosmos under /discovery/{source}.
-        allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("utmb",
-            await FetchUtmbJobsAsync(httpClient, cancellationToken), cancellationToken));
-        // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("tracedetrail",
-        //     await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken), cancellationToken));
-        allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("runagain",
-            await FetchRunagainJobsAsync(httpClient, cancellationToken), cancellationToken));
-        allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("loppkartan",
-            await FetchLoppkartanJobsAsync(httpClient, cancellationToken), cancellationToken));
+        // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("utmb",
+        //     await FetchUtmbJobsAsync(httpClient, cancellationToken), cancellationToken));
+        allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("tracedetrail",
+            await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken), cancellationToken));
+        // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("runagain",
+        //     await FetchRunagainJobsAsync(httpClient, cancellationToken), cancellationToken));
+        // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("loppkartan",
+        //     await FetchLoppkartanJobsAsync(httpClient, cancellationToken), cancellationToken));
 
         logger.LogInformation("Discovery complete: {Count} unique organizers across all sources", allOrganizerKeys.Count);
 
@@ -125,13 +126,19 @@ public class QueueScrapeRaceJobs(
     {
         var jobsByUrl = new Dictionary<string, ScrapeJob>(StringComparer.OrdinalIgnoreCase);
         var now = DateTime.UtcNow;
+        var knownTraceDeTrailIds = await organizerClient.FetchKnownTraceDeTrailIdsAsync(cancellationToken);
+        int skippedKnownEvents = 0;
+        var requestsRemaining = MaxTraceDeTrailRequestsPerRun;
 
-        for (int monthOffset = -12; monthOffset <= 12; monthOffset++)
+        foreach (var monthOffset in Enumerable.Range(-12, 25))
         {
+            if (requestsRemaining <= 0)
+                break;
+
             var date = now.AddMonths(monthOffset);
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Post, TraceDeTrailCalendarUrl)
+                using var request = new HttpRequestMessage(HttpMethod.Post, TraceDeTrailCalendarUrl)
                 {
                     Content = new FormUrlEncodedContent(
                     [
@@ -141,17 +148,41 @@ public class QueueScrapeRaceJobs(
                 };
                 request.Headers.Referrer = new Uri(TraceDeTrailCalendarReferer);
 
-                var response = await httpClient.SendAsync(request, cancellationToken);
+                using var response = await httpClient.SendAsync(request, cancellationToken);
+                requestsRemaining--;
+
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    logger.LogWarning("TraceDeTrail: calendar returned 429 for {Month}/{Year}, stopping further TraceDeTrail discovery", date.Month, date.Year);
+                    break;
+                }
+
                 if (!response.IsSuccessStatusCode)
                 {
                     logger.LogWarning("TraceDeTrail: calendar returned {Status} for {Month}/{Year}", response.StatusCode, date.Month, date.Year);
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
                     continue;
                 }
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
                 foreach (var job in RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(json))
                 {
-                    // Deduplicate by ITRA URL (primary key for TraceDeTrail jobs).
+                    var eventId = job.ExternalIds is not null &&
+                        job.ExternalIds.TryGetValue("tracedetrailEventId", out var tracedetrailEventId)
+                        ? tracedetrailEventId
+                        : null;
+                    var itraEventId = job.ExternalIds is not null &&
+                        job.ExternalIds.TryGetValue("itraEventId", out var itraId)
+                        ? itraId
+                        : null;
+
+                    if ((!string.IsNullOrWhiteSpace(eventId) && knownTraceDeTrailIds.Contains(eventId!))
+                        || (!string.IsNullOrWhiteSpace(itraEventId) && knownTraceDeTrailIds.Contains(itraEventId!)))
+                    {
+                        skippedKnownEvents++;
+                        continue;
+                    }
+
                     var key = job.TraceDeTrailItraUrls?.FirstOrDefault()?.AbsoluteUri ?? job.TraceDeTrailEventUrl?.AbsoluteUri;
                     if (key is not null)
                         jobsByUrl.TryAdd(key, job);
@@ -163,121 +194,93 @@ public class QueueScrapeRaceJobs(
             }
         }
 
-        logger.LogInformation("TraceDeTrail: discovered {Count} unique jobs, enriching with site URLs…", jobsByUrl.Count);
+        logger.LogInformation("TraceDeTrail: discovered {Count} unique jobs, skipped {Skipped} already-known events, requests remaining {Remaining}, enriching with site URLs…",
+            jobsByUrl.Count, skippedKnownEvents, requestsRemaining);
 
-        // Fetch each event page to extract the real race website ("Site de la course").
-        // When found, set WebsiteUrl so the organizer is keyed by the real domain.
-        // Use limited concurrency + 429 back-off to avoid being rate-limited.
-        const int maxConcurrency = 5;
-        var semaphore = new SemaphoreSlim(maxConcurrency);
-        int resolved = 0;
+        var enriched = new List<ScrapeJob>(jobsByUrl.Count);
+        var stoppedEventEnrichment = false;
+        var resolved = 0;
 
-        var tasks = jobsByUrl.Values.Select(async job =>
+        foreach (var job in jobsByUrl.Values)
         {
-            if (job.TraceDeTrailEventUrl is null)
-                return (IReadOnlyList<ScrapeJob>)[job];
-
-            await semaphore.WaitAsync(cancellationToken);
-            try
+            if (job.TraceDeTrailEventUrl is null || stoppedEventEnrichment || requestsRemaining <= 0)
             {
-                var html = await FetchWithRetryAsync(httpClient, job.TraceDeTrailEventUrl, cancellationToken);
-                if (html is null)
-                    return (IReadOnlyList<ScrapeJob>)[job];
-
-                var siteUrl = RaceHtmlScraper.ExtractRaceSiteUrl(html, job.TraceDeTrailEventUrl);
-                var location = RaceHtmlScraper.ExtractTraceDeTrailLocation(html);
-
-                if (siteUrl is not null)
-                    Interlocked.Increment(ref resolved);
-
-                // Try per-course extraction — each course becomes its own ScrapeJob/SourceDiscovery
-                var courses = RaceHtmlScraper.ExtractTraceDeTrailCourses(html);
-                if (courses.Count > 0)
-                {
-                    // Map trace ID → ITRA URL so each course links to the right one
-                    var itraUrlByTraceId = new Dictionary<int, Uri>();
-                    if (job.TraceDeTrailItraUrls is not null)
-                    {
-                        foreach (var url in job.TraceDeTrailItraUrls)
-                        {
-                            var seg = url.Segments.LastOrDefault()?.TrimEnd('/');
-                            if (int.TryParse(seg, out var id))
-                                itraUrlByTraceId[id] = url;
-                        }
-                    }
-
-                    return courses.Select(c =>
-                    {
-                        IReadOnlyList<Uri>? itraUrls = null;
-                        if (c.TraceId is not null && itraUrlByTraceId.TryGetValue(c.TraceId.Value, out var itraUrl))
-                            itraUrls = [itraUrl];
-
-                        return job with
-                        {
-                            Name = c.Name ?? job.Name,
-                            Distance = c.Distance ?? job.Distance,
-                            ElevationGain = c.ElevationGain ?? job.ElevationGain,
-                            ItraPoints = c.ItraPoints ?? job.ItraPoints,
-                            Location = location ?? job.Location,
-                            WebsiteUrl = siteUrl ?? job.WebsiteUrl,
-                            TraceDeTrailItraUrls = itraUrls ?? job.TraceDeTrailItraUrls,
-                        };
-                    }).ToList();
-                }
-
-                // Fallback: single job with event-level values
-                var itraPoints = RaceHtmlScraper.ExtractTraceDeTrailItraPoints(html);
-                var elevationGain = RaceHtmlScraper.ExtractTraceDeTrailElevationGain(html);
-                return (IReadOnlyList<ScrapeJob>)[job with
-                {
-                    WebsiteUrl = siteUrl ?? job.WebsiteUrl,
-                    Location = location ?? job.Location,
-                    ItraPoints = itraPoints ?? job.ItraPoints,
-                    ElevationGain = elevationGain ?? job.ElevationGain,
-                }];
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogDebug(ex, "TraceDeTrail: failed to fetch event page {Url}", job.TraceDeTrailEventUrl);
-                return (IReadOnlyList<ScrapeJob>)[job];
-            }
-            finally
-            {
-                semaphore.Release();
-            }
-        }).ToList();
-
-        var enriched = (await Task.WhenAll(tasks)).SelectMany(x => x).ToArray();
-
-        logger.LogInformation("TraceDeTrail: resolved {Resolved}/{Total} event site URLs", resolved, jobsByUrl.Count);
-        return enriched;
-    }
-
-    /// <summary>
-    /// GETs a URL with up to 3 retries on 429 (Too Many Requests), respecting Retry-After.
-    /// Returns null on non-success status codes.
-    /// </summary>
-    private async Task<string?> FetchWithRetryAsync(HttpClient httpClient, Uri url, CancellationToken cancellationToken)
-    {
-        const int maxRetries = 3;
-        for (int attempt = 0; ; attempt++)
-        {
-            using var response = await httpClient.GetAsync(url, cancellationToken);
-            if (response.IsSuccessStatusCode)
-                return await response.Content.ReadAsStringAsync(cancellationToken);
-
-            if ((int)response.StatusCode == 429 && attempt < maxRetries)
-            {
-                var delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(2 * (attempt + 1));
-                logger.LogDebug("TraceDeTrail: 429 on {Url}, retrying in {Delay}s (attempt {Attempt}/{Max})",
-                    url, delay.TotalSeconds, attempt + 1, maxRetries);
-                await Task.Delay(delay, cancellationToken);
+                enriched.Add(job);
                 continue;
             }
 
-            logger.LogDebug("TraceDeTrail: {Status} fetching {Url}", response.StatusCode, url);
-            return null;
+            using var response = await httpClient.GetAsync(job.TraceDeTrailEventUrl, cancellationToken);
+            requestsRemaining--;
+
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                stoppedEventEnrichment = true;
+                logger.LogWarning("TraceDeTrail: received 429 from {Url}, stopping further event page enrichment", job.TraceDeTrailEventUrl);
+                enriched.Add(job);
+                continue;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogDebug("TraceDeTrail: {Status} fetching {Url}", response.StatusCode, job.TraceDeTrailEventUrl);
+                enriched.Add(job);
+                continue;
+            }
+
+            var html = await response.Content.ReadAsStringAsync(cancellationToken);
+            var siteUrl = RaceHtmlScraper.ExtractRaceSiteUrl(html, job.TraceDeTrailEventUrl);
+            var location = RaceHtmlScraper.ExtractTraceDeTrailLocation(html);
+
+            if (siteUrl is not null)
+                resolved++;
+
+            var courses = RaceHtmlScraper.ExtractTraceDeTrailCourses(html);
+            if (courses.Count > 0)
+            {
+                var itraUrlByTraceId = new Dictionary<int, Uri>();
+                if (job.TraceDeTrailItraUrls is not null)
+                {
+                    foreach (var url in job.TraceDeTrailItraUrls)
+                    {
+                        var seg = url.Segments.LastOrDefault()?.TrimEnd('/');
+                        if (int.TryParse(seg, out var id))
+                            itraUrlByTraceId[id] = url;
+                    }
+                }
+
+                enriched.AddRange(courses.Select(c =>
+                {
+                    IReadOnlyList<Uri>? itraUrls = null;
+                    if (c.TraceId is not null && itraUrlByTraceId.TryGetValue(c.TraceId.Value, out var itraUrl))
+                        itraUrls = [itraUrl];
+
+                    return job with
+                    {
+                        Name = c.Name ?? job.Name,
+                        Distance = c.Distance ?? job.Distance,
+                        ElevationGain = c.ElevationGain ?? job.ElevationGain,
+                        ItraPoints = c.ItraPoints ?? job.ItraPoints,
+                        Location = location ?? job.Location,
+                        WebsiteUrl = siteUrl ?? job.WebsiteUrl,
+                        TraceDeTrailItraUrls = itraUrls ?? job.TraceDeTrailItraUrls,
+                    };
+                }));
+                continue;
+            }
+
+            var itraPoints = RaceHtmlScraper.ExtractTraceDeTrailItraPoints(html);
+            var elevationGain = RaceHtmlScraper.ExtractTraceDeTrailElevationGain(html);
+            enriched.Add(job with
+            {
+                WebsiteUrl = siteUrl ?? job.WebsiteUrl,
+                Location = location ?? job.Location,
+                ItraPoints = itraPoints ?? job.ItraPoints,
+                ElevationGain = elevationGain ?? job.ElevationGain,
+            });
         }
+
+        logger.LogInformation("TraceDeTrail: resolved {Resolved}/{Total} event site URLs", resolved, jobsByUrl.Count);
+        return enriched.ToArray();
     }
 
     // Queries the RunAgain search API (POST https://cloudrun-pgjjiy2k6a-ew.a.run.app/find_runs)

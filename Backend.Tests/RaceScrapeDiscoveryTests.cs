@@ -151,6 +151,9 @@ public class RaceScrapeDiscoveryTests
     [InlineData("2025-09-14", "2025-09-14")]
     [InlineData("2025-01-01", "2025-01-01")]
     [InlineData("20231231", "2023-12-31")]
+    [InlineData("5 september 2026 kl. 10:00", "2026-09-05")]
+    [InlineData("söndag 5 september 2026 kl. 10:00", "2026-09-05")]
+    [InlineData("5 september 2026 kl. 10:00 start", "2026-09-05")]
     public void NormalizeDateToYyyyMmDd_ConvertsKnownFormats(string input, string expected)
     {
         Assert.Equal(expected, RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(input));
@@ -238,11 +241,11 @@ public class RaceScrapeDiscoveryTests
     [Theory]
     [InlineData("trail", "trail")]
     [InlineData("Trail", "trail")]
-    [InlineData("randotrail", "trail, randotrail")]
-    [InlineData("RandoTrail", "trail, randotrail")]
-    [InlineData("Trail running", "trail, trail running")]
-    [InlineData("marathon", "marathon")]
-    [InlineData("Trail, marathon", "trail, marathon")]
+    [InlineData("randotrail", "trail")]
+    [InlineData("RandoTrail", "trail")]
+    [InlineData("Trail running", "trail")]
+    [InlineData("marathon", null)]
+    [InlineData("Trail, marathon", "trail")]
     [InlineData("Stiløp", "trail")]
     [InlineData("stig", "trail")]
     [InlineData("Terreng", "cross country")]
@@ -272,8 +275,8 @@ public class RaceScrapeDiscoveryTests
     [Fact]
     public void NormalizeRaceType_DeduplicatesTokens()
     {
-        var result = RaceScrapeDiscovery.NormalizeRaceType("trail, Trail, marathon");
-        Assert.Equal("trail, marathon", result);
+        var result = RaceScrapeDiscovery.NormalizeRaceType("trail, Trail, stig");
+        Assert.Equal("trail", result);
     }
 
     // ── MatchDistanceKmToVerbose ──────────────────────────────────────────────
@@ -447,7 +450,7 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", another.TraceDeTrailItraUrls[0].AbsoluteUri);
         Assert.Equal("https://tracedetrail.fr/en/event/another-race", another.TraceDeTrailEventUrl!.AbsoluteUri);
         Assert.Equal("42 km", another.Distance);
-        Assert.Equal("trail, trail running", another.RaceType);
+        Assert.Equal("trail", another.RaceType);
         // logo fallback when img is null
         Assert.Equal("https://tracedetrail.fr/events/logo.jpg", another.ImageUrl);
         Assert.Equal("https://tracedetrail.fr/events/logo.jpg", another.LogoUrl);
@@ -462,7 +465,7 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal("Ultra Trail Gazelles Sahara 5.0", sahara.Name);
         Assert.Equal("https://tracedetrail.fr/events/ImgEvent7562_7444.jpg", sahara.ImageUrl);
         Assert.Equal("https://tracedetrail.fr/events/LogoEvent7562_7444.jpg", sahara.LogoUrl);
-        Assert.Equal("trail, randotrail", sahara.RaceType);
+        Assert.Equal("trail", sahara.RaceType);
         Assert.Equal("2026-01-10", sahara.Date);
         Assert.Equal("110.4 km, 69.2 km, 36.7 km", sahara.Distance);
         Assert.Equal("TN", sahara.Country);

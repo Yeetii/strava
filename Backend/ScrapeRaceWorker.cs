@@ -302,6 +302,11 @@ public class ScrapeRaceWorker
         if (Uri.TryCreate(doc.Url, UriKind.Absolute, out var docUrl))
             TryAdd(docUrl);
 
+        // The organizer id is the bare domain – ensure the root is always a search target
+        // even when doc.Url points to a subpage (e.g. "https://example.se/stafett/").
+        if (Uri.TryCreate($"https://{doc.Id}", UriKind.Absolute, out var idUrl))
+            TryAdd(idUrl);
+
         // All source URLs from all discovery sources.
         if (doc.Discovery is not null)
         {

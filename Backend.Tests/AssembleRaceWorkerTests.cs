@@ -78,8 +78,8 @@ public class AssembleRaceWorkerTests
 
         var races = AssembleRaceWorker.AssembleRaces(doc);
 
-        // BFS found 4 routes, all without coordinates → 4 point races.
-        Assert.Equal(4, races.Count);
+        // BFS found 4 routes + 1 unclaimed discovery distance (21 km) → 5 point races.
+        Assert.Equal(5, races.Count);
         // Stable IDs based on organizer key + sorted index.
         Assert.All(races, r => Assert.StartsWith("race:gbgtrailrun.se-", r.Id));
         // All should be Points (no route coordinates, but discovery has lat/lng).
@@ -93,7 +93,7 @@ public class AssembleRaceWorkerTests
 
         var races = AssembleRaceWorker.AssembleRaces(doc);
 
-        // Should be sorted: 8 km, 12 km, 33 km, 45 km
+        // Scraper routes sorted: 8 km, 12 km, 33 km, 45 km; then unclaimed 21 km appended.
         var distances = races
             .Select(r => r.Properties.TryGetValue("distance", out var d) ? d?.ToString() : null)
             .ToList();
@@ -102,6 +102,7 @@ public class AssembleRaceWorkerTests
         Assert.Equal("12 km", distances[1]);
         Assert.Equal("33 km", distances[2]);
         Assert.Equal("45 km", distances[3]);
+        Assert.Equal("21 km", distances[4]);
     }
 
     [Fact]
@@ -355,6 +356,491 @@ public class AssembleRaceWorkerTests
     public void ParseDistanceKm_ReturnsExpected(string? input, double? expected)
     {
         var result = AssembleRaceWorker.ParseDistanceKm(input);
+        Assert.Equal(expected, result);
+    }
+
+    // ── Discovery / scraper merging ─────────────────────────────────────
+
+    [Fact]
+    public void AssembleRaces_DiscoverySingleDistance_PrefersDiscoveryPropsExceptDate()
+    {
+        // Discovery has a single matching distance entry with rich metadata.
+        // Scraper (bfs) has a route at the same distance with its own name/elevation/etc.
+        // Expected: discovery name, elevation, country, etc. win; scraper date wins (newer).
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "singlerace.se",
+            Url = "https://singlerace.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:00:00Z",
+                        Name = "Official Race Name",
+                        Date = "2025-06-01",
+                        Latitude = 59.0,
+                        Longitude = 18.0,
+                        Distance = "33 km",
+                        ElevationGain = 1200,
+                        Country = "SE",
+                        Location = "Stockholm",
+                        RaceType = "trail",
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-18T22:00:00Z",
+                    Routes =
+                    [
+                        new ScrapedRouteOutput
+                        {
+                            Name = "Scraped Route Name 33 km",
+                            Distance = "33 km",
+                            ElevationGain = 900,
+                            Date = "2026-06-01",
+                        }
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Single(races);
+        var props = races[0].Properties;
+        // Discovery props should win.
+        Assert.Equal("Official Race Name", props["name"].ToString());
+        Assert.Equal(1200.0, (double)props["elevationGain"]);
+        Assert.Equal("SE", props["country"].ToString());
+        Assert.Equal("Stockholm", props["location"].ToString());
+        Assert.Equal("trail", props["raceType"].ToString());
+        // Newer date from bfs should win.
+        Assert.Equal("2026-06-01", props["date"].ToString());
+    }
+
+    [Fact]
+    public void AssembleRaces_DiscoveryMultiDistance_PrefersDiscoveryPropsForMatchingRoutes()
+    {
+        // Discovery lists multiple distances. Scraper has two routes that match
+        // two of the discovery distances. Discovery props should still win.
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "multirace.se",
+            Url = "https://multirace.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:00:00Z",
+                        Name = "Grand Trail Event",
+                        Date = "2025-09-15",
+                        Latitude = 59.0,
+                        Longitude = 18.0,
+                        Distance = "50 km, 21 km",
+                        Country = "SE",
+                        Location = "Gothenburg",
+                        ElevationGain = 2000,
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-18T22:00:00Z",
+                    Routes =
+                    [
+                        new ScrapedRouteOutput
+                        {
+                            Name = "BFS 21k",
+                            Distance = "21 km",
+                            ElevationGain = 500,
+                            Date = "2026-09-15",
+                        },
+                        new ScrapedRouteOutput
+                        {
+                            Name = "BFS 50k",
+                            Distance = "50 km",
+                            ElevationGain = 1500,
+                            Date = "2026-09-15",
+                        }
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Equal(2, races.Count);
+        // Both routes should use the discovery name, country, location.
+        Assert.All(races, r =>
+        {
+            Assert.Equal("Grand Trail Event", r.Properties["name"].ToString());
+            Assert.Equal("SE", r.Properties["country"].ToString());
+            Assert.Equal("Gothenburg", r.Properties["location"].ToString());
+        });
+        // Per-route distance should still come from the scraper route (more specific).
+        var distances = races.Select(r => r.Properties["distance"].ToString()).OrderBy(d => d).ToList();
+        Assert.Contains("21 km", distances);
+        Assert.Contains("50 km", distances);
+        // Newer dates from bfs should win.
+        Assert.All(races, r => Assert.Equal("2026-09-15", r.Properties["date"].ToString()));
+    }
+
+    // ── FindBestDiscoveryForRoute — specificity matching ────────────────
+
+    [Fact]
+    public void FindBestDiscovery_PrefersSingleDistanceOverMulti()
+    {
+        // Single-distance entry at 33 km (loppkartan) vs multi-distance from utmb.
+        // Even though utmb has higher source priority, the single-distance entry is more specific.
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("utmb", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "UTMB Multi", Distance = "50 km, 33 km" }),
+            ("loppkartan", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "Exact 33k", Distance = "33 km" }),
+        };
+        var fallback = new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "Fallback" };
+
+        var result = AssembleRaceWorker.FindBestDiscoveryForRoute(33.0, flat, fallback);
+
+        Assert.Equal("Exact 33k", result.Name);
+    }
+
+    [Fact]
+    public void FindBestDiscovery_SourcePriorityWithinSameSpecificity()
+    {
+        // Two single-distance entries at 33 km; utmb should win.
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("utmb", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "UTMB 33k", Distance = "33 km" }),
+            ("loppkartan", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "Lopp 33k", Distance = "33 km" }),
+        };
+        var fallback = new SourceDiscovery { DiscoveredAtUtc = "Z" };
+
+        var result = AssembleRaceWorker.FindBestDiscoveryForRoute(33.0, flat, fallback);
+
+        Assert.Equal("UTMB 33k", result.Name);
+    }
+
+    [Fact]
+    public void FindBestDiscovery_FallsBackWhenNoMatch()
+    {
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("loppkartan", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "Lopp", Distance = "50 km" }),
+        };
+        var fallback = new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "Fallback" };
+
+        var result = AssembleRaceWorker.FindBestDiscoveryForRoute(10.0, flat, fallback);
+
+        Assert.Equal("Fallback", result.Name);
+    }
+
+    [Fact]
+    public void FindBestDiscovery_ClosestDeltaWinsWithinTolerance()
+    {
+        // Route at 100 km. Discoveries at 101 km and 101.5 km both within tolerance.
+        // 101 km is closer → should win, even though 101.5 comes from a higher-priority source.
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("utmb", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "UTMB 101.5k", Distance = "101.5 km" }),
+            ("loppkartan", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "Lopp 101k", Distance = "101 km" }),
+        };
+        var fallback = new SourceDiscovery { DiscoveredAtUtc = "Z" };
+
+        var result = AssembleRaceWorker.FindBestDiscoveryForRoute(100.0, flat, fallback);
+
+        Assert.Equal("Lopp 101k", result.Name);
+    }
+
+    [Fact]
+    public void FindBestDiscovery_SameDeltaUsesSourcePriority()
+    {
+        // Route at 100 km. Two discoveries both at 101 km (same delta).
+        // utmb comes first in the list → should win.
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("utmb", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "UTMB 101k", Distance = "101 km" }),
+            ("loppkartan", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "Lopp 101k", Distance = "101 km" }),
+        };
+        var fallback = new SourceDiscovery { DiscoveredAtUtc = "Z" };
+
+        var result = AssembleRaceWorker.FindBestDiscoveryForRoute(100.0, flat, fallback);
+
+        Assert.Equal("UTMB 101k", result.Name);
+    }
+
+    // ── Unclaimed discovery distances ────────────────────────────────────
+
+    [Fact]
+    public void AssembleRaces_UnclaimedDiscoveryDistances_CreatePointRaces()
+    {
+        // Discovery: 50 km, 33 km, 21 km. Scraper: only 33 km.
+        // 50 km and 21 km are unclaimed → should appear as additional point races.
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "multi.se",
+            Url = "https://multi.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:00:00Z",
+                        Name = "Multi Trail",
+                        Date = "2026-09-01",
+                        Latitude = 59.0,
+                        Longitude = 18.0,
+                        Distance = "50 km, 33 km, 21 km",
+                        Country = "SE",
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-18T22:00:00Z",
+                    Routes =
+                    [
+                        new ScrapedRouteOutput { Name = "BFS 33k", Distance = "33 km" }
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        // 1 scraper route + 2 unclaimed discovery distances = 3 races
+        Assert.Equal(3, races.Count);
+        var distances = races.Select(r => r.Properties["distance"].ToString()).OrderBy(d => d).ToList();
+        Assert.Contains("21 km", distances);
+        Assert.Contains("33 km", distances);
+        Assert.Contains("50 km", distances);
+        // All should be points (no route coordinates).
+        Assert.All(races, r => Assert.Equal("Point", r.Geometry.Type.ToString()));
+    }
+
+    [Fact]
+    public void AssembleRaces_CloseDistanceClaimsDiscovery()
+    {
+        // Scraper route at 45 km should claim the 50 km discovery distance (within 15%).
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "close.se",
+            Url = "https://close.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:00:00Z",
+                        Name = "Close Match",
+                        Latitude = 59.0,
+                        Longitude = 18.0,
+                        Distance = "50 km",
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-18T22:00:00Z",
+                    Routes =
+                    [
+                        new ScrapedRouteOutput { Name = "BFS 45k", Distance = "45 km" }
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        // 45 km route claims the 50 km discovery → no unclaimed distances.
+        Assert.Single(races);
+        Assert.Equal("45 km", races[0].Properties["distance"].ToString());
+    }
+
+    [Fact]
+    public void AssembleRaces_SpecificDiscoveryUsedPerRoute()
+    {
+        // Two discovery sources: utmb with per-distance entries and loppkartan with multi-distance.
+        // Routes should prefer the utmb single-distance entry for matching properties.
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "specific.se",
+            Url = "https://specific.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["utmb"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "Z", Name = "UTMB Ultra 100",
+                        Distance = "100 km", ElevationGain = 6000, Country = "FR",
+                        Latitude = 45.0, Longitude = 6.0,
+                    },
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "Z", Name = "UTMB CCC",
+                        Distance = "101 km", ElevationGain = 6100, Country = "FR",
+                        Latitude = 45.0, Longitude = 6.0,
+                    }
+                ],
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "Z", Name = "Generic Event",
+                        Distance = "100 km, 101 km, 55 km",
+                        Country = "SE",
+                        Latitude = 45.0, Longitude = 6.0,
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "Z",
+                    Routes =
+                    [
+                        new ScrapedRouteOutput { Distance = "100 km" },
+                        new ScrapedRouteOutput { Distance = "101 km" },
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        // Route at 100km → UTMB Ultra 100 (single-distance entry wins over loppkartan multi)
+        var race100 = races.Single(r => r.Properties["distance"].ToString() == "100 km");
+        Assert.Equal("UTMB Ultra 100", race100.Properties["name"].ToString());
+        Assert.Equal(6000.0, (double)race100.Properties["elevationGain"]);
+
+        // Route at 101km → UTMB CCC (single-distance entry)
+        var race101 = races.Single(r => r.Properties["distance"].ToString() == "101 km");
+        Assert.Equal("UTMB CCC", race101.Properties["name"].ToString());
+        Assert.Equal(6100.0, (double)race101.Properties["elevationGain"]);
+
+        // 55km from loppkartan is unclaimed → should get a point race
+        var race55 = races.SingleOrDefault(r => r.Properties["distance"].ToString() == "55 km");
+        Assert.NotNull(race55);
+        Assert.Equal("Point", race55.Geometry.Type.ToString());
+    }
+
+    [Fact]
+    public void AssembleRaces_NonNumericDistanceLabel_CreatesRaceWithDiscoveryName()
+    {
+        // Discovery 1: "Lydinge Resort Stafett" with "42 km, 21 km, Stafett"
+        // Discovery 2: "HOKA Helsingborg Half Marathon" with "21 km"
+        // Scraper: one route with "21 km, 42 km"
+        //
+        // Expected: 3 races:
+        //   21 km → scraped route, matched to "HOKA Helsingborg Half Marathon" (single-distance wins)
+        //   42 km → scraped route, matched to "Lydinge Resort Stafett" (has 42 km)
+        //   Stafett → point race using "Lydinge Resort Stafett" name (non-numeric unclaimed label)
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "helsingborgmarathon.se",
+            Url = "https://helsingborgmarathon.se/stafett/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:02:35Z",
+                        Name = "Lydinge Resort Stafett",
+                        Date = "2026-09-05",
+                        Latitude = 56.0475746,
+                        Longitude = 12.6902033,
+                        Distance = "42 km, 21 km, Stafett",
+                        Country = "SE",
+                        Location = "Sundstorget, Helsingborg, Sweden",
+                        RaceType = "relay",
+                        County = "Skåne",
+                    },
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:02:35Z",
+                        Name = "HOKA Helsingborg Half Marathon",
+                        Date = "2025-09-06",
+                        Latitude = 56.0478422,
+                        Longitude = 12.6890694,
+                        Distance = "21 km",
+                        Country = "SE",
+                        Location = "Dunkers Kulturhus, Helsingborg, Sweden",
+                        RaceType = "road",
+                        County = "Skåne",
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-18T22:00:00Z",
+                    WebsiteUrl = "https://helsingborgmarathon.se/halvmaraton/",
+                    ImageUrl = "https://helsingborgmarathon.se/img/popup-arrow.png",
+                    LogoUrl = "https://helsingborgmarathon.se/wp-content/uploads/2021/06/Top-Symbol.png",
+                    Routes =
+                    [
+                        new ScrapedRouteOutput
+                        {
+                            SourceUrl = "https://helsingborgmarathon.se/halvmaraton/",
+                            Name = "Banan HOKA Half 25",
+                            Distance = "21 km",
+                            ElevationGain = 190,
+                            StartFee = "800",
+                            Currency = "SEK",
+                        }
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        // 1 scraped route (21 km) + 2 unclaimed: 42 km (numeric) + Stafett (label) = 3
+        Assert.Equal(3, races.Count);
+
+        // 21 km: scraped route, best discovery = "HOKA Helsingborg Half Marathon" (single-distance)
+        var race21 = races.Single(r => r.Properties["distance"].ToString() == "21 km");
+        Assert.Equal("HOKA Helsingborg Half Marathon", race21.Properties["name"].ToString());
+
+        // 42 km: unclaimed numeric, best discovery = "Lydinge Resort Stafett" (has 42 km)
+        var race42 = races.Single(r => r.Properties["distance"].ToString() == "42 km");
+        Assert.Equal("Lydinge Resort Stafett", race42.Properties["name"].ToString());
+        Assert.Equal("Point", race42.Geometry.Type.ToString());
+
+        // Stafett: unclaimed non-numeric label, discovery = "Lydinge Resort Stafett"
+        var raceStafett = races.Single(r => r.Properties["distance"].ToString() == "Stafett");
+        Assert.Equal("Lydinge Resort Stafett", raceStafett.Properties["name"].ToString());
+        Assert.Equal("Point", raceStafett.Geometry.Type.ToString());
+    }
+
+    // ── ParseDistanceList ───────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("50 km, 33 km, 21 km", new[] { 50.0, 33.0, 21.0 })]
+    [InlineData("8 km", new[] { 8.0 })]
+    [InlineData("", new double[0])]
+    [InlineData(null, new double[0])]
+    public void ParseDistanceList_ReturnsExpected(string? input, double[] expected)
+    {
+        var result = AssembleRaceWorker.ParseDistanceList(input);
         Assert.Equal(expected, result);
     }
 

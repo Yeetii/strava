@@ -107,8 +107,11 @@ public class AssembleRaceWorker(
     {
         var organizerKey = doc.Id;
 
-        // 1. Collect merged discovery metadata (priority-ordered per source).
+        // 1. Collect merged discovery metadata (priority-ordered per source) as fallback.
         var mergedDiscovery = MergeDiscovery(doc.Discovery);
+
+        // 1b. Flatten individual discovery entries in priority order for per-route matching.
+        var flatDiscoveries = FlattenDiscoveries(doc.Discovery);
 
         // 2. Collect all scraped routes in priority order (routes with coordinates come first).
         var allRoutes = CollectRoutes(doc.Scrapers);
@@ -149,12 +152,23 @@ public class AssembleRaceWorker(
             .SelectMany(x => x)
             .FirstOrDefault(d => d.Latitude is not null && d.Longitude is not null);
 
+        // 6. Track which discovery distances (km) are claimed by scraper routes.
+        var claimedKm = new HashSet<double>();
+
         for (int i = 0; i < sorted.Count; i++)
         {
             var (scraperKey, route) = sorted[i];
             var featureId = $"{organizerKey}-{i}";
+            var routeKm = ParseDistanceKm(route.Distance);
 
-            var props = BuildProperties(mergedDiscovery, scraperKey, route, scraperImageUrl, scraperLogoUrl, websiteUrl);
+            // Find the most specific matching discovery entry for this route's distance.
+            var bestDiscovery = FindBestDiscoveryForRoute(routeKm, flatDiscoveries, mergedDiscovery);
+
+            // Claim the closest discovery distance.
+            if (routeKm.HasValue)
+                ClaimClosestDistance(routeKm.Value, flatDiscoveries, claimedKm);
+
+            var props = BuildProperties(bestDiscovery, scraperKey, route, scraperImageUrl, scraperLogoUrl, websiteUrl);
 
             // Try to build a LineString if the route has coordinates.
             if (route.Coordinates is { Count: >= 2 })
@@ -178,6 +192,24 @@ public class AssembleRaceWorker(
                     coordsDiscovery.Longitude!.Value, coordsDiscovery.Latitude!.Value, props));
             }
             // Otherwise skip this route (no position can be determined).
+        }
+
+        // 7. Add point races for discovery distances not claimed by any scraper route.
+        if (coordsDiscovery is not null)
+        {
+            var unclaimed = GetUnclaimedDiscoveryDistances(flatDiscoveries, claimedKm);
+            foreach (var (distKm, distLabel) in unclaimed)
+            {
+                var featureId = $"{organizerKey}-{results.Count}";
+                var bestDisc = distKm.HasValue
+                    ? FindBestDiscoveryForRoute(distKm, flatDiscoveries, mergedDiscovery)
+                    : FindDiscoveryForLabel(distLabel, flatDiscoveries, mergedDiscovery);
+                var props = BuildProperties(bestDisc, scraperKey: null, route: null,
+                    scraperImageUrl, scraperLogoUrl, websiteUrl);
+                props[RaceScrapeDiscovery.PropDistance] = distLabel;
+                results.Add(BuildPointFeature(featureId,
+                    coordsDiscovery.Longitude!.Value, coordsDiscovery.Latitude!.Value, props));
+            }
         }
 
         return results;
@@ -247,6 +279,194 @@ public class AssembleRaceWorker(
     }
 
     /// <summary>
+    /// Flattens all discovery entries from all sources into a list ordered by
+    /// <see cref="DiscoveryPriority"/> (highest first).
+    /// </summary>
+    internal static List<(string Source, SourceDiscovery Entry)> FlattenDiscoveries(
+        Dictionary<string, List<SourceDiscovery>>? discovery)
+    {
+        if (discovery is null || discovery.Count == 0) return [];
+
+        var result = new List<(string, SourceDiscovery)>();
+        foreach (var key in DiscoveryPriority)
+        {
+            if (discovery.TryGetValue(key, out var entries))
+                foreach (var e in entries)
+                    result.Add((key, e));
+        }
+        foreach (var (key, entries) in discovery)
+        {
+            if (!DiscoveryPriority.Contains(key))
+                foreach (var e in entries)
+                    result.Add((key, e));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Finds the best matching discovery entry for a route at <paramref name="routeKm"/>.
+    /// Prefers entries whose Distance field contains exactly one distance matching the route
+    /// (most specific). Falls back to multi-distance entries that contain the distance, then
+    /// to <paramref name="fallback"/>.
+    /// Within the same specificity tier, the first match by priority order wins.
+    /// </summary>
+    public static SourceDiscovery FindBestDiscoveryForRoute(
+        double? routeKm,
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> orderedDiscoveries,
+        SourceDiscovery fallback)
+    {
+        if (routeKm is null || orderedDiscoveries.Count == 0)
+            return fallback;
+
+        const double toleranceKm = 1.0;
+
+        // Within tolerance, prefer closest distance match. Single-distance entries win over
+        // multi-distance entries at the same delta. Source priority (list order) breaks ties.
+        SourceDiscovery? bestSingle = null;
+        double bestSingleDelta = double.MaxValue;
+        SourceDiscovery? bestMulti = null;
+        double bestMultiDelta = double.MaxValue;
+
+        foreach (var (_, entry) in orderedDiscoveries)
+        {
+            var dists = ParseDistanceList(entry.Distance);
+            if (dists.Count == 0) continue;
+
+            double closestDelta = dists.Min(d => Math.Abs(d - routeKm.Value));
+            if (closestDelta > toleranceKm) continue;
+
+            if (dists.Count == 1)
+            {
+                if (closestDelta < bestSingleDelta)
+                {
+                    bestSingle = entry;
+                    bestSingleDelta = closestDelta;
+                }
+            }
+            else
+            {
+                if (closestDelta < bestMultiDelta)
+                {
+                    bestMulti = entry;
+                    bestMultiDelta = closestDelta;
+                }
+            }
+        }
+
+        return bestSingle ?? bestMulti ?? fallback;
+    }
+
+    /// <summary>
+    /// Parses a comma-separated distance string (e.g. "50 km, 33 km, 21 km") into a list of
+    /// numeric km values.
+    /// </summary>
+    public static List<double> ParseDistanceList(string? distance)
+    {
+        if (string.IsNullOrWhiteSpace(distance)) return [];
+
+        var result = new List<double>();
+        foreach (var token in distance.Split(','))
+        {
+            var stripped = System.Text.RegularExpressions.Regex.Replace(
+                token.Trim(), @"(?i)\s*(km|k)\s*$", "").Trim();
+            if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var km))
+                result.Add(km);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Claims the closest discovery distance for the given route km. If a discovery distance
+    /// is within 15% (min 2 km) of the route, it is added to <paramref name="claimedKm"/>.
+    /// </summary>
+    internal static void ClaimClosestDistance(
+        double routeKm,
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries,
+        HashSet<double> claimedKm)
+    {
+        double? bestDist = null;
+        double bestDelta = double.MaxValue;
+
+        foreach (var (_, entry) in flatDiscoveries)
+        {
+            foreach (var d in ParseDistanceList(entry.Distance))
+            {
+                var delta = Math.Abs(d - routeKm);
+                if (delta < bestDelta)
+                {
+                    bestDelta = delta;
+                    bestDist = d;
+                }
+            }
+        }
+
+        var tolerance = Math.Max(routeKm * 0.15, 2.0);
+        if (bestDist.HasValue && bestDelta <= tolerance)
+            claimedKm.Add(bestDist.Value);
+    }
+
+    /// <summary>
+    /// Returns all individual discovery distances not yet claimed, sorted ascending.
+    /// Each item carries the original label (e.g. "21 km") for property use.
+    /// </summary>
+    internal static List<(double? Km, string Label)> GetUnclaimedDiscoveryDistances(
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries,
+        HashSet<double> claimedKm)
+    {
+        var seenKm = new HashSet<double>();
+        var seenLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var numeric = new List<(double? Km, string Label)>();
+        var labels = new List<(double? Km, string Label)>();
+
+        foreach (var (_, entry) in flatDiscoveries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Distance)) continue;
+            foreach (var token in entry.Distance.Split(','))
+            {
+                var trimmed = token.Trim();
+                var stripped = System.Text.RegularExpressions.Regex.Replace(
+                    trimmed, @"(?i)\s*(km|k)\s*$", "").Trim();
+                if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var km))
+                {
+                    if (!seenKm.Add(km)) continue;
+                    if (!claimedKm.Contains(km))
+                        numeric.Add((km, trimmed));
+                }
+                else
+                {
+                    if (seenLabels.Add(trimmed))
+                        labels.Add((null, trimmed));
+                }
+            }
+        }
+
+        numeric.Sort((a, b) => a.Km!.Value.CompareTo(b.Km!.Value));
+        numeric.AddRange(labels);
+        return numeric;
+    }
+
+    /// <summary>
+    /// Finds the first discovery entry whose Distance field contains the given non-numeric
+    /// label (e.g. "Stafett"). Falls back to <paramref name="fallback"/> if no match.
+    /// </summary>
+    internal static SourceDiscovery FindDiscoveryForLabel(
+        string label,
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries,
+        SourceDiscovery fallback)
+    {
+        foreach (var (_, entry) in flatDiscoveries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Distance)) continue;
+            var tokens = entry.Distance.Split(',').Select(t => t.Trim());
+            if (tokens.Any(t => t.Equals(label, StringComparison.OrdinalIgnoreCase)))
+                return entry;
+        }
+        return fallback;
+    }
+
+    /// <summary>
     /// Collects all scraped routes from all scrapers. Routes that have coordinates are returned
     /// first (highest priority as per the requirement), preserving scraper priority within each
     /// group (utmb → itra → bfs).
@@ -308,18 +528,18 @@ public class AssembleRaceWorker(
     {
         var props = new Dictionary<string, dynamic>();
 
-        // Name: route name first (more specific), then discovery.
-        var name = route?.Name ?? discovery.Name;
+        // Name: discovery is the authoritative source; fall back to route name.
+        var name = discovery.Name ?? route?.Name;
         if (!string.IsNullOrWhiteSpace(name))
             props[RaceScrapeDiscovery.PropName] = name;
 
-        // Distance: route distance first, then discovery.
+        // Distance: route distance is more specific (per-race), fall back to discovery.
         var distance = route?.Distance ?? discovery.Distance;
         if (!string.IsNullOrWhiteSpace(distance))
             props[RaceScrapeDiscovery.PropDistance] = distance;
 
-        // Elevation gain: route first, then discovery.
-        var elevationGain = route?.ElevationGain ?? discovery.ElevationGain;
+        // Elevation gain: discovery first, fall back to route.
+        var elevationGain = discovery.ElevationGain ?? route?.ElevationGain;
         if (elevationGain.HasValue)
             props[RaceScrapeDiscovery.PropElevationGain] = elevationGain.Value;
 
@@ -344,21 +564,21 @@ public class AssembleRaceWorker(
         if (!string.IsNullOrWhiteSpace(discovery.Organizer))
             props[RaceScrapeDiscovery.PropOrganizer] = discovery.Organizer;
 
-        // Start fee: route first, then discovery.
-        var startFee = route?.StartFee ?? discovery.StartFee;
+        // Start fee: discovery first, then route.
+        var startFee = discovery.StartFee ?? route?.StartFee;
         if (!string.IsNullOrWhiteSpace(startFee))
             props[RaceScrapeDiscovery.PropStartFee] = startFee;
 
-        var currency = route?.Currency ?? discovery.Currency;
+        var currency = discovery.Currency ?? route?.Currency;
         if (!string.IsNullOrWhiteSpace(currency))
             props[RaceScrapeDiscovery.PropCurrency] = currency;
 
-        // Image / logo: route → scraper-level → discovery.
-        var imageUrl = route?.ImageUrl ?? scraperImageUrl ?? discovery.ImageUrl;
+        // Image / logo: discovery → scraper route → scraper-level.
+        var imageUrl = discovery.ImageUrl ?? route?.ImageUrl ?? scraperImageUrl;
         if (!string.IsNullOrWhiteSpace(imageUrl))
             props[RaceScrapeDiscovery.PropImage] = imageUrl;
 
-        var logoUrl = route?.LogoUrl ?? scraperLogoUrl ?? discovery.LogoUrl;
+        var logoUrl = discovery.LogoUrl ?? route?.LogoUrl ?? scraperLogoUrl;
         if (!string.IsNullOrWhiteSpace(logoUrl))
             props[RaceScrapeDiscovery.PropLogo] = logoUrl;
 

@@ -179,4 +179,54 @@ public class RaceHtmlScraperTests
         Assert.Null(RaceHtmlScraper.ExtractRaceSiteUrl("", new Uri("https://tracedetrail.fr/en/event/x")));
     }
 
+    [Fact]
+    public void ExtractElevationGain_IgnoresDistanceLineBeforeSwedishElevationKeyword()
+    {
+        const string html = """
+            <div>Längd: 42 195 meter</div>
+            <div>Höjdmeter: Total stigning</div>
+            """;
+
+        var gain = RaceHtmlScraper.ExtractElevationGain(html);
+
+        Assert.Null(gain);
+    }
+
+    [Fact]
+    public void ExtractElevationGain_DiscardWhenGreaterThanHalfDistance()
+    {
+        const string html = """
+            <div>Distance: 40 km</div>
+            <div>Elevation gain: 23000 m</div>
+            """;
+
+        var gain = RaceHtmlScraper.ExtractElevationGain(html);
+
+        Assert.Null(gain);
+    }
+
+    [Fact]
+    public void ExtractElevationGain_ReturnsReasonableValueWhenWithinHalfDistance()
+    {
+        const string html = """
+            <div>Distance: 40 km</div>
+            <div>Elevation gain: 3000 m</div>
+            """;
+
+        var gain = RaceHtmlScraper.ExtractElevationGain(html);
+
+        Assert.Equal(3000, gain);
+    }
+
+    [Fact]
+    public void ExtractDate_ParsesSwedishDateWithTimeSuffix()
+    {
+        const string html = """
+            <div>5 september 2026 kl. 10:00</div>
+            """;
+
+        var date = RaceHtmlScraper.ExtractDate(html);
+
+        Assert.Equal("2026-09-05", date);
+    }
 }

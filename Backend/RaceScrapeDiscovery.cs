@@ -50,12 +50,23 @@ public static partial class RaceScrapeDiscovery
 
         // Replace non-English month names with English equivalents for InvariantCulture parsing.
         cleaned = ReplaceLocalizedMonths(cleaned);
+        // Strip Swedish time markers like "kl. 10:00" that appear after dates.
+        cleaned = TimeSuffixRegex().Replace(cleaned, "");
+        // Remove Swedish weekday prefixes like "söndag" or "lördag".
+        cleaned = WeekdayRegex().Replace(cleaned, "");
         // Strip "den " prefix and trailing period after day number (e.g. "den 24. mai" → "24 may").
         cleaned = DenPrefixRegex().Replace(cleaned, "");
         cleaned = DayPeriodRegex().Replace(cleaned, "$1 ");
 
         if (DateOnly.TryParse(cleaned, CultureInfo.InvariantCulture, out var dateOnly))
             return dateOnly.ToString("yyyy-MM-dd");
+
+        var dateCandidate = PlainDateRegex.Match(cleaned).Value;
+        if (!string.IsNullOrWhiteSpace(dateCandidate)
+            && DateOnly.TryParse(dateCandidate, CultureInfo.InvariantCulture, out dateOnly))
+        {
+            return dateOnly.ToString("yyyy-MM-dd");
+        }
 
         if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture,
             DateTimeStyles.None, out var dt))
@@ -100,9 +111,18 @@ public static partial class RaceScrapeDiscovery
     [GeneratedRegex(@"\bden\s+", RegexOptions.IgnoreCase)]
     private static partial Regex DenPrefixRegex();
 
+    [GeneratedRegex(@"kl\.?\s*\d{1,2}[:.]\d{2}", RegexOptions.IgnoreCase)]
+    private static partial Regex TimeSuffixRegex();
+
+    [GeneratedRegex(@"\b(?:måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|mandag|tirsdag|onsdag|torsdag|fredag|lordag|sondag)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex WeekdayRegex();
+
+    private static readonly Regex PlainDateRegex = new(
+        @"\b\d{1,2}\.?\s+(?:[A-Za-z]+\s+\d{4})\b|\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b",
+        RegexOptions.IgnoreCase);
+
     [GeneratedRegex(@"(\d)\.?\s+(?=[a-zA-Z])", RegexOptions.None)]
     private static partial Regex DayPeriodRegex();
-
     // Formats a numeric distance in km to a human-readable string, e.g. 10.1 → "10.1 km", 5.0 → "5 km".
     public static string FormatDistanceKm(double distanceKm)
     {

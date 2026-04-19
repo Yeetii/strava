@@ -44,8 +44,8 @@ public static partial class RaceHtmlScraper
         {
             var num = match.Groups["num"].Value;
             var unit = match.Groups["unit"].Value.ToLowerInvariant();
-            if (double.TryParse(num, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var value))
+            if (double.TryParse(num, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var value))
             {
                 if (unit is "mi" or "miles" or "mile")
                     value *= 1.60934;
@@ -95,6 +95,19 @@ public static partial class RaceHtmlScraper
                 results.Add(RaceScrapeDiscovery.FormatDistanceKm(value));
         }
         return results;
+    }
+
+    private static double? ExtractPageDistanceKm(string html)
+    {
+        double? best = null;
+        foreach (var distance in ExtractDistancesFromContent(html))
+        {
+            var km = AssembleRaceWorker.ParseDistanceKm(distance);
+            if (km is null) continue;
+            if (!best.HasValue || km.Value > best.Value)
+                best = km.Value;
+        }
+        return best;
     }
 
     // Extracts .gpx URLs from an HTML page.
@@ -535,7 +548,7 @@ public static partial class RaceHtmlScraper
         var text = System.Net.WebUtility.HtmlDecode(raw).Trim();
         // Decode JSON unicode escapes like \u00e4 → ä (common in JSON-LD / JS-embedded content).
         text = JsonUnicodeEscapeRegex().Replace(text, m =>
-            ((char)int.Parse(m.Groups[1].Value, System.Globalization.NumberStyles.HexNumber)).ToString());
+            ((char)int.Parse(m.Groups[1].Value, NumberStyles.HexNumber)).ToString());
         text = CollapseWhitespaceRegex().Replace(text, " ");
         // Strip trailing boilerplate like "- Home", "| Official Site".
         text = TitleSeparatorRegex().Split(text)[0].Trim();
@@ -698,6 +711,14 @@ public static partial class RaceHtmlScraper
 
         if (candidates.Count > 0)
             return candidates.MaxBy(kv => kv.Value).Key;
+
+        // Fallback: capture loose visible date text even when the primary month-pattern regex misses it.
+        foreach (Match m in LooseVisibleDateRegex().Matches(visibleText))
+        {
+            var normalized = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Value.Trim());
+            if (normalized is not null)
+                return normalized;
+        }
 
         return null;
     }
@@ -978,7 +999,8 @@ public static partial class RaceHtmlScraper
         + @"|\b\d{4}-\d{2}-\d{2}\b",                                        // 2025-09-14
         RegexOptions.IgnoreCase)]
     private static partial Regex VisibleDateRegex();
-
+    [GeneratedRegex(@"\b\d{1,2}\.?\s+(?:[A-Za-z]+\s+\d{4})\b|\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}[/\.]\d{1,2}[/\.]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b", RegexOptions.IgnoreCase)]
+    private static partial Regex LooseVisibleDateRegex();
     // Matches distance patterns in URL paths: "80-km", "80km", "100k", "42.195-km", "10-miles".
     [GeneratedRegex(@"(?:^|[/\-_])(?<num>\d+(?:\.\d+)?)\s*-?\s*(?<unit>km|k|mi(?:les?)?|miles?)(?=[/\-_?#]|$)", RegexOptions.IgnoreCase)]
     private static partial Regex UrlDistanceRegex();
@@ -1047,25 +1069,30 @@ public static partial class RaceHtmlScraper
 
         var text = HtmlTagRegex().Replace(html, " ");
 
+        var pageDistanceKm = ExtractPageDistanceKm(text);
         double? best = null;
         foreach (var keyword in ElevationKeywords)
         {
             var kwIdx = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
             if (kwIdx < 0) continue;
 
-            // Search a window around the keyword (100 chars after the keyword end, 40 before).
-            var searchStart = Math.Max(0, kwIdx - 40);
-            var searchEnd = Math.Min(text.Length, kwIdx + keyword.Length + 100);
-            var window = text[searchStart..searchEnd];
+            var lineStart = text.LastIndexOfAny(['\r', '\n'], kwIdx);
+            lineStart = lineStart < 0 ? 0 : lineStart + 1;
+            var lineEnd = text.IndexOfAny(['\r', '\n'], kwIdx + keyword.Length);
+            if (lineEnd < 0) lineEnd = text.Length;
+            var line = text[lineStart..lineEnd];
 
-            foreach (Match match in ElevationNumberRegex().Matches(window))
+            foreach (Match match in ElevationNumberRegex().Matches(line))
             {
                 var raw = match.Groups[1].Value.Replace(" ", "");
-                if (double.TryParse(raw, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var metres)
+                if (double.TryParse(raw, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out var metres)
                     && metres >= 1 && metres <= 99999)
                 {
-                    // Take the largest value near any keyword (likely total ascent rather than partial).
+                    if (pageDistanceKm is not null && metres > pageDistanceKm.Value * 500)
+                        continue;
+
+                    // Take the largest value on the same line as the keyword.
                     if (!best.HasValue || metres > best.Value)
                         best = metres;
                 }
@@ -1234,8 +1261,8 @@ public static partial class RaceHtmlScraper
         int max = 0;
         foreach (Match match in ItraPointsImageRegex().Matches(html))
         {
-            if (int.TryParse(match.Groups["pts"].Value, System.Globalization.NumberStyles.Integer,
-                System.Globalization.CultureInfo.InvariantCulture, out var pts) && pts > max)
+            if (int.TryParse(match.Groups["pts"].Value, NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out var pts) && pts > max)
                 max = pts;
         }
         return max > 0 ? max : null;
@@ -1253,8 +1280,8 @@ public static partial class RaceHtmlScraper
         double max = 0;
         foreach (Match match in ElevationGainRegex().Matches(html))
         {
-            if (double.TryParse(match.Groups["meters"].Value, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var m) && m > max)
+            if (double.TryParse(match.Groups["meters"].Value, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var m) && m > max)
                 max = m;
         }
         return max > 0 ? max : null;
@@ -1304,28 +1331,28 @@ public static partial class RaceHtmlScraper
             string? distance = null;
             var distMatch = TraceDistanceRegex().Match(section);
             if (distMatch.Success && double.TryParse(distMatch.Groups["dist"].Value,
-                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var distKm))
+                NumberStyles.Float, CultureInfo.InvariantCulture, out var distKm))
                 distance = RaceScrapeDiscovery.FormatDistanceKm(distKm);
 
             // Elevation gain: reuse existing regex
             double? elevationGain = null;
             var elevMatch = ElevationGainRegex().Match(section);
             if (elevMatch.Success && double.TryParse(elevMatch.Groups["meters"].Value,
-                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var meters))
+                NumberStyles.Float, CultureInfo.InvariantCulture, out var meters))
                 elevationGain = meters;
 
             // ITRA points: reuse existing regex
             int? itraPoints = null;
             var itraMatch = ItraPointsImageRegex().Match(section);
             if (itraMatch.Success && int.TryParse(itraMatch.Groups["pts"].Value,
-                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var pts))
+                NumberStyles.Integer, CultureInfo.InvariantCulture, out var pts))
                 itraPoints = pts;
 
             // Trace ID from link: /en/trace/296087
             int? traceId = null;
             var traceMatch = TraceViewUrlRegex().Match(section);
             if (traceMatch.Success && int.TryParse(traceMatch.Groups["id"].Value,
-                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var tid))
+                NumberStyles.Integer, CultureInfo.InvariantCulture, out var tid))
                 traceId = tid;
 
             if (name is not null || distance is not null || traceId is not null)
