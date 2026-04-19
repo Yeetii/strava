@@ -238,6 +238,26 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal(-2.673804, enriched.Longitude);
     }
 
+    [Fact]
+    public void EnrichJobFromEventDetailHtml_ExtractsDuvDetailMetadata()
+    {
+        const string detailHtml = """
+            <tr><td align='right' valign='top'><b>Race type: </b></td><td colspan='2'>trail race</td></tr>
+            <tr><td align='right' valign='top'><b>Elevation gain/loss: </b></td><td colspan='2'>  30,000ft </td></tr>
+            <tr><td align='right' valign='top'><b>Course description: </b></td><td colspan='2'> One memorable and monstrous run across the trails...</td></tr>
+            <tr><td align='right' valign='top'><b>Entry fee: </b></td><td colspan='2'> £399</td></tr>
+            """;
+
+        var job = new ScrapeJob(WebsiteUrl: new Uri("https://statistik.d-u-v.org/eventdetail.php?event=129985"));
+
+        var enriched = DuvDiscoveryAgent.EnrichJobFromEventDetailHtml(job, detailHtml);
+
+        Assert.Equal("trail race", enriched.RaceType);
+        Assert.Equal(9144, enriched.ElevationGain);
+        Assert.Equal("One memorable and monstrous run across the trails...", enriched.Description);
+        Assert.Equal("£399", enriched.StartFee);
+    }
+
     private sealed class MultiResponseHttpMessageHandler : HttpMessageHandler
     {
         private readonly Dictionary<Uri, string> _responses;

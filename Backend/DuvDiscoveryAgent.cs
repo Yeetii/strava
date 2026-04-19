@@ -86,6 +86,23 @@ public static partial class DuvDiscoveryAgent
         if (coords.HasValue)
             updated = updated with { Latitude = coords.Value.lat, Longitude = coords.Value.lng };
 
+        var raceType = ExtractDuvDetailRowValue(html, "Race type");
+        var elevationGain = ParseDuvElevationGain(ExtractDuvDetailRowValue(html, "Elevation gain/loss"));
+        var description = ExtractDuvDetailRowValue(html, "Course description");
+        var startFee = ExtractDuvDetailRowValue(html, "Entry fee");
+
+        if (!string.IsNullOrWhiteSpace(raceType))
+            updated = updated with { RaceType = raceType.Trim() };
+
+        if (elevationGain.HasValue)
+            updated = updated with { ElevationGain = elevationGain.Value };
+
+        if (!string.IsNullOrWhiteSpace(description))
+            updated = updated with { Description = description.Trim() };
+
+        if (!string.IsNullOrWhiteSpace(startFee))
+            updated = updated with { StartFee = startFee.Trim() };
+
         return updated;
     }
 
@@ -125,6 +142,46 @@ public static partial class DuvDiscoveryAgent
         return Uri.TryCreate(pageUrl, href, out var uri) && uri.Scheme is "http" or "https"
             ? uri
             : null;
+    }
+
+    private static string? ExtractDuvDetailRowValue(string html, string label)
+    {
+        if (string.IsNullOrWhiteSpace(html) || string.IsNullOrWhiteSpace(label))
+            return null;
+
+        var pattern = @$"<tr[^>]*>\s*<td[^>]*><b>{Regex.Escape(label)}:\s*</b></td>\s*<td[^>]*>(?<value>.*?)</td>";
+        var match = Regex.Match(html, pattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        if (!match.Success)
+            return null;
+
+        var value = HtmlDecodeAndStripTags(match.Groups["value"].Value);
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static double? ParseDuvElevationGain(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        var normalized = text.Replace(" ", "").Replace("\u00A0", "");
+        var match = Regex.Match(normalized, @"(?<value>[\d,.]+)\s*(?<unit>ft|m)\b", RegexOptions.IgnoreCase);
+        if (!match.Success)
+            return null;
+
+        var raw = match.Groups["value"].Value.Replace(",", "", StringComparison.Ordinal);
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            return null;
+
+        var unit = match.Groups["unit"].Value.ToLowerInvariant();
+        return unit == "ft"
+            ? Math.Round(value * 0.3048)
+            : value;
+    }
+
+    private static string HtmlDecodeAndStripTags(string html)
+    {
+        var decoded = WebUtility.HtmlDecode(html);
+        return Regex.Replace(decoded, "<[^>]+>", " ", RegexOptions.Singleline).Trim();
     }
 
     public static (double lat, double lng)? ExtractStartPositionCoordinates(string html)
