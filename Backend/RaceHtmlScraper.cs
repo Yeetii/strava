@@ -38,16 +38,17 @@ public static partial class RaceHtmlScraper
     {
         var path = Uri.UnescapeDataString(url.AbsolutePath);
 
-        // Try numeric distance patterns: "80-km", "80km", "100k", "42.195-km", "10-miles"
+        // Try numeric distance patterns: "80-km", "80km", "100k", "100M", "42.195-km", "10-miles"
         var match = UrlDistanceRegex().Match(path);
         if (match.Success)
         {
             var num = match.Groups["num"].Value;
-            var unit = match.Groups["unit"].Value.ToLowerInvariant();
+            var unitRaw = match.Groups["unit"].Value;
+            var unit = unitRaw.ToLowerInvariant();
             if (double.TryParse(num, NumberStyles.Float,
                 CultureInfo.InvariantCulture, out var value))
             {
-                if (unit is "mi" or "miles" or "mile")
+                if (unitRaw == "M" || unit is "mi" or "miles" or "mile")
                     value *= 1.60934;
                 return RaceScrapeDiscovery.FormatDistanceKm(value);
             }
@@ -84,11 +85,12 @@ public static partial class RaceHtmlScraper
         foreach (Match m in ContentDistanceRegex().Matches(visibleText))
         {
             var num = m.Groups["num"].Value;
-            var unit = m.Groups["unit"].Value.ToLowerInvariant();
+            var unitRaw = m.Groups["unit"].Value;
+            var unit = unitRaw.ToLowerInvariant();
             if (!double.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
                 continue;
             if (value < 1 || value > 500) continue; // filter out noise
-            if (unit is "mi" or "miles" or "mile")
+            if (unitRaw == "M" || unit is "mi" or "miles" or "mile")
                 value *= 1.60934;
             var rounded = (int)Math.Round(value);
             if (seen.Add(rounded))
@@ -1001,16 +1003,16 @@ public static partial class RaceHtmlScraper
     private static partial Regex VisibleDateRegex();
     [GeneratedRegex(@"\b\d{1,2}\.?\s+(?:[A-Za-z]+\s+\d{4})\b|\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}[/\.]\d{1,2}[/\.]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b", RegexOptions.IgnoreCase)]
     private static partial Regex LooseVisibleDateRegex();
-    // Matches distance patterns in URL paths: "80-km", "80km", "100k", "42.195-km", "10-miles".
-    [GeneratedRegex(@"(?:^|[/\-_])(?<num>\d+(?:\.\d+)?)\s*-?\s*(?<unit>km|k|mi(?:les?)?|miles?)(?=[/\-_?#]|$)", RegexOptions.IgnoreCase)]
+    // Matches distance patterns in URL paths: "80-km", "80km", "100k", "100M", "42.195-km", "10-miles".
+    [GeneratedRegex(@"(?:^|[/\-_])(?<num>\d+(?:\.\d+)?)\s*-?\s*(?<unit>km|k|(?-i:M)|mi(?:les?)?|miles?)(?=[/\-_?#]|$)", RegexOptions.IgnoreCase)]
     private static partial Regex UrlDistanceRegex();
 
-    // Matches distance in link text: "27K", "100 km", "45K", "10 miles".
-    [GeneratedRegex(@"\b\d+(?:\.\d+)?\s*(?:km|k|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
+    // Matches distance in link text: "27K", "100 km", "45K", "100M", "10 miles".
+    [GeneratedRegex(@"\b\d+(?:\.\d+)?\s*(?:km|k|(?-i:M)|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex LinkTextDistanceRegex();
 
-    // Matches distance in visible page content with named groups: "27 km", "100K", "42.195 km", "10 miles".
-    [GeneratedRegex(@"\b(?<num>\d+(?:\.\d+)?)\s*(?<unit>km|k|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
+    // Matches distance in visible page content with named groups: "27 km", "100K", "100M", "42.195 km", "10 miles".
+    [GeneratedRegex(@"\b(?<num>\d+(?:\.\d+)?)\s*(?<unit>km|k|(?-i:M)|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex ContentDistanceRegex();
 
     // Matches inline font-size declarations like "font-size: 24px" or "font-size:1.5em".

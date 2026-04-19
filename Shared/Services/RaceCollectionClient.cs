@@ -9,7 +9,7 @@ public class RaceCollectionClient(Container container, ILoggerFactory loggerFact
         container,
         loggerFactory,
         FeatureKinds.Race,
-        (_, _, _) => Task.FromResult<IEnumerable<Feature>>(Enumerable.Empty<Feature>()),
+        null,
         null,
         storeZoom: DefaultZoom)
 {

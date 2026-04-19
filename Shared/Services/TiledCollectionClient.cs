@@ -10,13 +10,13 @@ public class TiledCollectionClient(
     Container container,
     ILoggerFactory loggerFactory,
     string kind,
-    Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> fetchFromOverpass,
+    Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>>? fetcher = null,
     Func<IEnumerable<string>, CancellationToken, Task<IEnumerable<Feature>>>? fetchByIds = null,
     int storeZoom = 11)
     : CollectionClient<StoredFeature>(container, loggerFactory)
 {
     protected readonly string _kind = kind;
-    private readonly Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> _fetchFromOverpass = fetchFromOverpass;
+    private readonly Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>>? _fetcher = fetcher;
     private readonly Func<IEnumerable<string>, CancellationToken, Task<IEnumerable<Feature>>>? _fetchByIds = fetchByIds;
     protected readonly int _storeZoom = storeZoom;
 
@@ -227,8 +227,11 @@ public class TiledCollectionClient(
 
     protected virtual async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, CancellationToken cancellationToken = default)
     {
+        if (_fetcher is null)
+            return [];
+
         var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
-        var rawFeatures = await _fetchFromOverpass(southWest, northEast, cancellationToken);
+        var rawFeatures = await _fetcher(southWest, northEast, cancellationToken);
 
         var features = rawFeatures
             .SelectMany(f => CreateDocumentsForTile(f, x, y, zoom, zoom))

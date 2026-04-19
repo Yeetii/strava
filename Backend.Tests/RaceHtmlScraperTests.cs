@@ -159,6 +159,31 @@ public class RaceHtmlScraperTests
     }
 
     [Fact]
+    public void ExtractCourseLinksFromHtml_FindsLinksWithUppercaseMDistancePattern()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/lopp/100M">100M race</a>
+                <a href="/lopp/50k">50K race</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceHtmlScraper.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
+
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/100M");
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/50k");
+    }
+
+    [Fact]
+    public void ExtractDistanceFromUrl_ParsesUppercaseMileMarker()
+    {
+        var distance = RaceHtmlScraper.ExtractDistanceFromUrl(new Uri("https://example.com/race/50M"));
+        Assert.Equal("80.5 km", distance);
+    }
+
+    [Fact]
     public void ExtractRaceSiteUrl_IsCaseInsensitive()
     {
         const string html = """<a href="https://myrace.com/">SITE DE LA COURSE</a>""";

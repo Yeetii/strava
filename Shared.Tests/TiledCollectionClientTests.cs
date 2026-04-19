@@ -44,8 +44,28 @@ public class TiledCollectionClientTests
             null!,
             new LoggerFactory(),
             FeatureKinds.Peak,
-fetchFromOverpass,
+            fetchFromOverpass,
             null,
             storeZoom);
+    }
+
+    [Fact]
+    public async Task FetchMissingTile_WithNoFetcher_ReturnsEmptyWithoutMarkers()
+    {
+        var client = new NoFetcherTiledCollectionClient(null!, new LoggerFactory(), FeatureKinds.Race, storeZoom: 8);
+        var result = await client.FetchMissingTilePublic(10, 20, 8, CancellationToken.None);
+
+        Assert.Empty(result);
+    }
+
+    private sealed class NoFetcherTiledCollectionClient : TiledCollectionClient
+    {
+        public NoFetcherTiledCollectionClient(Container container, ILoggerFactory loggerFactory, string kind, int storeZoom)
+            : base(container, loggerFactory, kind, null, null, storeZoom)
+        {
+        }
+
+        public Task<IEnumerable<StoredFeature>> FetchMissingTilePublic(int x, int y, int zoom, CancellationToken cancellationToken)
+            => base.FetchMissingTile(x, y, zoom, cancellationToken);
     }
 }
