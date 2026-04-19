@@ -1,0 +1,22 @@
+meta {
+  name: Move OSM Features By Zoom
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/manage/osmfeatures/moveZoom?kind=peak&fromZoom=8&toZoom=11
+  body: none
+  auth: none
+}
+
+params:query {
+  kind: peak
+  fromZoom: 8
+  toZoom: 11
+  ~ids: roof:1234
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}

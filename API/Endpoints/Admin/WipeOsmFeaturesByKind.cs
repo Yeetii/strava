@@ -29,6 +29,8 @@ public class WipeOsmFeaturesByKind(
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "kind", In = ParameterLocation.Path, Type = typeof(string), Required = true,
         Description = "Feature kind to wipe: peak | path | protectedArea | adminBoundary | race")]
+    [OpenApiParameter(name: "zoom", In = ParameterLocation.Query, Type = typeof(int), Required = false,
+        Description = "Optional tile zoom level to filter documents by.")]
     [OpenApiParameter(name: "ids", In = ParameterLocation.Query, Type = typeof(string), Required = false,
         Description = "Optional comma-separated document IDs to wipe. When omitted, all documents of the given kind are wiped.")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(int),
@@ -56,6 +58,15 @@ public class WipeOsmFeaturesByKind(
         var idsParam = req.Query["ids"];
         List<(string Id, int X, int Y)> items;
 
+        var zoomParam = req.Query["zoom"];
+        int? zoom = null;
+        if (!string.IsNullOrWhiteSpace(zoomParam))
+        {
+            if (!int.TryParse(zoomParam, out var parsedZoom))
+                return await CreateBadRequest(req, "Query parameter 'zoom' must be an integer.");
+            zoom = parsedZoom;
+        }
+
         if (!string.IsNullOrWhiteSpace(idsParam))
         {
             var requestedIds = idsParam
@@ -63,9 +74,15 @@ public class WipeOsmFeaturesByKind(
                 .ToHashSet(StringComparer.Ordinal);
 
             var inClause = string.Join(",", requestedIds.Select((_, i) => $"@id{i}"));
-            var queryDefinition = new QueryDefinition(
-                $"SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind AND c.id IN ({inClause})")
+            var queryText = "SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind AND c.id IN (" + inClause + ")";
+            if (zoom.HasValue)
+                queryText += " AND c.zoom = @zoom";
+
+            var queryDefinition = new QueryDefinition(queryText)
                 .WithParameter("@kind", kind);
+            if (zoom.HasValue)
+                queryDefinition = queryDefinition.WithParameter("@zoom", zoom.Value);
+
             int idx = 0;
             foreach (var id in requestedIds)
                 queryDefinition.WithParameter($"@id{idx++}", id);
@@ -80,8 +97,14 @@ public class WipeOsmFeaturesByKind(
         }
         else
         {
-            var queryDefinition = new QueryDefinition("SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind")
+            var queryText = "SELECT c.id, c.x, c.y FROM c WHERE c.kind = @kind";
+            if (zoom.HasValue)
+                queryText += " AND c.zoom = @zoom";
+
+            var queryDefinition = new QueryDefinition(queryText)
                 .WithParameter("@kind", kind);
+            if (zoom.HasValue)
+                queryDefinition = queryDefinition.WithParameter("@zoom", zoom.Value);
 
             items = [];
             using var feedIterator = container.GetItemQueryIterator<OsmFeatureKey>(queryDefinition);
@@ -124,6 +147,13 @@ public class WipeOsmFeaturesByKind(
 
         return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
             && providedKeys.FirstOrDefault() == adminKey;
+    }
+
+    private static async Task<HttpResponseData> CreateBadRequest(HttpRequestData req, string message)
+    {
+        var response = req.CreateResponse(HttpStatusCode.BadRequest);
+        await response.WriteStringAsync(message);
+        return response;
     }
 
     private record OsmFeatureKey(string Id, int X, int Y);

@@ -5,17 +5,17 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/boundaries/{{x}}/{{y}}
+  url: {{baseUrl}}/boundaries/:x/:y?adminLevel=4&zoom=6
   body: none
   auth: none
 }
 
-params:path {
-  x: 33
-  y: 18
+params:query {
+  adminLevel: 4
+  zoom: 6
 }
 
-params:query {
-  ~adminLevel: 4
-  ~zoom: 6
+params:path {
+  x: 34
+  y: 19
 }

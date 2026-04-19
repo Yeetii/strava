@@ -1,6 +1,7 @@
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using System.Net;
+using System.Threading;
 using BAMCIS.GeoJSON;
 using Shared.Geo;
 using Shared.Models;
@@ -8,7 +9,13 @@ using Shared.Models;
 namespace Shared.Services;
 
 public class AdminBoundariesCollectionClient(Container container, ILoggerFactory loggerFactory, OverpassClient overpassClient)
-    : CollectionClient<StoredFeature>(container, loggerFactory)
+    : TiledCollectionClient(
+        container,
+        loggerFactory,
+        FeatureKinds.AdminBoundary,
+        static (_, _, _) => Task.FromResult(Enumerable.Empty<Feature>()),
+        null,
+        storeZoom: 6)
 {
     private const string SimplificationStepProperty = "geometrySimplificationStep";
     private const string SimplificationEpsilonProperty = "geometrySimplificationEpsilon";
@@ -16,51 +23,33 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
 
     private readonly OverpassClient _overpassClient = overpassClient;
     private const string Kind = FeatureKinds.AdminBoundary;
+    private readonly AsyncLocal<int?> _currentAdminLevel = new();
 
-    public async Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int adminLevel, int zoom = 6, bool followPointers = false, CancellationToken cancellationToken = default)
+    public Task<IEnumerable<StoredFeature>> FetchByTiles(IEnumerable<(int x, int y)> keys, int adminLevel, int zoom = 6, bool followPointers = false, CancellationToken cancellationToken = default)
     {
         if (!keys.Any())
-            return [];
+            return Task.FromResult<IEnumerable<StoredFeature>>([]);
 
-        var docs = (await QueryByListOfKeys(keys, zoom, adminLevel, cancellationToken)).ToList();
-        var keysInDocs = new HashSet<(int x, int y)>(docs.Select(d => (d.X, d.Y)));
-        var missingTiles = keys.Where(k => !keysInDocs.Contains((k.x, k.y)));
-
-        foreach (var (x, y) in missingTiles)
-            docs.AddRange(await FetchMissingTile(x, y, zoom, adminLevel, cancellationToken));
-
-        var visibleDocuments = docs
-            .Where(d => !d.Id.StartsWith("empty-"))
-            .ToList();
-
-        if (followPointers)
-            visibleDocuments = (await ResolvePointers(visibleDocuments, cancellationToken)).ToList();
-
-        return visibleDocuments
-            .OrderBy(d => StoredFeature.IsPointerDocument(d))
-            .DistinctBy(d => d.LogicalId);
-    }
-
-    private async Task<IEnumerable<StoredFeature>> QueryByListOfKeys(IEnumerable<(int x, int y)> keys, int zoom, int adminLevel, CancellationToken cancellationToken)
-    {
-        var keyConditions = string.Join(" OR ", keys.Select((_, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
-        var queryDefinition = new QueryDefinition($"SELECT * FROM c WHERE ({keyConditions}) AND c.zoom = @zoom AND c.kind = @kind AND c.properties.adminLevel = @adminLevel")
-            .WithParameter("@zoom", zoom)
-            .WithParameter("@kind", Kind)
-            .WithParameter("@adminLevel", adminLevel.ToString());
-        int index = 0;
-        foreach (var (x, y) in keys)
+        var filter = "c.properties.adminLevel = @adminLevel";
+        var filterParameters = new Dictionary<string, object?>
         {
-            queryDefinition = queryDefinition
-                .WithParameter($"@x{index}", x)
-                .WithParameter($"@y{index}", y);
-            index++;
+            ["@adminLevel"] = adminLevel.ToString()
+        };
+
+        _currentAdminLevel.Value = adminLevel;
+        try
+        {
+            return base.FetchByTiles(keys, filter, filterParameters, zoom, followPointers, cancellationToken);
         }
-        return await ExecuteQueryAsync<StoredFeature>(queryDefinition, cancellationToken: cancellationToken);
+        finally
+        {
+            _currentAdminLevel.Value = null;
+        }
     }
 
-    private async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, int adminLevel, CancellationToken cancellationToken)
+    protected override async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, CancellationToken cancellationToken)
     {
+        var adminLevel = _currentAdminLevel.Value ?? throw new InvalidOperationException("Admin level must be set before calling FetchMissingTile.");
         var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
 
         // Phase 1: lightweight tags-only query to discover which boundaries are in this tile.
@@ -299,37 +288,6 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         }
 
         await UpsertDocument(CreateSimplifiedBoundaryDocument(simplified, 64), cancellationToken);
-    }
-
-    private async Task<IEnumerable<StoredFeature>> ResolvePointers(IEnumerable<StoredFeature> documents, CancellationToken cancellationToken)
-    {
-        var documentList = documents.ToList();
-        var pointedIds = documentList
-            .Where(StoredFeature.IsPointerDocument)
-            .Select(StoredFeature.GetPointerStoredDocumentId)
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        if (pointedIds.Count == 0)
-            return documentList;
-
-        var resolvedDocuments = (await GetByIdsAsync(pointedIds!, cancellationToken))
-            .ToDictionary(document => document.Id, StringComparer.Ordinal);
-
-        return documentList
-            .Select(document =>
-            {
-                if (!StoredFeature.IsPointerDocument(document))
-                    return document;
-
-                var storedDocumentId = StoredFeature.GetPointerStoredDocumentId(document);
-                if (storedDocumentId != null && resolvedDocuments.TryGetValue(storedDocumentId, out var resolved))
-                    return resolved;
-
-                return document;
-            })
-            .Where(document => !StoredFeature.IsPointerDocument(document));
     }
 
     private static StoredFeature CreateRdpSimplifiedDocument(StoredFeature document, double epsilon)
@@ -631,6 +589,6 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             await DeleteDocument(doc.Id, pk, cancellationToken);
         }
 
-        return await FetchMissingTile(x, y, zoom, adminLevel, cancellationToken);
+        return await FetchMissingTile(x, y, zoom, cancellationToken);
     }
 }
