@@ -124,4 +124,39 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
             }
         }
     }
+
+    public async Task<HashSet<string>> FetchKnownTraceDeTrailIdsAsync(CancellationToken cancellationToken = default)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var tracedetrailQuery = new QueryDefinition(
+            "SELECT VALUE s.externalIds.tracedetrailEventId FROM c JOIN s IN c.discovery.tracedetrail " +
+            "WHERE IS_DEFINED(s.externalIds.tracedetrailEventId)");
+        var tracedetrailIds = await ExecuteQueryAsync<string>(tracedetrailQuery, cancellationToken: cancellationToken);
+        foreach (var id in tracedetrailIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+            ids.Add(id!);
+
+        var itraQuery = new QueryDefinition(
+            "SELECT VALUE s.externalIds.itraEventId FROM c JOIN s IN c.discovery.tracedetrail " +
+            "WHERE IS_DEFINED(s.externalIds.itraEventId)");
+        var itraIds = await ExecuteQueryAsync<string>(itraQuery, cancellationToken: cancellationToken);
+        foreach (var id in itraIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+            ids.Add(id!);
+
+        return ids;
+    }
+
+    /// <summary>
+    /// Patches the <c>lastAssembledUtc</c> field on an existing organizer document.
+    /// </summary>
+    public async Task PatchLastAssembledAsync(
+        string organizerKey,
+        CancellationToken cancellationToken = default)
+    {
+        var pk = new PartitionKey(organizerKey);
+        await _container.PatchItemAsync<RaceOrganizerDocument>(
+            organizerKey, pk,
+            [PatchOperation.Set("/lastAssembledUtc", DateTime.UtcNow.ToString("o"))],
+            cancellationToken: cancellationToken);
+    }
 }

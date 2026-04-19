@@ -159,6 +159,31 @@ public class RaceHtmlScraperTests
     }
 
     [Fact]
+    public void ExtractCourseLinksFromHtml_FindsLinksWithUppercaseMDistancePattern()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/lopp/100M">100M race</a>
+                <a href="/lopp/50k">50K race</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceHtmlScraper.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
+
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/100M");
+        Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/50k");
+    }
+
+    [Fact]
+    public void ExtractDistanceFromUrl_ParsesUppercaseMileMarker()
+    {
+        var distance = RaceHtmlScraper.ExtractDistanceFromUrl(new Uri("https://example.com/race/50M"));
+        Assert.Equal("80.5 km", distance);
+    }
+
+    [Fact]
     public void ExtractRaceSiteUrl_IsCaseInsensitive()
     {
         const string html = """<a href="https://myrace.com/">SITE DE LA COURSE</a>""";
@@ -179,4 +204,54 @@ public class RaceHtmlScraperTests
         Assert.Null(RaceHtmlScraper.ExtractRaceSiteUrl("", new Uri("https://tracedetrail.fr/en/event/x")));
     }
 
+    [Fact]
+    public void ExtractElevationGain_IgnoresDistanceLineBeforeSwedishElevationKeyword()
+    {
+        const string html = """
+            <div>Längd: 42 195 meter</div>
+            <div>Höjdmeter: Total stigning</div>
+            """;
+
+        var gain = RaceHtmlScraper.ExtractElevationGain(html);
+
+        Assert.Null(gain);
+    }
+
+    [Fact]
+    public void ExtractElevationGain_DiscardWhenGreaterThanHalfDistance()
+    {
+        const string html = """
+            <div>Distance: 40 km</div>
+            <div>Elevation gain: 23000 m</div>
+            """;
+
+        var gain = RaceHtmlScraper.ExtractElevationGain(html);
+
+        Assert.Null(gain);
+    }
+
+    [Fact]
+    public void ExtractElevationGain_ReturnsReasonableValueWhenWithinHalfDistance()
+    {
+        const string html = """
+            <div>Distance: 40 km</div>
+            <div>Elevation gain: 3000 m</div>
+            """;
+
+        var gain = RaceHtmlScraper.ExtractElevationGain(html);
+
+        Assert.Equal(3000, gain);
+    }
+
+    [Fact]
+    public void ExtractDate_ParsesSwedishDateWithTimeSuffix()
+    {
+        const string html = """
+            <div>5 september 2026 kl. 10:00</div>
+            """;
+
+        var date = RaceHtmlScraper.ExtractDate(html);
+
+        Assert.Equal("2026-09-05", date);
+    }
 }

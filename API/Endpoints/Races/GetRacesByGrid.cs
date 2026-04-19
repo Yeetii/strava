@@ -27,7 +27,7 @@ public class GetRacesByGrid(RaceCollectionClient racesCollectionClient)
         try
         {
             var zoom = ParseZoom(req);
-            var races = await racesCollectionClient.FetchByTiles([(x, y)], zoom, cancellationToken);
+            var races = await racesCollectionClient.FetchByTiles([(x, y)], zoom, false, cancellationToken);
             var featureCollection = new FeatureCollection(races.Select(r => r.ToFeature()).ToList());
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(featureCollection);

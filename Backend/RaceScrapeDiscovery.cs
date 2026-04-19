@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Shared.Services;
@@ -50,18 +51,69 @@ public static partial class RaceScrapeDiscovery
 
         // Replace non-English month names with English equivalents for InvariantCulture parsing.
         cleaned = ReplaceLocalizedMonths(cleaned);
+        // Strip Swedish time markers like "kl. 10:00" that appear after dates.
+        cleaned = TimeSuffixRegex().Replace(cleaned, "");
+        // Remove Swedish weekday prefixes like "söndag" or "lördag".
+        cleaned = WeekdayRegex().Replace(cleaned, "");
         // Strip "den " prefix and trailing period after day number (e.g. "den 24. mai" → "24 may").
         cleaned = DenPrefixRegex().Replace(cleaned, "");
         cleaned = DayPeriodRegex().Replace(cleaned, "$1 ");
 
+        var dottedMatch = DottedDateRegex().Match(cleaned);
+        if (dottedMatch.Success)
+        {
+            var day = dottedMatch.Groups[1].Value.PadLeft(2, '0');
+            var month = dottedMatch.Groups[2].Value.PadLeft(2, '0');
+            var year = dottedMatch.Groups[3].Value;
+            return $"{year}-{month}-{day}";
+        }
+
         if (DateOnly.TryParse(cleaned, CultureInfo.InvariantCulture, out var dateOnly))
             return dateOnly.ToString("yyyy-MM-dd");
+
+        var dateCandidate = PlainDateRegex.Match(cleaned).Value;
+        if (!string.IsNullOrWhiteSpace(dateCandidate)
+            && DateOnly.TryParse(dateCandidate, CultureInfo.InvariantCulture, out dateOnly))
+        {
+            return dateOnly.ToString("yyyy-MM-dd");
+        }
 
         if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture,
             DateTimeStyles.None, out var dt))
             return dt.ToString("yyyy-MM-dd");
 
         return null;
+    }
+
+    public static string? NormalizeDuvCalendarDateToYyyyMmDd(string? date)
+    {
+        if (string.IsNullOrWhiteSpace(date))
+            return null;
+
+        var cleaned = WebUtility.HtmlDecode(date).Trim();
+
+        var match = DuvDateRangeNoMonthRegex().Match(cleaned);
+        if (match.Success)
+        {
+            var candidate = $"{match.Groups["startDay"].Value}.{match.Groups["month"].Value}.{match.Groups["year"].Value}";
+            return NormalizeDateToYyyyMmDd(candidate);
+        }
+
+        match = DuvDateRangeMonthRegex().Match(cleaned);
+        if (match.Success)
+        {
+            var candidate = $"{match.Groups["startDay"].Value}.{match.Groups["startMonth"].Value}.{match.Groups["year"].Value}";
+            return NormalizeDateToYyyyMmDd(candidate);
+        }
+
+        match = DuvDateRangeFullRegex().Match(cleaned);
+        if (match.Success)
+        {
+            var candidate = $"{match.Groups["startDay"].Value}.{match.Groups["startMonth"].Value}.{match.Groups["year"].Value}";
+            return NormalizeDateToYyyyMmDd(candidate);
+        }
+
+        return NormalizeDateToYyyyMmDd(cleaned);
     }
 
     // Maps non-English month names/abbreviations to English for date parsing.
@@ -100,9 +152,18 @@ public static partial class RaceScrapeDiscovery
     [GeneratedRegex(@"\bden\s+", RegexOptions.IgnoreCase)]
     private static partial Regex DenPrefixRegex();
 
+    [GeneratedRegex(@"kl\.?\s*\d{1,2}[:.]\d{2}", RegexOptions.IgnoreCase)]
+    private static partial Regex TimeSuffixRegex();
+
+    [GeneratedRegex(@"\b(?:måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|mandag|tirsdag|onsdag|torsdag|fredag|lordag|sondag)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex WeekdayRegex();
+
+    private static readonly Regex PlainDateRegex = new(
+        @"\b\d{1,2}\.?\s+(?:[A-Za-z]+\s+\d{4})\b|\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b",
+        RegexOptions.IgnoreCase);
+
     [GeneratedRegex(@"(\d)\.?\s+(?=[a-zA-Z])", RegexOptions.None)]
     private static partial Regex DayPeriodRegex();
-
     // Formats a numeric distance in km to a human-readable string, e.g. 10.1 → "10.1 km", 5.0 → "5 km".
     public static string FormatDistanceKm(double distanceKm)
     {
@@ -297,6 +358,22 @@ public static partial class RaceScrapeDiscovery
 
     [GeneratedRegex(@"(?i)(km|k|mi|m)\s*$")]
     private static partial Regex DistanceSuffixRegex();
+
+    [GeneratedRegex(@"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$")]
+    private static partial Regex DottedDateRegex();
+
+    [GeneratedRegex(@"^\s*(?<startDay>\d{1,2})\.-(?<endDay>\d{1,2})\.(?<month>\d{1,2})\.(?<year>\d{4})\s*$")]
+    private static partial Regex DuvDateRangeNoMonthRegex();
+
+    [GeneratedRegex(@"^\s*(?<startDay>\d{1,2})\.(?<startMonth>\d{1,2})\.-(?<endDay>\d{1,2})\.(?<endMonth>\d{1,2})\.(?<year>\d{4})\s*$")]
+    private static partial Regex DuvDateRangeMonthRegex();
+
+    [GeneratedRegex(@"^\s*(?<startDay>\d{1,2})\.(?<startMonth>\d{1,2})\.(?<year>\d{4})-(?<endDay>\d{1,2})\.(?<endMonth>\d{1,2})\.(?<endYear>\d{4})\s*$")]
+    private static partial Regex DuvDateRangeFullRegex();
+
+
+
+
 
     [GeneratedRegex(@"(\d+)(?:st|nd|rd|th)\b", RegexOptions.IgnoreCase)]
     private static partial Regex OrdinalSuffixRegex();
@@ -580,6 +657,9 @@ public static partial class RaceScrapeDiscovery
 
         return jobsByMarkerId.Values.ToList();
     }
+
+    public static IReadOnlyCollection<ScrapeJob> ParseDuvCalendarPage(string html, Uri baseUrl)
+        => DuvDiscoveryAgent.ParseCalendarPage(html, baseUrl);
 
     private static string? FindStringValue(JsonElement element, IEnumerable<string> keys)
     {

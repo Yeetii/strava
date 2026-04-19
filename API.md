@@ -484,3 +484,33 @@ number   // count of jobs queued
 
 **Errors**
 - `400` — unknown `jobType`
+
+---
+
+## Manual Scraping
+
+### `POST /manage/races/scrape/mistral`
+
+🔒 Admin only
+
+Queue a manual scrape job using the Mistral Studio Agent API. The worker writes scraper output into the race organizer document and then triggers race assembly.
+
+**Request body** `application/json`
+```ts
+{
+  "url": "https://example-race-site.com/event/123",
+  "name": "Example Ultra"
+}
+```
+
+**Response** `200 OK` `application/json`
+```ts
+{
+  "eventKey": "example-race-site.com",
+  "canonicalUrl": "https://example-race-site.com/event/123"
+}
+```
+
+**Errors**
+- `400` — Invalid request payload or URL
+- `401` — Missing or invalid admin key

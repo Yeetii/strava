@@ -5,16 +5,16 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/peaks/{{x}}/{{y}}
+  url: {{baseUrl}}/peaks/:x/:y?zoom=8
   body: none
   auth: none
 }
 
-params:path {
-  x: 557
-  y: 319
+params:query {
+  zoom: 8
 }
 
-params:query {
-  zoom: 11
+params:path {
+  x: 137
+  y: 77
 }

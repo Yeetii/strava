@@ -5,17 +5,18 @@ meta {
 }
 
 delete {
-  url: {{baseUrl}}/manage/osmfeatures/:kind
+  url: {{baseUrl}}/manage/osmfeatures/:kind?zoom=8
   body: none
   auth: none
 }
 
-params:path {
-  kind: adminBoundary
+params:query {
+  zoom: 8
+  ~ids: relation:12345
 }
 
-params:query {
-  ~ids: relation:12345
+params:path {
+  kind: peak
 }
 
 headers {

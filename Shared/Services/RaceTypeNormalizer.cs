@@ -45,6 +45,7 @@ public static class RaceTypeNormalizer
         ["triatlon"] = "triathlon", ["hundeløp"] = "canicross",
         ["randotrail"] = "trail", ["trailblanc"] = "trail",
         ["trailurbain"] = "urban trail",
+        ["trail running"] = "trail",
         ["repeterende"] = "repeats",
         ["backyard ultra"] = "backyard",
         ["virtuelt"] = "virtual",

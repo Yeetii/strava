@@ -38,16 +38,17 @@ public static partial class RaceHtmlScraper
     {
         var path = Uri.UnescapeDataString(url.AbsolutePath);
 
-        // Try numeric distance patterns: "80-km", "80km", "100k", "42.195-km", "10-miles"
+        // Try numeric distance patterns: "80-km", "80km", "100k", "100M", "42.195-km", "10-miles"
         var match = UrlDistanceRegex().Match(path);
         if (match.Success)
         {
             var num = match.Groups["num"].Value;
-            var unit = match.Groups["unit"].Value.ToLowerInvariant();
-            if (double.TryParse(num, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var value))
+            var unitRaw = match.Groups["unit"].Value;
+            var unit = unitRaw.ToLowerInvariant();
+            if (double.TryParse(num, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var value))
             {
-                if (unit is "mi" or "miles" or "mile")
+                if (unitRaw == "M" || unit is "mi" or "miles" or "mile")
                     value *= 1.60934;
                 return RaceScrapeDiscovery.FormatDistanceKm(value);
             }
@@ -84,17 +85,31 @@ public static partial class RaceHtmlScraper
         foreach (Match m in ContentDistanceRegex().Matches(visibleText))
         {
             var num = m.Groups["num"].Value;
-            var unit = m.Groups["unit"].Value.ToLowerInvariant();
+            var unitRaw = m.Groups["unit"].Value;
+            var unit = unitRaw.ToLowerInvariant();
             if (!double.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
                 continue;
             if (value < 1 || value > 500) continue; // filter out noise
-            if (unit is "mi" or "miles" or "mile")
+            if (unitRaw == "M" || unit is "mi" or "miles" or "mile")
                 value *= 1.60934;
             var rounded = (int)Math.Round(value);
             if (seen.Add(rounded))
                 results.Add(RaceScrapeDiscovery.FormatDistanceKm(value));
         }
         return results;
+    }
+
+    private static double? ExtractPageDistanceKm(string html)
+    {
+        double? best = null;
+        foreach (var distance in ExtractDistancesFromContent(html))
+        {
+            var km = AssembleRaceWorker.ParseDistanceKm(distance);
+            if (km is null) continue;
+            if (!best.HasValue || km.Value > best.Value)
+                best = km.Value;
+        }
+        return best;
     }
 
     // Extracts .gpx URLs from an HTML page.
@@ -239,6 +254,38 @@ public static partial class RaceHtmlScraper
 
             if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri) && uri.Scheme is "http" or "https")
                 return uri;
+        }
+
+        return null;
+    }
+
+    public static Uri? ExtractDuvEventWebPageUrl(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        var webPageRowMatch = DuvWebPageRowRegex().Match(html);
+        if (webPageRowMatch.Success)
+        {
+            var rowHtml = webPageRowMatch.Groups[1].Value;
+            foreach (Match anchorMatch in AnchorRegex().Matches(rowHtml))
+            {
+                var href = anchorMatch.Groups["href"].Value;
+                if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri) && uri.Scheme is "http" or "https")
+                    return uri;
+            }
+        }
+
+        // Fallback: return the first external anchor URL on the page.
+        foreach (Match anchorMatch in AnchorRegex().Matches(html))
+        {
+            var href = anchorMatch.Groups["href"].Value;
+            if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)
+                && uri.Scheme is "http" or "https"
+                && !string.Equals(uri.Host, pageUrl.Host, StringComparison.OrdinalIgnoreCase))
+            {
+                return uri;
+            }
         }
 
         return null;
@@ -535,7 +582,7 @@ public static partial class RaceHtmlScraper
         var text = System.Net.WebUtility.HtmlDecode(raw).Trim();
         // Decode JSON unicode escapes like \u00e4 → ä (common in JSON-LD / JS-embedded content).
         text = JsonUnicodeEscapeRegex().Replace(text, m =>
-            ((char)int.Parse(m.Groups[1].Value, System.Globalization.NumberStyles.HexNumber)).ToString());
+            ((char)int.Parse(m.Groups[1].Value, NumberStyles.HexNumber)).ToString());
         text = CollapseWhitespaceRegex().Replace(text, " ");
         // Strip trailing boilerplate like "- Home", "| Official Site".
         text = TitleSeparatorRegex().Split(text)[0].Trim();
@@ -698,6 +745,14 @@ public static partial class RaceHtmlScraper
 
         if (candidates.Count > 0)
             return candidates.MaxBy(kv => kv.Value).Key;
+
+        // Fallback: capture loose visible date text even when the primary month-pattern regex misses it.
+        foreach (Match m in LooseVisibleDateRegex().Matches(visibleText))
+        {
+            var normalized = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Value.Trim());
+            if (normalized is not null)
+                return normalized;
+        }
 
         return null;
     }
@@ -903,6 +958,9 @@ public static partial class RaceHtmlScraper
     [GeneratedRegex(@"<a\b[^>]*\bhref\s*=\s*[""'](?<href>[^""']+)[""'][^>]*>(?<text>.*?)</a>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex AnchorRegex();
 
+    [GeneratedRegex(@"<tr[^>]*>\s*<td[^>]*><b>\s*Web page:\s*</b>\s*</td>\s*<td[^>]*>(.*?)</td>\s*</tr>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex DuvWebPageRowRegex();
+
     // Strips all HTML tags so anchor inner content can be inspected as plain text.
     [GeneratedRegex(@"<[^>]+>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlTagRegex();
@@ -978,17 +1036,18 @@ public static partial class RaceHtmlScraper
         + @"|\b\d{4}-\d{2}-\d{2}\b",                                        // 2025-09-14
         RegexOptions.IgnoreCase)]
     private static partial Regex VisibleDateRegex();
-
-    // Matches distance patterns in URL paths: "80-km", "80km", "100k", "42.195-km", "10-miles".
-    [GeneratedRegex(@"(?:^|[/\-_])(?<num>\d+(?:\.\d+)?)\s*-?\s*(?<unit>km|k|mi(?:les?)?|miles?)(?=[/\-_?#]|$)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b\d{1,2}\.?\s+(?:[A-Za-z]+\s+\d{4})\b|\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}[/\.]\d{1,2}[/\.]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b", RegexOptions.IgnoreCase)]
+    private static partial Regex LooseVisibleDateRegex();
+    // Matches distance patterns in URL paths: "80-km", "80km", "100k", "100M", "42.195-km", "10-miles".
+    [GeneratedRegex(@"(?:^|[/\-_])(?<num>\d+(?:\.\d+)?)\s*-?\s*(?<unit>km|k|(?-i:M)|mi(?:les?)?|miles?)(?=[/\-_?#]|$)", RegexOptions.IgnoreCase)]
     private static partial Regex UrlDistanceRegex();
 
-    // Matches distance in link text: "27K", "100 km", "45K", "10 miles".
-    [GeneratedRegex(@"\b\d+(?:\.\d+)?\s*(?:km|k|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
+    // Matches distance in link text: "27K", "100 km", "45K", "100M", "10 miles".
+    [GeneratedRegex(@"\b\d+(?:\.\d+)?\s*(?:km|k|(?-i:M)|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex LinkTextDistanceRegex();
 
-    // Matches distance in visible page content with named groups: "27 km", "100K", "42.195 km", "10 miles".
-    [GeneratedRegex(@"\b(?<num>\d+(?:\.\d+)?)\s*(?<unit>km|k|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
+    // Matches distance in visible page content with named groups: "27 km", "100K", "100M", "42.195 km", "10 miles".
+    [GeneratedRegex(@"\b(?<num>\d+(?:\.\d+)?)\s*(?<unit>km|k|(?-i:M)|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex ContentDistanceRegex();
 
     // Matches inline font-size declarations like "font-size: 24px" or "font-size:1.5em".
@@ -1047,25 +1106,30 @@ public static partial class RaceHtmlScraper
 
         var text = HtmlTagRegex().Replace(html, " ");
 
+        var pageDistanceKm = ExtractPageDistanceKm(text);
         double? best = null;
         foreach (var keyword in ElevationKeywords)
         {
             var kwIdx = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase);
             if (kwIdx < 0) continue;
 
-            // Search a window around the keyword (100 chars after the keyword end, 40 before).
-            var searchStart = Math.Max(0, kwIdx - 40);
-            var searchEnd = Math.Min(text.Length, kwIdx + keyword.Length + 100);
-            var window = text[searchStart..searchEnd];
+            var lineStart = text.LastIndexOfAny(['\r', '\n'], kwIdx);
+            lineStart = lineStart < 0 ? 0 : lineStart + 1;
+            var lineEnd = text.IndexOfAny(['\r', '\n'], kwIdx + keyword.Length);
+            if (lineEnd < 0) lineEnd = text.Length;
+            var line = text[lineStart..lineEnd];
 
-            foreach (Match match in ElevationNumberRegex().Matches(window))
+            foreach (Match match in ElevationNumberRegex().Matches(line))
             {
                 var raw = match.Groups[1].Value.Replace(" ", "");
-                if (double.TryParse(raw, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var metres)
+                if (double.TryParse(raw, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out var metres)
                     && metres >= 1 && metres <= 99999)
                 {
-                    // Take the largest value near any keyword (likely total ascent rather than partial).
+                    if (pageDistanceKm is not null && metres > pageDistanceKm.Value * 500)
+                        continue;
+
+                    // Take the largest value on the same line as the keyword.
                     if (!best.HasValue || metres > best.Value)
                         best = metres;
                 }
@@ -1234,8 +1298,8 @@ public static partial class RaceHtmlScraper
         int max = 0;
         foreach (Match match in ItraPointsImageRegex().Matches(html))
         {
-            if (int.TryParse(match.Groups["pts"].Value, System.Globalization.NumberStyles.Integer,
-                System.Globalization.CultureInfo.InvariantCulture, out var pts) && pts > max)
+            if (int.TryParse(match.Groups["pts"].Value, NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out var pts) && pts > max)
                 max = pts;
         }
         return max > 0 ? max : null;
@@ -1253,8 +1317,8 @@ public static partial class RaceHtmlScraper
         double max = 0;
         foreach (Match match in ElevationGainRegex().Matches(html))
         {
-            if (double.TryParse(match.Groups["meters"].Value, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var m) && m > max)
+            if (double.TryParse(match.Groups["meters"].Value, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var m) && m > max)
                 max = m;
         }
         return max > 0 ? max : null;
@@ -1304,28 +1368,28 @@ public static partial class RaceHtmlScraper
             string? distance = null;
             var distMatch = TraceDistanceRegex().Match(section);
             if (distMatch.Success && double.TryParse(distMatch.Groups["dist"].Value,
-                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var distKm))
+                NumberStyles.Float, CultureInfo.InvariantCulture, out var distKm))
                 distance = RaceScrapeDiscovery.FormatDistanceKm(distKm);
 
             // Elevation gain: reuse existing regex
             double? elevationGain = null;
             var elevMatch = ElevationGainRegex().Match(section);
             if (elevMatch.Success && double.TryParse(elevMatch.Groups["meters"].Value,
-                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var meters))
+                NumberStyles.Float, CultureInfo.InvariantCulture, out var meters))
                 elevationGain = meters;
 
             // ITRA points: reuse existing regex
             int? itraPoints = null;
             var itraMatch = ItraPointsImageRegex().Match(section);
             if (itraMatch.Success && int.TryParse(itraMatch.Groups["pts"].Value,
-                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var pts))
+                NumberStyles.Integer, CultureInfo.InvariantCulture, out var pts))
                 itraPoints = pts;
 
             // Trace ID from link: /en/trace/296087
             int? traceId = null;
             var traceMatch = TraceViewUrlRegex().Match(section);
             if (traceMatch.Success && int.TryParse(traceMatch.Groups["id"].Value,
-                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var tid))
+                NumberStyles.Integer, CultureInfo.InvariantCulture, out var tid))
                 traceId = tid;
 
             if (name is not null || distance is not null || traceId is not null)

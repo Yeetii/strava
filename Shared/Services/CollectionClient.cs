@@ -143,23 +143,50 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             CosmosWriteThrottle.Semaphore.Release();
         }
     }
-    public async Task BulkUpsert(IEnumerable<T> documents, CancellationToken cancellationToken = default)
+    public async Task BulkUpsert(IEnumerable<T> documents, int maxDegreeOfParallelism = 1, CancellationToken cancellationToken = default)
     {
-        foreach (var document in documents)
+        if (documents == null)
+            return;
+
+        var docs = documents.ToList();
+        if (docs.Count == 0)
+            return;
+
+        if (maxDegreeOfParallelism <= 1)
         {
-            await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+            foreach (var document in docs)
+            {
+                await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
+                    // Delay is intentionally held inside the lock: releasing first would allow the
+                    // next waiter to start immediately, bypassing the intended write-rate cap.
+                    await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+                }
+                finally
+                {
+                    CosmosWriteThrottle.Semaphore.Release();
+                }
+            }
+            return;
+        }
+
+        using var concurrencySemaphore = new SemaphoreSlim(maxDegreeOfParallelism);
+        var tasks = docs.Select(async document =>
+        {
+            await concurrencySemaphore.WaitAsync(cancellationToken);
             try
             {
                 await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
-                // Delay is intentionally held inside the lock: releasing first would allow the
-                // next waiter to start immediately, bypassing the intended write-rate cap.
-                await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
             }
             finally
             {
-                CosmosWriteThrottle.Semaphore.Release();
+                concurrencySemaphore.Release();
             }
-        }
+        });
+
+        await Task.WhenAll(tasks);
     }
 
     public async Task DeleteDocument(string id, PartitionKey partitionKey, CancellationToken cancellationToken = default)
@@ -211,6 +238,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             CosmosWriteThrottle.Semaphore.Release();
         }
     }
+
 
     public async Task ExecuteBatch(
         PartitionKey partitionKey,
