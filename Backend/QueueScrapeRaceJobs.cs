@@ -43,8 +43,8 @@ public class QueueScrapeRaceJobs(
         // Fetch each source and write discoveries to Cosmos under /discovery/{source}.
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("utmb",
         //     await FetchUtmbJobsAsync(httpClient, cancellationToken), cancellationToken));
-        // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("tracedetrail",
-        //     await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken), cancellationToken));
+         allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("tracedetrail",
+             await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken), cancellationToken));
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("runagain",
         //     await FetchRunagainJobsAsync(httpClient, cancellationToken), cancellationToken));
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("loppkartan",
