@@ -56,7 +56,9 @@ public class SourceDiscovery
     /// <summary>Source-specific URLs (e.g. UTMB race pages, RunAgain page).</summary>
     public List<string>? SourceUrls { get; set; }
 
+    // ── ITRA-specific ───────────────────────────────────────────────────--
     public int? ItraPoints { get; set; }
+    public bool? ItraNationalLeague { get; set; }
 
     // ── UTMB-specific ─────────────────────────────────────────────────────
     public List<string>? Playgrounds { get; set; }

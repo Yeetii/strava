@@ -22,7 +22,7 @@ public class AssembleRaceWorker(
     ILogger<AssembleRaceWorker> logger)
 {
     // Discovery source priority (highest → lowest).
-    internal static readonly string[] DiscoveryPriority = ["utmb", "tracedetrail", "runagain", "loppkartan", "duv"];
+    internal static readonly string[] DiscoveryPriority = ["utmb", "duv", "tracedetrail", "runagain", "loppkartan"];
 
     // Scraper key priority (highest → lowest).
     internal static readonly string[] ScraperPriority = ["utmb", "itra", "mistral", "bfs"];
@@ -115,10 +115,11 @@ public class AssembleRaceWorker(
 
         // 2. Collect all scraped routes in priority order (routes with coordinates come first).
         var allRoutes = CollectRoutes(doc.Scrapers);
+        var dedupedRoutes = DeduplicateRoutesByDistance(allRoutes, flatDiscoveries);
 
         var results = new List<StoredFeature>();
 
-        if (allRoutes.Count == 0)
+        if (dedupedRoutes.Count == 0)
         {
             // No scraper output — fall back to a single point per discovery entry (if coords available).
             var discoveries = doc.Discovery?.Values.SelectMany(x => x).ToList() ?? [];
@@ -510,6 +511,54 @@ public class AssembleRaceWorker(
         }
 
         return [.. withCoords, .. withoutCoords];
+    }
+
+    private static List<(string ScraperKey, ScrapedRouteOutput Route)> DeduplicateRoutesByDistance(
+        List<(string ScraperKey, ScrapedRouteOutput Route)> routes,
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries)
+    {
+        if (routes.Count <= 1)
+            return routes;
+
+        var grouped = routes
+            .GroupBy(r => ParseDistanceKm(r.Route.Distance))
+            .ToList();
+
+        var result = new List<(string ScraperKey, ScrapedRouteOutput Route)>();
+        foreach (var group in grouped)
+        {
+            if (group.Key is null)
+            {
+                result.AddRange(group);
+                continue;
+            }
+
+            var allowedCount = Math.Max(1, CountMatchingDiscoveryEntries(group.Key.Value, flatDiscoveries));
+            var kept = group
+                .OrderByDescending(r => r.Route.Date ?? string.Empty)
+                .ThenByDescending(r => r.Route.Coordinates is { Count: >= 2 })
+                .Take(allowedCount);
+            result.AddRange(kept);
+        }
+
+        return result;
+    }
+
+    private static int CountMatchingDiscoveryEntries(
+        double routeKm,
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries)
+    {
+        var seenEntries = new HashSet<SourceDiscovery>();
+        const double toleranceKm = 1.0;
+
+        foreach (var (_, entry) in flatDiscoveries)
+        {
+            var dists = ParseDistanceList(entry.Distance);
+            if (dists.Any(d => Math.Abs(d - routeKm) <= toleranceKm))
+                seenEntries.Add(entry);
+        }
+
+        return seenEntries.Count;
     }
 
     // ── Property building ────────────────────────────────────────────────

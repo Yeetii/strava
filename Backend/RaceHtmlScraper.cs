@@ -1287,7 +1287,7 @@ public static partial class RaceHtmlScraper
     }
 
     /// <summary>
-    /// Extracts the maximum ITRA points from the event page by parsing image filenames
+    /// Extracts the maximum ITRA points from a TraceDeTrail event page by parsing image filenames
     /// like <c>itra_pts_race3.png</c> → 3.
     /// </summary>
     public static int? ExtractTraceDeTrailItraPoints(string html)
@@ -1303,6 +1303,36 @@ public static partial class RaceHtmlScraper
                 max = pts;
         }
         return max > 0 ? max : null;
+    }
+
+    /// <summary>
+    /// Extracts ITRA points from an ITRA event page by parsing the point icons shown
+    /// in the ITRA Points section.
+    /// </summary>
+    public static int? ExtractItraPoints(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        var digitMatches = ItraPointsIconRegex().Matches(html)
+            .Select(m => MapItraDigit(m.Groups["digit"].Value))
+            .Where(v => v >= 0)
+            .ToList();
+
+        if (digitMatches.Count > 0)
+            return digitMatches.Aggregate(0, (current, digit) => current * 10 + digit);
+
+        var sectionMatch = ItraPointsSectionRegex().Match(html);
+        var section = sectionMatch.Success ? sectionMatch.Groups["section"].Value : html;
+
+        var numericMatch = ItraPointsNumericRegex().Match(section);
+        if (numericMatch.Success && int.TryParse(numericMatch.Groups["value"].Value,
+            NumberStyles.Integer, CultureInfo.InvariantCulture, out var points))
+        {
+            return points;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -1328,9 +1358,36 @@ public static partial class RaceHtmlScraper
     [GeneratedRegex(@"<div\b[^>]*\bid\s*=\s*[""']eventLocalite[""'][^>]*>(?<content>.*?)</div>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex EventLocaliteRegex();
 
+    // ITRA page point section contents.
+    [GeneratedRegex(@"<h5>\s*ITRA Points\s*</h5>(?<section>.*?)(?:</div>\s*</div>\s*</div>|</div>\s*</div>)", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex ItraPointsSectionRegex();
+
+    // Matches ITRA digit icon filenames such as zero.svg, one.svg, two.svg.
+    [GeneratedRegex(@"itra_numbers/icons/(?<digit>zero|one|two|three|four|five|six|seven|eight|nine)\.svg", RegexOptions.IgnoreCase)]
+    private static partial Regex ItraPointsIconRegex();
+
+    // Numeric fallback when the section contains a plain number.
+    [GeneratedRegex(@"(?:ITRA\s*Points|itra\s*points)[^0-9]{0,20}?(?<value>\d{1,3})", RegexOptions.IgnoreCase)]
+    private static partial Regex ItraPointsNumericRegex();
+
     // itra_pts_race3.png → captures "3"
     [GeneratedRegex(@"itra_pts_race(?<pts>\d+)\.png", RegexOptions.IgnoreCase)]
     private static partial Regex ItraPointsImageRegex();
+
+    private static int MapItraDigit(string digit) => digit.ToLowerInvariant() switch
+    {
+        "zero" => 0,
+        "one" => 1,
+        "two" => 2,
+        "three" => 3,
+        "four" => 4,
+        "five" => 5,
+        "six" => 6,
+        "seven" => 7,
+        "eight" => 8,
+        "nine" => 9,
+        _ => -1
+    };
 
     // <i class="fas fa-arrow-circle-up"></i> 4492 m
     [GeneratedRegex(@"fa-arrow-circle-up[""'][^>]*>\s*</i>\s*(?<meters>[\d\s]+?)\s*m\b", RegexOptions.IgnoreCase)]

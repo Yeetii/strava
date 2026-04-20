@@ -30,11 +30,11 @@ public static class RaceTypeNormalizer
 
     private static readonly Dictionary<string, string> RaceTypeAliases = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["stiløp"] = "trail", ["stig"] = "trail",
+        ["stiløp"] = "trail", ["stig"] = "trail", ["trail race"] = "trail", 
         ["terreng"] = "cross country", ["terräng"] = "cross country", ["terrain"] = "cross country",
-        ["terrengløp"] = "cross country",
+        ["terrengløp"] = "cross country", ["terränglopp"] = "cross country",
         ["asfalt"] = "road", ["landsväg"] = "road", ["gateløp"] = "road",
-        ["grus"] = "gravel",
+        ["grus"] = "gravel", ["snø"] = "snow", ["snö"] = "snow",
         ["stafett"] = "relay",
         ["motbakke"] = "uphill", ["vertical"] = "uphill", ["vertikal"] = "uphill",
         ["trappeløp"] = "stairs", ["trappor"] = "stairs",

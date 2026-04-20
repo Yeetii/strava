@@ -2,8 +2,8 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
-using Shared.Models;
 using Shared.Services;
+using System.Net;
 using System.Text.Json;
 
 namespace Backend;
@@ -49,8 +49,10 @@ public class QueueScrapeRaceJobs(
         //     await FetchRunagainJobsAsync(httpClient, cancellationToken), cancellationToken));
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("loppkartan",
         //     await FetchLoppkartanJobsAsync(httpClient, cancellationToken), cancellationToken));
-        allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("duv",
-            await FetchDuvJobsAsync(httpClient, cancellationToken), cancellationToken));
+        allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("itra",
+            await FetchItraJobsAsync(httpClient, cancellationToken), cancellationToken));
+        // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("duv",
+        //     await FetchDuvJobsAsync(httpClient, cancellationToken), cancellationToken));
 
         logger.LogInformation("Discovery complete: {Count} unique organizers across all sources", allOrganizerKeys.Count);
 
@@ -454,6 +456,82 @@ public class QueueScrapeRaceJobs(
         }
 
         logger.LogInformation("RunAgain: enriched {Count}/{Total} events with organizer website URLs", enriched, jobs.Count);
+    }
+
+    private async Task<IReadOnlyCollection<ScrapeJob>> FetchItraJobsAsync(HttpClient ignoredHttpClient, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var cookieContainer = new CookieContainer();
+            using var handler = new HttpClientHandler
+            {
+                CookieContainer = cookieContainer,
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+            };
+
+            using var client = new HttpClient(handler);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.Referrer = ItraDiscoveryAgent.CalendarUrl;
+
+            var initialHtml = await client.GetStringAsync(ItraDiscoveryAgent.CalendarUrl, cancellationToken);
+            var token = ItraDiscoveryAgent.ExtractRequestVerificationToken(initialHtml);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                logger.LogWarning("ITRA: failed to extract antiforgery token from calendar page");
+                return [];
+            }
+
+            var content = new FormUrlEncodedContent(new[]
+            {
+                new KeyValuePair<string, string>("__RequestVerificationToken", token),
+                new KeyValuePair<string, string>("Input.Longitude", "0"),
+                new KeyValuePair<string, string>("Input.Latitude", "0"),
+                new KeyValuePair<string, string>("Input.NorthEastLat", "90"),
+                new KeyValuePair<string, string>("Input.NorthEastLng", "180"),
+                new KeyValuePair<string, string>("Input.SouthWestLat", "-90"),
+                new KeyValuePair<string, string>("Input.SouthWestLng", "-180"),
+                new KeyValuePair<string, string>("Input.MinDistance", ""),
+                new KeyValuePair<string, string>("Input.MaxDistance", ""),
+                new KeyValuePair<string, string>("Input.MinElevationGain", ""),
+                new KeyValuePair<string, string>("Input.MaxElevationGain", ""),
+                new KeyValuePair<string, string>("Input.MinElevationLoss", ""),
+                new KeyValuePair<string, string>("Input.MaxElevationLoss", ""),
+                new KeyValuePair<string, string>("Input.MinItraPts", "0"),
+                new KeyValuePair<string, string>("Input.MaxItraPts", "7"),
+                new KeyValuePair<string, string>("Input.ItraPtsValue", "0"),
+                new KeyValuePair<string, string>("Input.NationalLeagues", "false"),
+                new KeyValuePair<string, string>("Input.NationalLeague", "false"),
+                new KeyValuePair<string, string>("Input.DateValue", ""),
+                new KeyValuePair<string, string>("Input.DateStart", ""),
+                new KeyValuePair<string, string>("Input.DateEnd", ""),
+                new KeyValuePair<string, string>("Input.resultcount", "0"),
+                new KeyValuePair<string, string>("Input.RaceValue", ""),
+                new KeyValuePair<string, string>("ZoomLevel", "2"),
+                new KeyValuePair<string, string>("type", ""),
+                new KeyValuePair<string, string>("countMap", "1")
+            });
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, ItraDiscoveryAgent.CalendarUrl)
+            {
+                Content = content
+            };
+
+            using var response = await client.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var html = await response.Content.ReadAsStringAsync(cancellationToken);
+            var jobs = ItraDiscoveryAgent.ParseCalendarPage(html, ItraDiscoveryAgent.CalendarUrl)
+                .Take(2)
+                .ToArray();
+            logger.LogInformation("ITRA: discovered {Count} races, limiting to {Limit} before enrichment", jobs.Length, 2);
+            var enrichedJobs = await ItraDiscoveryAgent.EnrichEventPageDetailsAsync(jobs, client, cancellationToken);
+            return enrichedJobs;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "ITRA: failed to fetch calendar page");
+            return [];
+        }
     }
 
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchLoppkartanJobsAsync(HttpClient httpClient, CancellationToken cancellationToken)

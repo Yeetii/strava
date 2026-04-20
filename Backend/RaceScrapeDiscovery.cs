@@ -1089,6 +1089,8 @@ public record ScrapeJob(
     Uri? UtmbUrl = null,
     IReadOnlyList<Uri>? TraceDeTrailItraUrls = null,
     Uri? TraceDeTrailEventUrl = null,
+    Uri? ItraEventPageUrl = null,
+    bool? ItraNationalLeague = null,
     Uri? RunagainUrl = null,
     Uri? WebsiteUrl = null)         // generic race website (e.g. from Loppkartan)
 {
@@ -1119,6 +1121,7 @@ public record ScrapeJob(
         ExternalIds = ExternalIds is { Count: > 0 } ? new Dictionary<string, string>(ExternalIds) : null,
         SourceUrls = GetSourceUrls(),
         ItraPoints = ItraPoints,
+        ItraNationalLeague = ItraNationalLeague,
         Playgrounds = Playgrounds is { Count: > 0 } ? [.. Playgrounds] : null,
         RunningStones = RunningStones,
         UtmbWorldSeriesCategory = UtmbWorldSeriesCategory,
@@ -1131,6 +1134,7 @@ public record ScrapeJob(
         if (TraceDeTrailItraUrls is { Count: > 0 })
             urls.AddRange(TraceDeTrailItraUrls.Select(u => u.AbsoluteUri));
         if (TraceDeTrailEventUrl is not null) urls.Add(TraceDeTrailEventUrl.AbsoluteUri);
+        if (ItraEventPageUrl is not null) urls.Add(ItraEventPageUrl.AbsoluteUri);
         if (RunagainUrl is not null) urls.Add(RunagainUrl.AbsoluteUri);
         if (WebsiteUrl is not null) urls.Add(WebsiteUrl.AbsoluteUri);
         return urls.Count > 0 ? urls : null;

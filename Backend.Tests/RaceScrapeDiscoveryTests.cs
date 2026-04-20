@@ -147,6 +147,239 @@ public class RaceScrapeDiscoveryTests
     }
 
     [Fact]
+    public void ExtractItraRequestVerificationToken_ReturnsTokenFromHtml()
+    {
+        const string html = "<input name=\"__RequestVerificationToken\" type=\"hidden\" value=\"abc123\" />";
+
+        var token = ItraDiscoveryAgent.ExtractRequestVerificationToken(html);
+
+        Assert.Equal("abc123", token);
+    }
+
+    [Fact]
+    public void ParseItraCalendarPage_ExtractsRaceJobsFromEmbeddedFragments()
+    {
+        const string html = """
+            <script>
+            var raceSearchJsonSidePopupNew = [
+            "<div class='popupNew'><div class='event_name'><a href='/Races/RaceDetails/1234'>Some Race</a></div><h4>Sample ITRA Race</h4><div class='date'>10.04.2026</div><div class='location'>Foo Town, Spain</div><div class='count'>42.2 km</div></div>"
+            ];
+            </script>
+            """;
+
+        var jobs = ItraDiscoveryAgent.ParseCalendarPage(html, new Uri("https://itra.run/Races/RaceCalendar"));
+
+        var job = Assert.Single(jobs);
+        Assert.Equal("Sample ITRA Race", job.Name);
+        Assert.Equal("2026-04-10", job.Date);
+        Assert.Equal("ES", job.Country);
+        Assert.Equal("Foo Town", job.Location);
+        Assert.Equal("42.2 km", job.Distance);
+        Assert.Equal("https://itra.run/Races/RaceDetails/1234", job.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal(new Dictionary<string, string> { ["itraEventId"] = "1234" }, job.ExternalIds);
+        Assert.Equal("trail", job.RaceType);
+    }
+
+    [Fact]
+    public void ExtractItraPoints_ParsesIconDigitSequenceAnywhereOnPage()
+    {
+        const string html = """
+            <div>
+                <div class="row">
+                    <div class="col"><h5>ITRA Points</h5></div>
+                </div>
+                <div class="row">
+                    <div class="col"><img src="/images/itra_numbers/icons/one.svg" alt="Itra Images" /></div>
+                    <div class="col"><img src="/images/itra_numbers/icons/two.svg" alt="Itra Images" /></div>
+                </div>
+            </div>
+            """;
+
+        var points = RaceHtmlScraper.ExtractItraPoints(html);
+
+        Assert.Equal(12, points);
+    }
+
+    [Fact]
+    public void ParseItraCalendarPage_SplitsMultiRaceButtonGroupsIntoSeparateJobs()
+    {
+        const string html = """
+            <script>
+            var raceSearchJsonSidePopupNew = [
+            "<div class='popupNew'><div class='event_name'><a href='/Races/RaceDetails/112171'>Some Race Group</a></div><h4>Sample ITRA Event Group</h4><div class='date'>10.04.2026</div><div class='location'>Foo Town, Spain</div><div class='btn-group'><a href='/Races/RaceDetails/first'>First Race</a><a href='/Races/RaceDetails/second'>Second Race</a></div></div>"
+            ];
+            </script>
+            """;
+
+        var jobs = ItraDiscoveryAgent.ParseCalendarPage(html, new Uri("https://itra.run/Races/RaceCalendar"));
+
+        Assert.Equal(2, jobs.Count);
+        Assert.Contains(jobs, j => j.WebsiteUrl!.AbsoluteUri == "https://itra.run/Races/RaceDetails/first" && j.Name == "First Race");
+        Assert.Contains(jobs, j => j.WebsiteUrl!.AbsoluteUri == "https://itra.run/Races/RaceDetails/second" && j.Name == "Second Race");
+    }
+
+    [Fact]
+    public void EnrichItraJobFromEventPageHtml_UsesRegisterLinkAndParsesH1Description()
+    {
+        const string html = """
+            <html>
+              <body>
+                <h1>Sample ITRA Race</h1>
+                <div class="col-lg-9">This is the race description.</div>
+                <div>Elevation Gain: 1200 m</div>
+                <div>National League: yes</div>
+                <img src="itra_pts_race3.png" />
+                <a href="/Races/Register/9876">Register to this race</a>
+              </body>
+            </html>
+            """;
+
+        var job = new ScrapeJob(WebsiteUrl: new Uri("https://itra.run/Races/RaceDetails/1234"));
+        var enriched = ItraDiscoveryAgent.EnrichJobFromEventPageHtml(job, html, job.WebsiteUrl!);
+
+        Assert.Equal("https://itra.run/Races/Register/9876", enriched.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("https://itra.run/Races/RaceDetails/1234", enriched.ItraEventPageUrl!.AbsoluteUri);
+        Assert.True(enriched.ItraNationalLeague);
+        Assert.Equal("Sample ITRA Race", enriched.Name);
+        Assert.Equal("This is the race description.", enriched.Description);
+        Assert.Equal(1200, enriched.ElevationGain);
+        Assert.Equal(3, enriched.ItraPoints);
+        Assert.Equal("trail", enriched.RaceType);
+    }
+
+    [Fact]
+    public void EnrichItraJobFromEventPageHtml_UsesH3AndAboutDescriptionAndPageDistance()
+    {
+        const string html = """
+            <html>
+              <body>
+                <div class="btn-group" role="group">
+                  <a href="/Races/RaceDetails/first">First Race</a>
+                  <a href="/Races/RaceDetails/second">Second Race</a>
+                </div>
+                <h3>Hardy Rolling</h3>
+                <div class="tab-pane active">
+                  <h3>About the Race</h3>
+                  <div class="col-12">
+                    <p>First race page description.</p>
+                  </div>
+                  <div>
+                    <i class="fas fa-route"></i>&nbsp;Distance: <span>13.5</span>
+                  </div>
+                </div>
+                <a href="/Races/Register/9876">Register to this race</a>
+              </body>
+            </html>
+            """;
+
+        var job = new ScrapeJob(WebsiteUrl: new Uri("https://itra.run/Races/RaceDetails/112171"), Distance: "100 km");
+        var enriched = ItraDiscoveryAgent.EnrichJobFromEventPageHtml(job, html, job.WebsiteUrl!);
+
+        Assert.Equal("Hardy Rolling", enriched.Name);
+        Assert.Equal("First race page description.", enriched.Description);
+        Assert.Equal("13.5 km", enriched.Distance);
+        Assert.Equal("https://itra.run/Races/Register/9876", enriched.WebsiteUrl!.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractItraPoints_ParsesIconDigitSequence()
+    {
+        const string html = """
+            <div>
+                <h5>ITRA Points</h5>
+                <div class="row">
+                    <div class="col">
+                        <img src="/images/itra_numbers/icons/one.svg" alt="Itra Images" />
+                        <img src="/images/itra_numbers/icons/two.svg" alt="Itra Images" />
+                        <img src="/images/itra_numbers/icons/three.svg" alt="Itra Images" />
+                    </div>
+                </div>
+            </div>
+            """;
+
+        var points = RaceHtmlScraper.ExtractItraPoints(html);
+
+        Assert.Equal(123, points);
+    }
+
+    [Fact]
+    public void ItraScrapeJob_ToSourceDiscovery_IncludesItraNationalLeague()
+    {
+        var job = new ScrapeJob(
+            WebsiteUrl: new Uri("https://itra.run/Races/Register/9876"),
+            ItraEventPageUrl: new Uri("https://itra.run/Races/RaceDetails/1234"),
+            ItraNationalLeague: true);
+
+        var discovery = job.ToSourceDiscovery();
+
+        Assert.True(discovery.ItraNationalLeague);
+        Assert.Contains("https://itra.run/Races/RaceDetails/1234", discovery.SourceUrls!);
+    }
+
+    [Fact]
+    public async Task EnrichEventPageDetailsAsync_ExpandsItraRaceButtonGroupLinks()
+    {
+        const string groupHtml = """
+            <html>
+              <body>
+                <h1>Multi-Race Event</h1>
+                <div class="col-lg-9">Group description.</div>
+                <div class="row pt-2">
+                  <div class="col">
+                    <div class="row text-left">
+                      <div class="col overflow-auto">
+                        <div class="btn-group" role="group" aria-label="Basic example">
+                          <a class="btn btn-outline-dark" href="/Races/RaceDetails/first">First Race</a>
+                          <a class="btn btn-outline-dark" href="/Races/RaceDetails/second">Second Race</a>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </body>
+            </html>
+            """;
+
+        const string firstHtml = """
+            <html>
+              <body>
+                <h1>First Race</h1>
+                <div class="col-lg-9">First race description.</div>
+                <a href="/Races/Register/1">Register to this race</a>
+              </body>
+            </html>
+            """;
+
+        const string secondHtml = """
+            <html>
+              <body>
+                <h1>Second Race</h1>
+                <div class="col-lg-9">Second race description.</div>
+                <a href="/Races/Register/2">Register to this race</a>
+              </body>
+            </html>
+            """;
+
+        var initialJob = new ScrapeJob(WebsiteUrl: new Uri("https://itra.run/Races/RaceDetails/group"));
+        using var client = new HttpClient(new MultiResponseHttpMessageHandler(
+            new Dictionary<Uri, string>
+            {
+                [initialJob.WebsiteUrl!] = groupHtml,
+                [new Uri("https://itra.run/Races/RaceDetails/first")] = firstHtml,
+                [new Uri("https://itra.run/Races/RaceDetails/second")] = secondHtml,
+            }));
+
+        var enriched = await ItraDiscoveryAgent.EnrichEventPageDetailsAsync(new[] { initialJob }, client, CancellationToken.None);
+
+        Assert.Equal(3, enriched.Count);
+        Assert.Contains(enriched, j => j.Name == "Multi-Race Event");
+        Assert.Contains(enriched, j => j.Name == "First Race");
+        Assert.Contains(enriched, j => j.Name == "Second Race");
+        Assert.Contains(enriched, j => j.WebsiteUrl!.AbsoluteUri == "https://itra.run/Races/Register/1");
+        Assert.Contains(enriched, j => j.WebsiteUrl!.AbsoluteUri == "https://itra.run/Races/Register/2");
+    }
+
+    [Fact]
     public void ParseDuvCalendarPage_ExtractsEventsFromHtml()
     {
         const string html = """

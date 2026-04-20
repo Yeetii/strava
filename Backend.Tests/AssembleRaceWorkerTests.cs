@@ -494,6 +494,98 @@ public class AssembleRaceWorkerTests
         Assert.All(races, r => Assert.Equal("2026-09-15", r.Properties["date"].ToString()));
     }
 
+    [Fact]
+    public void AssembleRaces_DuplicateGpxSameDistance_PrefersNewestRouteDateAndOnlyCreatesDiscoveryMatches()
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "duplicategpx.se",
+            Url = "https://duplicategpx.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-19T22:00:00Z",
+                        Name = "Long Race",
+                        Date = "2027-05-15",
+                        Latitude = 53.0,
+                        Longitude = 8.0,
+                        Distance = "160.9 km",
+                        Country = "DE",
+                    },
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-19T22:00:00Z",
+                        Name = "Medium Race",
+                        Date = "2027-05-15",
+                        Latitude = 53.1,
+                        Longitude = 9.0,
+                        Distance = "101.8 km",
+                        Country = "DE",
+                    },
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-19T22:00:00Z",
+                        Name = "Short Race",
+                        Date = "2027-05-15",
+                        Latitude = 53.2,
+                        Longitude = 9.5,
+                        Distance = "51.3 km",
+                        Country = "DE",
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-19T23:00:00Z",
+                    WebsiteUrl = "https://duplicategpx.se/",
+                    Routes =
+                    [
+                        new ScrapedRouteOutput
+                        {
+                            Name = "Medium Race GPX 1",
+                            Distance = "101.8 km",
+                            Date = "2027-05-20",
+                        },
+                        new ScrapedRouteOutput
+                        {
+                            Name = "Medium Race GPX 2",
+                            Distance = "101.8 km",
+                            Date = "2027-06-01",
+                        },
+                        new ScrapedRouteOutput
+                        {
+                            Name = "Short Race GPX",
+                            Distance = "51.3 km",
+                            Date = "2027-05-16",
+                        },
+                        new ScrapedRouteOutput
+                        {
+                            Name = "Long Race GPX",
+                            Distance = "160.9 km",
+                            Date = "2027-05-14",
+                        }
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Equal(3, races.Count);
+        Assert.Single(races.Where(r => r.Properties["distance"].ToString() == "101.8 km"));
+        Assert.Single(races.Where(r => r.Properties["distance"].ToString() == "51.3 km"));
+        Assert.Single(races.Where(r => r.Properties["distance"].ToString() == "160.9 km"));
+
+        var mediumRace = races.Single(r => r.Properties["distance"].ToString() == "101.8 km");
+        Assert.Equal("2027-06-01", mediumRace.Properties["date"].ToString());
+        Assert.Equal("Medium Race", mediumRace.Properties["name"].ToString());
+    }
+
     // ── FindBestDiscoveryForRoute — specificity matching ────────────────
 
     [Fact]
