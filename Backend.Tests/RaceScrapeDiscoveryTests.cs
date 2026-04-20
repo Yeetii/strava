@@ -898,8 +898,10 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal("https://tracedetrail.fr/events/race.jpg", ultra4m.ImageUrl);
 
         var another = Assert.Single(jobs, j => j.Name == "Another Race");
-        Assert.Single(another.TraceDeTrailItraUrls!);
-        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", another.TraceDeTrailItraUrls[0].AbsoluteUri);
+        var anotherUrls = another.TraceDeTrailItraUrls!;
+        Assert.NotNull(anotherUrls);
+        Assert.Single(anotherUrls);
+        Assert.Equal("https://tracedetrail.fr/trace/getTraceItra/11111", anotherUrls[0].AbsoluteUri);
         Assert.Equal("https://tracedetrail.fr/en/event/another-race", another.TraceDeTrailEventUrl!.AbsoluteUri);
         Assert.Equal("42 km", another.Distance);
         Assert.Equal("trail", another.RaceType);
@@ -977,6 +979,12 @@ public class RaceScrapeDiscoveryTests
 
         Assert.Equal("runsignup.com~Race~UT~ParkCity~TripleTrail",
             RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/Events/UT/ParkCity/TripleTrail")));
+
+        Assert.Equal("ultrasignup.com~register.aspx",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=104195")));
+
+        Assert.Equal("my.raceresult.com~376823",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://my.raceresult.com/376823/info")));
     }
     // ── BuildFeatureId (name+distance overload) ───────────────────────────────
 

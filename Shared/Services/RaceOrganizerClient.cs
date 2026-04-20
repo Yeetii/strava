@@ -19,6 +19,8 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         "tracedetrail.fr",
         "nestelop.no",
         "runsignup.com",
+        "ultrasignup.com",
+        "my.raceresult.com",
     };
 
     /// <summary>
@@ -39,6 +41,8 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
             {
                 if (host == "runsignup.com")
                     path = NormalizeRunSignupPath(path);
+                else if (host == "my.raceresult.com")
+                    path = NormalizeRaceResultPath(path);
                 return $"{host}~{path.Replace('/', '~')}";
             }
         }
@@ -63,6 +67,15 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
             remaining = remaining.Skip(remaining.Count - 3).ToList();
 
         return string.Join("/", new[] { "Race" }.Concat(remaining));
+    }
+
+    private static string NormalizeRaceResultPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+            return path;
+
+        return int.TryParse(segments[0], out _) ? segments[0] : path;
     }
 
     /// <summary>
