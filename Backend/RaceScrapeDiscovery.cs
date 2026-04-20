@@ -749,6 +749,12 @@ public static partial class RaceScrapeDiscovery
             var name = FindStringValue(evt, ["nom", "name"]);
             var country = FindStringValue(evt, ["country", "pays", "countryCode"]);
             var slug = FindStringValue(evt, ["label"]);
+            // If slug looks like a path (e.g. www.sormlands100.com or foo/bar), only use the last segment
+            if (!string.IsNullOrWhiteSpace(slug) && slug.Contains('/'))
+            {
+                var parts = slug.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                slug = parts.Length > 0 ? parts[^1] : slug;
+            }
             var sports = NormalizeRaceType(FindStringValue(evt, ["sports", "sport"]));
             var date = NormalizeDateToYyyyMmDd(FindStringValue(evt, ["dateDeb", "date", "startDate"]));
 
@@ -775,9 +781,36 @@ public static partial class RaceScrapeDiscovery
             if (TryGetPropertyIgnoreCase(evt, "distances", out var distancesEl) && distancesEl.ValueKind == JsonValueKind.String)
                 distances = distancesEl.GetString()?.Split('_', StringSplitOptions.RemoveEmptyEntries);
 
+
             Uri? eventUrl = null;
+            Uri? websiteUrl = null;
             if (!string.IsNullOrWhiteSpace(slug))
-                eventUrl = new Uri($"https://tracedetrail.fr/en/event/{slug}");
+            {
+                // If slug looks like a path (e.g. www.sormlands100.com or foo/bar), only use the last segment
+                if (slug.Contains('/'))
+                {
+                    var parts = slug.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    slug = parts.Length > 0 ? parts[^1] : slug;
+                }
+                // If slug looks like a domain or URL, treat as external event website
+                if (System.Text.RegularExpressions.Regex.IsMatch(slug, @"^[\w.-]+\.[a-z]{2,}(\/.*)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                {
+                    // Prepend https:// if missing
+                    if (!slug.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                        !slug.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        websiteUrl = new Uri($"https://{slug}");
+                    }
+                    else
+                    {
+                        websiteUrl = new Uri(slug);
+                    }
+                }
+                else
+                {
+                    eventUrl = new Uri($"https://tracedetrail.fr/en/event/{slug}");
+                }
+            }
 
             // Build all ITRA URLs and combine distances
             var itraUrls = new List<Uri>();
@@ -803,6 +836,7 @@ public static partial class RaceScrapeDiscovery
             jobs.Add(new ScrapeJob(
                 TraceDeTrailItraUrls: itraUrls,
                 TraceDeTrailEventUrl: eventUrl,
+                WebsiteUrl: websiteUrl,
                 Name: name,
                 ExternalIds: externalIds,
                 Distance: distance,

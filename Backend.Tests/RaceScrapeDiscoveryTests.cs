@@ -929,6 +929,30 @@ public class RaceScrapeDiscoveryTests
         Assert.Empty(RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents("{}"));
     }
 
+    [Fact]
+    public void ParseTraceDeTrailCalendarEvents_HandlesSlugWithSlashes()
+    {
+        var payload = @"{""success"":1,""data"": [{""label"": ""foo/bar/baz.com"", ""traceIDs"": ""123""}]}";
+        var jobs = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(payload);
+        var job = Assert.Single(jobs);
+        Assert.Null(job.TraceDeTrailEventUrl);
+        Assert.Equal("https://baz.com/", job.WebsiteUrl!.AbsoluteUri);
+
+        // Also test a plain domain
+        payload = @"{""success"":1,""data"": [{""label"": ""www.sormlands100.com"", ""traceIDs"": ""123""}]}";
+        jobs = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(payload);
+        job = Assert.Single(jobs);
+        Assert.Null(job.TraceDeTrailEventUrl);
+        Assert.Equal("https://www.sormlands100.com/", job.WebsiteUrl!.AbsoluteUri);
+
+        // And a normal tracedetrail slug
+        payload = @"{""success"":1,""data"": [{""label"": ""ultra-tour-4-massifs"", ""traceIDs"": ""123""}]}";
+        jobs = RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(payload);
+        job = Assert.Single(jobs);
+        Assert.Equal("https://tracedetrail.fr/en/event/ultra-tour-4-massifs", job.TraceDeTrailEventUrl!.AbsoluteUri);
+        Assert.Null(job.WebsiteUrl);
+    }
+
     // ── BuildFeatureId (URL overload) ─────────────────────────────────────────
 
     [Theory]

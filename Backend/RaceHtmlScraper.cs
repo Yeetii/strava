@@ -252,7 +252,15 @@ public static partial class RaceHtmlScraper
             if (!text.Contains("Site de la course", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri) && uri.Scheme is "http" or "https")
+            var unescapedHref = UnescapeJsonSlash(href);
+            // If href looks like a domain (e.g. www.example.com) but is missing scheme, treat as https://
+            if (!unescapedHref.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !unescapedHref.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
+                System.Text.RegularExpressions.Regex.IsMatch(unescapedHref, @"^[\w.-]+\.[a-z]{2,}(\/.*)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            {
+                unescapedHref = "https://" + unescapedHref;
+            }
+            if (Uri.TryCreate(pageUrl, unescapedHref, out var uri) && uri.Scheme is "http" or "https")
                 return uri;
         }
 
