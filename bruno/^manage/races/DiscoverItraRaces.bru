@@ -1,0 +1,21 @@
+meta {
+  name: DiscoverItraRaces
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/DiscoverItraRaces
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": ""
+  }
+}

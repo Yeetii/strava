@@ -1,0 +1,21 @@
+meta {
+  name: DiscoverUtmbRaces
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/DiscoverUtmbRaces
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": ""
+  }
+}

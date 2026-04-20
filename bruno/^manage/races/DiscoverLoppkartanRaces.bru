@@ -1,0 +1,21 @@
+meta {
+  name: DiscoverLoppkartanRaces
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/DiscoverLoppkartanRaces
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": ""
+  }
+}

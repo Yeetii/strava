@@ -12,6 +12,7 @@ using Shared.Services;
 using Shared.Services.StravaClient;
 using Shared.Constants;
 using Microsoft.Extensions.Logging;
+using Backend;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
@@ -120,6 +121,7 @@ var host = new HostBuilder()
         {
             return new SummitsCalculatorWithBoundingBoxFilter();
         });
+        services.AddSingleton<RaceDiscoveryService>();
     })
     .Build();
 

@@ -1,0 +1,21 @@
+meta {
+  name: DiscoverDuvRaces
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/DiscoverDuvRaces
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": ""
+  }
+}
