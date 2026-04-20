@@ -1,4 +1,5 @@
 using Backend;
+using Shared.Services;
 using System.Net;
 using System.Net.Http;
 
@@ -965,7 +966,18 @@ public class RaceScrapeDiscoveryTests
     {
         Assert.Equal(expected, RaceScrapeDiscovery.BuildFeatureId(new Uri(url), routeIndex));
     }
+    [Fact]
+    public void DeriveOrganizerKey_RunsignupSlugIdsAreNormalized()
+    {
+        Assert.Equal("runsignup.com~Race~TX~Longview~LongviewTrailRunsSpring",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/TX/Longview/LongviewTrailRunsSpring")));
 
+        Assert.Equal("runsignup.com~HABANERO",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://runsignup.com/HABANERO")));
+
+        Assert.Equal("runsignup.com~Race~UT~ParkCity~TripleTrail",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/Events/UT/ParkCity/TripleTrail")));
+    }
     // ── BuildFeatureId (name+distance overload) ───────────────────────────────
 
     [Theory]

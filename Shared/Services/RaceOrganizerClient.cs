@@ -14,10 +14,11 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
     // Hosts where the path is significant (the domain alone doesn't identify an organizer).
     private static readonly HashSet<string> PlatformHosts = new(StringComparer.OrdinalIgnoreCase)
     {
-        "facebook.com", "www.facebook.com",
-        "instagram.com", "www.instagram.com",
-        "tracedetrail.fr", "www.tracedetrail.fr",
-        "nestelop.no", "www.nestelop.no",
+        "facebook.com",
+        "instagram.com",
+        "tracedetrail.fr",
+        "nestelop.no",
+        "runsignup.com",
     };
 
     /// <summary>
@@ -31,14 +32,37 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         if (host.StartsWith("www.", StringComparison.Ordinal))
             host = host[4..];
 
-        if (PlatformHosts.Contains(url.Host))
+        if (PlatformHosts.Contains(host))
         {
             var path = url.AbsolutePath.Trim('/');
             if (!string.IsNullOrEmpty(path))
+            {
+                if (host == "runsignup.com")
+                    path = NormalizeRunSignupPath(path);
                 return $"{host}~{path.Replace('/', '~')}";
+            }
         }
 
         return host;
+    }
+
+    private static string NormalizeRunSignupPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+            return path;
+
+        if (!segments[0].Equals("Race", StringComparison.OrdinalIgnoreCase))
+            return path;
+
+        var remaining = segments.Skip(1).ToList();
+        while (remaining.Count > 0 && remaining[0].Equals("Events", StringComparison.OrdinalIgnoreCase))
+            remaining.RemoveAt(0);
+
+        if (remaining.Count > 3)
+            remaining = remaining.Skip(remaining.Count - 3).ToList();
+
+        return string.Join("/", new[] { "Race" }.Concat(remaining));
     }
 
     /// <summary>
