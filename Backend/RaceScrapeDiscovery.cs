@@ -786,14 +786,8 @@ public static partial class RaceScrapeDiscovery
             Uri? websiteUrl = null;
             if (!string.IsNullOrWhiteSpace(slug))
             {
-                // If slug looks like a path (e.g. www.sormlands100.com or foo/bar), only use the last segment
-                if (slug.Contains('/'))
-                {
-                    var parts = slug.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                    slug = parts.Length > 0 ? parts[^1] : slug;
-                }
                 // If slug looks like a domain or URL, treat as external event website
-                if (System.Text.RegularExpressions.Regex.IsMatch(slug, @"^[\w.-]+\.[a-z]{2,}(\/.*)?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                if (Regex.IsMatch(slug, @"^[\w.-]+\.[a-z]{2,}(\/.*)?$", RegexOptions.IgnoreCase))
                 {
                     // Prepend https:// if missing
                     if (!slug.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&

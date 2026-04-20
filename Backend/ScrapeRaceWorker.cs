@@ -199,7 +199,8 @@ public class ScrapeRaceWorker
                 {
                     if (IsTraceDeTrailItraUrl(url))
                         traceDeTrailItraUrls.Add(url);
-                    else if (url.AbsolutePath.Contains("/en/outdoor-trail-running/", StringComparison.OrdinalIgnoreCase))
+                    else if (url.AbsolutePath.Contains("/en/outdoor-trail-running/", StringComparison.OrdinalIgnoreCase)
+                          || url.AbsolutePath.Contains("/en/event/", StringComparison.OrdinalIgnoreCase))
                         traceDeTrailEventUrl ??= url;
                     else
                         websiteUrl ??= url;
