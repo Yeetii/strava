@@ -43,8 +43,8 @@ public class QueueScrapeRaceJobs(
         // Fetch each source and write discoveries to Cosmos under /discovery/{source}.
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("utmb",
         //     await FetchUtmbJobsAsync(httpClient, cancellationToken), cancellationToken));
-         allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("tracedetrail",
-             await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken), cancellationToken));
+        //  allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("tracedetrail",
+        //      await FetchTraceDeTrailJobsAsync(httpClient, cancellationToken), cancellationToken));
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("runagain",
         //     await FetchRunagainJobsAsync(httpClient, cancellationToken), cancellationToken));
         // allOrganizerKeys.UnionWith(await DiscoverAndWriteAsync("loppkartan",
@@ -154,7 +154,7 @@ public class QueueScrapeRaceJobs(
                 using var response = await httpClient.SendAsync(request, cancellationToken);
                 requestsRemaining--;
 
-                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
                 {
                     logger.LogWarning("TraceDeTrail: calendar returned 429 for {Month}/{Year}, stopping further TraceDeTrail discovery", date.Month, date.Year);
                     break;
@@ -207,26 +207,21 @@ public class QueueScrapeRaceJobs(
         foreach (var job in jobsByUrl.Values)
         {
             if (job.TraceDeTrailEventUrl is null || stoppedEventEnrichment || requestsRemaining <= 0)
-            {
-                enriched.Add(job);
                 continue;
-            }
 
             using var response = await httpClient.GetAsync(job.TraceDeTrailEventUrl, cancellationToken);
             requestsRemaining--;
 
-            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 stoppedEventEnrichment = true;
                 logger.LogWarning("TraceDeTrail: received 429 from {Url}, stopping further event page enrichment", job.TraceDeTrailEventUrl);
-                enriched.Add(job);
                 continue;
             }
 
             if (!response.IsSuccessStatusCode)
             {
                 logger.LogDebug("TraceDeTrail: {Status} fetching {Url}", response.StatusCode, job.TraceDeTrailEventUrl);
-                enriched.Add(job);
                 continue;
             }
 
@@ -307,7 +302,7 @@ public class QueueScrapeRaceJobs(
                 var request = new HttpRequestMessage(HttpMethod.Post, RunagainApiUrl)
                 {
                     Content = new StringContent(
-                        System.Text.Json.JsonSerializer.Serialize(new { search = "", filter, offset, sort = "date", limit = pageSize }),
+                        JsonSerializer.Serialize(new { search = "", filter, offset, sort = "date", limit = pageSize }),
                         System.Text.Encoding.UTF8,
                         "application/json")
                 };
@@ -458,6 +453,26 @@ public class QueueScrapeRaceJobs(
         logger.LogInformation("RunAgain: enriched {Count}/{Total} events with organizer website URLs", enriched, jobs.Count);
     }
 
+// ITRA's calendar ignores bbox params — country is the only filter that scopes results.
+    // We iterate over every country code so each request stays well under the global ~300 cap.
+    private static readonly string[] ItraCountryCodes =
+    [
+        "AF","AL","DZ","AD","AO","AG","AR","AM","AU","AT","AZ","BS","BH","BD","BB","BY","BE","BZ","BJ","BT",
+        "BO","BA","BW","BR","BN","BG","BF","BI","CV","KH","CM","CA","CF","TD","CL","CN","CO","KM","CG","CD",
+        "CR","HR","CU","CY","CZ","DK","DJ","DM","DO","EC","EG","SV","GQ","ER","EE","SZ","ET","FJ","FI","FR",
+        "GA","GM","GE","DE","GH","GR","GD","GT","GN","GW","GY","HT","HN","HU","IS","IN","ID","IR","IQ","IE",
+        "IL","IT","JM","JP","JO","KZ","KE","KI","KW","KG","LA","LV","LB","LS","LR","LY","LI","LT","LU","MG",
+        "MW","MY","MV","ML","MT","MH","MR","MU","MX","FM","MD","MC","MN","ME","MA","MZ","MM","NA","NR","NP",
+        "NL","NZ","NI","NE","NG","MK","NO","OM","PK","PW","PA","PG","PY","PE","PH","PL","PT","QA","RO","RU",
+        "RW","KN","LC","VC","WS","SM","ST","SA","SN","RS","SC","SL","SG","SK","SI","SB","SO","ZA","SS","ES",
+        "LK","SD","SR","SE","CH","SY","TW","TJ","TZ","TH","TL","TG","TO","TT","TN","TR","TM","TV","UG","UA",
+        "AE","GB","US","UY","UZ","VU","VE","VN","YE","ZM","ZW","RE","GP","MQ","GF","NC","PF","YT","PM","WF",
+        "TF","CK","NU","TK","HK","MO","PS","XK","GI","IM","JE","GG","AX","FO","GL","SJ","BM","KY","VG","VI",
+        "PR","GU","MP","AS","UM","MF","BL","CW","SX","BQ","AW","AC","TA","IO","SH","FK","GS"
+    ];
+
+    // ITRA's calendar is a list view; bounding-box params are ignored.
+    // Iterating by country is the only way to retrieve more than the global ~175-race cap.
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchItraJobsAsync(HttpClient ignoredHttpClient, CancellationToken cancellationToken)
     {
         try
@@ -469,66 +484,133 @@ public class QueueScrapeRaceJobs(
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
             };
 
-            using var client = new HttpClient(handler);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
-            client.DefaultRequestHeaders.Referrer = ItraDiscoveryAgent.CalendarUrl;
+            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(90) };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
+            client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
+            client.DefaultRequestHeaders.Add("sec-fetch-site", "none");
+            client.DefaultRequestHeaders.Add("sec-fetch-mode", "navigate");
+            client.DefaultRequestHeaders.Add("sec-fetch-dest", "document");
+            client.DefaultRequestHeaders.Add("upgrade-insecure-requests", "1");
 
-            var initialHtml = await client.GetStringAsync(ItraDiscoveryAgent.CalendarUrl, cancellationToken);
+            logger.LogInformation("ITRA: fetching calendar page for antiforgery token");
+            using var initRequest = new HttpRequestMessage(HttpMethod.Get, ItraDiscoveryAgent.CalendarUrl);
+            using var initResponse = await client.SendAsync(initRequest, cancellationToken);
+            if (!initResponse.IsSuccessStatusCode)
+            {
+                logger.LogWarning("ITRA: calendar page returned {Status}", initResponse.StatusCode);
+                return [];
+            }
+            var initialHtml = await initResponse.Content.ReadAsStringAsync(cancellationToken);
             var token = ItraDiscoveryAgent.ExtractRequestVerificationToken(initialHtml);
             if (string.IsNullOrWhiteSpace(token))
             {
-                logger.LogWarning("ITRA: failed to extract antiforgery token from calendar page");
+                logger.LogWarning("ITRA: failed to extract antiforgery token from calendar page (html length={Length})", initialHtml.Length);
                 return [];
             }
+            logger.LogInformation("ITRA: got antiforgery token, starting country-by-country discovery");
 
-            var content = new FormUrlEncodedContent(new[]
+            var allJobs = new List<ScrapeJob>();
+            var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var got429 = false;
+
+            // Run up to 5 country requests concurrently. Token is reused read-only across requests
+            // (antiforgery tokens are per-session, not per-request, so sharing is fine).
+            await Parallel.ForEachAsync(ItraCountryCodes,
+                new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = cancellationToken },
+                async (country, ct) =>
             {
-                new KeyValuePair<string, string>("__RequestVerificationToken", token),
-                new KeyValuePair<string, string>("Input.Longitude", "0"),
-                new KeyValuePair<string, string>("Input.Latitude", "0"),
-                new KeyValuePair<string, string>("Input.NorthEastLat", "90"),
-                new KeyValuePair<string, string>("Input.NorthEastLng", "180"),
-                new KeyValuePair<string, string>("Input.SouthWestLat", "-90"),
-                new KeyValuePair<string, string>("Input.SouthWestLng", "-180"),
-                new KeyValuePair<string, string>("Input.MinDistance", ""),
-                new KeyValuePair<string, string>("Input.MaxDistance", ""),
-                new KeyValuePair<string, string>("Input.MinElevationGain", ""),
-                new KeyValuePair<string, string>("Input.MaxElevationGain", ""),
-                new KeyValuePair<string, string>("Input.MinElevationLoss", ""),
-                new KeyValuePair<string, string>("Input.MaxElevationLoss", ""),
-                new KeyValuePair<string, string>("Input.MinItraPts", "0"),
-                new KeyValuePair<string, string>("Input.MaxItraPts", "7"),
-                new KeyValuePair<string, string>("Input.ItraPtsValue", "0"),
-                new KeyValuePair<string, string>("Input.NationalLeagues", "false"),
-                new KeyValuePair<string, string>("Input.NationalLeague", "false"),
-                new KeyValuePair<string, string>("Input.DateValue", ""),
-                new KeyValuePair<string, string>("Input.DateStart", ""),
-                new KeyValuePair<string, string>("Input.DateEnd", ""),
-                new KeyValuePair<string, string>("Input.resultcount", "0"),
-                new KeyValuePair<string, string>("Input.RaceValue", ""),
-                new KeyValuePair<string, string>("ZoomLevel", "2"),
-                new KeyValuePair<string, string>("type", ""),
-                new KeyValuePair<string, string>("countMap", "1")
+                if (got429) return;
+
+                List<KeyValuePair<string, string>> fields =
+                [
+                    new("__RequestVerificationToken", token),
+                    new("Input.Longitude", "0"),
+                    new("Input.Latitude", "0"),
+                    new("Input.NorthEastLat", "90"),
+                    new("Input.NorthEastLng", "180"),
+                    new("Input.SouthWestLat", "-90"),
+                    new("Input.SouthWestLng", "-180"),
+                    new("Input.MinDistance", ""),
+                    new("Input.MaxDistance", ""),
+                    new("Input.MinElevationGain", ""),
+                    new("Input.MaxElevationGain", ""),
+                    new("Input.MinElevationLoss", ""),
+                    new("Input.MaxElevationLoss", ""),
+                    new("Input.MinItraPts", "0"),
+                    new("Input.MaxItraPts", "7"),
+                    new("Input.ItraPtsValue", "0"),
+                    new("Input.NationalLeagues", "false"),
+                    new("Input.NationalLeague", "false"),
+                    new("Input.DateValue", ""),
+                    new("Input.DateStart", ""),
+                    new("Input.DateEnd", ""),
+                    new("Input.resultcount", "0"),
+                    new("Input.RaceValue", ""),
+                    new("Input.Country", country),
+                    new("ZoomLevel", "2"),
+                    new("type", ""),
+                    new("countMap", "1"),
+                ];
+
+                try
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Post, ItraDiscoveryAgent.CalendarUrl)
+                    {
+                        Content = new FormUrlEncodedContent(fields)
+                    };
+                    request.Headers.Referrer = ItraDiscoveryAgent.CalendarUrl;
+
+                    using var response = await client.SendAsync(request, ct);
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                    {
+                        logger.LogWarning("ITRA: received 429 for country {Country}, stopping discovery", country);
+                        got429 = true;
+                        return;
+                    }
+                    response.EnsureSuccessStatusCode();
+
+                    var html = await response.Content.ReadAsStringAsync(ct);
+                    var page = ItraDiscoveryAgent.ParseCalendarPage(html, ItraDiscoveryAgent.CalendarUrl);
+
+                    int newCount = 0;
+                    lock (seenUrls)
+                    {
+                        foreach (var job in page)
+                        {
+                            var key = job.WebsiteUrl?.AbsoluteUri ?? job.ItraEventPageUrl?.AbsoluteUri;
+                            if (key is null || seenUrls.Add(key))
+                            {
+                                allJobs.Add(job);
+                                newCount++;
+                            }
+                        }
+                    }
+
+                    if (page.Count > 0)
+                        logger.LogInformation("ITRA: {Country} → {Count} races ({New} new){Cap}", country, page.Count, newCount,
+                            page.Count >= 300 ? " *** MAY BE CAPPED ***" : "");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || ex is TaskCanceledException { CancellationToken.IsCancellationRequested: false })
+                {
+                    logger.LogWarning(ex, "ITRA: failed to fetch country {Country}", country);
+                }
             });
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, ItraDiscoveryAgent.CalendarUrl)
-            {
-                Content = content
-            };
-
-            using var response = await client.SendAsync(request, cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            var html = await response.Content.ReadAsStringAsync(cancellationToken);
-            var jobs = ItraDiscoveryAgent.ParseCalendarPage(html, ItraDiscoveryAgent.CalendarUrl)
-                .ToArray();
-            logger.LogInformation("ITRA: discovered {Count} races before enrichment", jobs.Length);
-            var enrichedJobs = await ItraDiscoveryAgent.EnrichEventPageDetailsAsync(jobs, client, cancellationToken);
+            logger.LogInformation("ITRA: discovered {Count} races before enrichment", allJobs.Count);
+            var enrichedJobs = await ItraDiscoveryAgent.EnrichEventPageDetailsAsync(allJobs, client, cancellationToken,
+                onProgress: (done, total) =>
+                {
+                    if (done == -1)
+                        logger.LogWarning("ITRA enrichment: bot-blocked (captcha), stopping enrichment");
+                    else if (done % 100 == 0)
+                        logger.LogInformation("ITRA enrichment: {Done}/{Total}", done, total);
+                });
             return enrichedJobs;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "ITRA: failed to fetch calendar page");
+            logger.LogWarning(ex, "ITRA: failed to initialise calendar session");
             return [];
         }
     }

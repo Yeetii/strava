@@ -8,6 +8,7 @@ namespace Backend;
 public static partial class ItraDiscoveryAgent
 {
     public static readonly Uri CalendarUrl = new("https://itra.run/Races/RaceCalendar");
+    public static readonly Uri MapUrl = new("https://itra.run/Races/RaceMap");
 
     private static readonly Regex RequestVerificationTokenRegex = new(
         "name=\"__RequestVerificationToken\"[^>]*value=\"(?<token>[^\"]+)\"",
@@ -89,45 +90,67 @@ public static partial class ItraDiscoveryAgent
     public static async Task<IReadOnlyCollection<ScrapeJob>> EnrichEventPageDetailsAsync(
         IReadOnlyCollection<ScrapeJob> jobs,
         HttpClient httpClient,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int, int>? onProgress = null)
     {
         if (jobs.Count == 0)
             return jobs;
 
-        var enriched = new List<ScrapeJob>();
-        var processedPageUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var queue = new Queue<ScrapeJob>(jobs);
+        var enriched = new System.Collections.Concurrent.ConcurrentBag<ScrapeJob>();
+        var processedPageUrls = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        int processed = 0;
+        int botBlocked = 0;
 
-        while (queue.Count > 0)
+        // First pass: enrich all initial jobs in parallel.
+        var extraJobs = new System.Collections.Concurrent.ConcurrentBag<ScrapeJob>();
+
+        await Parallel.ForEachAsync(jobs,
+            new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = cancellationToken },
+            async (job, ct) =>
         {
-            var job = queue.Dequeue();
             var pageUrl = job.ItraEventPageUrl ?? job.WebsiteUrl;
-            if (pageUrl is null)
+            if (pageUrl is null || !processedPageUrls.TryAdd(pageUrl.AbsoluteUri, true))
             {
-                enriched.Add(job);
-                continue;
+                onProgress?.Invoke(Interlocked.Increment(ref processed), jobs.Count);
+                return;
             }
 
-            if (!processedPageUrls.Add(pageUrl.AbsoluteUri))
-                continue;
+            if (Interlocked.CompareExchange(ref botBlocked, 0, 0) != 0)
+            {
+                onProgress?.Invoke(Interlocked.Increment(ref processed), jobs.Count);
+                return;
+            }
 
             try
             {
-                using var response = await httpClient.GetAsync(pageUrl, cancellationToken);
+                using var response = await httpClient.GetAsync(pageUrl, ct);
+                if (response.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    Interlocked.Exchange(ref botBlocked, 1);
+                    onProgress?.Invoke(Interlocked.Increment(ref processed), jobs.Count);
+                    return;
+                }
                 if (!response.IsSuccessStatusCode)
                 {
-                    enriched.Add(job);
-                    continue;
+                    onProgress?.Invoke(Interlocked.Increment(ref processed), jobs.Count);
+                    return;
                 }
 
-                var html = await response.Content.ReadAsStringAsync(cancellationToken);
-                var enrichedJob = EnrichJobFromEventPageHtml(job, html, pageUrl);
-                enriched.Add(enrichedJob);
+                var html = await response.Content.ReadAsStringAsync(ct);
+                if (html.Contains("id=\"captcha-container\"", StringComparison.Ordinal))
+                {
+                    Interlocked.Exchange(ref botBlocked, 1);
+                    onProgress?.Invoke(Interlocked.Increment(ref processed), jobs.Count);
+                    return;
+                }
+
+                enriched.Add(EnrichJobFromEventPageHtml(job, html, pageUrl));
+                onProgress?.Invoke(Interlocked.Increment(ref processed), jobs.Count);
 
                 foreach (var buttonUrl in ExtractItraRaceButtonLinks(html, pageUrl))
                 {
-                    if (!processedPageUrls.Contains(buttonUrl.AbsoluteUri))
-                        queue.Enqueue(new ScrapeJob(
+                    if (processedPageUrls.TryAdd(buttonUrl.AbsoluteUri, true))
+                        extraJobs.Add(new ScrapeJob(
                             WebsiteUrl: buttonUrl,
                             RaceType: "trail",
                             Date: job.Date,
@@ -138,11 +161,36 @@ public static partial class ItraDiscoveryAgent
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                enriched.Add(job);
+                onProgress?.Invoke(Interlocked.Increment(ref processed), jobs.Count);
             }
+        });
+
+        if (botBlocked != 0)
+            onProgress?.Invoke(-1, jobs.Count); // signal bot block to caller
+
+        // Second pass: follow any button links discovered during the first pass.
+        if (!extraJobs.IsEmpty && botBlocked == 0)
+        {
+            await Parallel.ForEachAsync(extraJobs,
+                new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = cancellationToken },
+                async (job, ct) =>
+            {
+                var pageUrl = job.WebsiteUrl!;
+                try
+                {
+                    using var response = await httpClient.GetAsync(pageUrl, ct);
+                    if (response.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.TooManyRequests)
+                        return;
+                    if (!response.IsSuccessStatusCode) return;
+                    var html = await response.Content.ReadAsStringAsync(ct);
+                    if (html.Contains("captcha-container", StringComparison.OrdinalIgnoreCase)) return;
+                    enriched.Add(EnrichJobFromEventPageHtml(job, html, pageUrl));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException) { }
+            });
         }
 
-        return enriched;
+        return enriched.ToList();
     }
 
     private static Uri? ExtractRegisterLink(string html, Uri baseUrl)
@@ -349,7 +397,7 @@ public static partial class ItraDiscoveryAgent
             var externalIds = ExtractExternalIds(eventUrl);
 
             jobs.Add(new ScrapeJob(
-                WebsiteUrl: eventUrl,
+                ItraEventPageUrl: eventUrl,
                 Name: string.IsNullOrWhiteSpace(name) ? null : name.Trim(),
                 ExternalIds: externalIds,
                 RaceType: "trail",
