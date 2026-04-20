@@ -1093,7 +1093,7 @@ public static partial class RaceHtmlScraper
         ["elevation gain", "ascent", "dénivelé positif", "dénivelé", "denivelé", "denivele",
          "aufstieg", "höjdmeter", "höhenmeter", "hohenmeter", "stigning", "totalstigning", "d+"];
 
-    [GeneratedRegex(@"\b(\d[\d\s]{0,6}\d|\d{1,5})\s*(?:m\b|meter\b|hm\b)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b([+-]?(?:\d[\d\s]{0,6}\d|\d{1,5}))(?:\s*(?:m\b|meter\b|hm\b))?", RegexOptions.IgnoreCase)]
     private static partial Regex ElevationNumberRegex();
 
     /// <summary>

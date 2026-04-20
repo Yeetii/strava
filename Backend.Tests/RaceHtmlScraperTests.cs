@@ -244,6 +244,18 @@ public class RaceHtmlScraperTests
     }
 
     [Fact]
+    public void ExtractElevationGain_ParsesSignedValueWithoutUnit()
+    {
+        const string html = """
+            <div>Elevation Gain: <span style="font-weight:bold">+607</span></div>
+            """;
+
+        var gain = RaceHtmlScraper.ExtractElevationGain(html);
+
+        Assert.Equal(607, gain);
+    }
+
+    [Fact]
     public void ExtractDate_ParsesSwedishDateWithTimeSuffix()
     {
         const string html = """

@@ -23,6 +23,8 @@ public static partial class RaceScrapeDiscovery
     public const string PropImage = "image";
     public const string PropPlaygrounds = "playgrounds";
     public const string PropRunningStones = "runningStones";
+    public const string PropItraPoints = "itraPoints";
+    public const string PropItraNationalLeague = "itraNationalLeague";
     public const string PropSources = "sources";
     public const string PropLogo = "logo";
     public const string PropOrganizer = "organizer";

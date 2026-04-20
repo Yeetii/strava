@@ -22,7 +22,7 @@ public class AssembleRaceWorker(
     ILogger<AssembleRaceWorker> logger)
 {
     // Discovery source priority (highest → lowest).
-    internal static readonly string[] DiscoveryPriority = ["utmb", "duv", "tracedetrail", "runagain", "loppkartan"];
+    internal static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan"];
 
     // Scraper key priority (highest → lowest).
     internal static readonly string[] ScraperPriority = ["utmb", "itra", "mistral", "bfs"];
@@ -137,7 +137,7 @@ public class AssembleRaceWorker(
         }
 
         // 3. Sort routes by parsed distance km (ascending) then by name for stable IDs across re-runs.
-        var sorted = allRoutes
+        var sorted = dedupedRoutes
             .OrderBy(r => ParseDistanceKm(r.Route.Distance) ?? double.MaxValue)
             .ThenBy(r => r.Route.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -641,6 +641,12 @@ public class AssembleRaceWorker(
 
         if (discovery.RunningStones.HasValue)
             props[RaceScrapeDiscovery.PropRunningStones] = discovery.RunningStones.Value;
+
+        if (discovery.ItraPoints.HasValue)
+            props[RaceScrapeDiscovery.PropItraPoints] = discovery.ItraPoints.Value;
+
+        if (discovery.ItraNationalLeague.HasValue)
+            props[RaceScrapeDiscovery.PropItraNationalLeague] = discovery.ItraNationalLeague.Value;
 
         // Source URLs.
         var sources = BuildSourceUrls(discovery.SourceUrls, route?.SourceUrl, websiteUrl);

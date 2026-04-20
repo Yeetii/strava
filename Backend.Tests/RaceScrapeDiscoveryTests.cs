@@ -248,6 +248,29 @@ public class RaceScrapeDiscoveryTests
     }
 
     [Fact]
+    public void EnrichItraJobFromEventPageHtml_UsesRaceDateFromRaceDateSection()
+    {
+        const string html = """
+            <html>
+              <body>
+                <h1>Sample ITRA Race</h1>
+                <div class="row">
+                  <div class="col-6 col-sm-3 p-2">
+                    <i class="fas fa-calendar"></i>&nbsp;Race Date: <span style="font-weight:bold">2026/04/25</span>
+                  </div>
+                </div>
+                <a href="/Races/Register/9876">Register to this race</a>
+              </body>
+            </html>
+            """;
+
+        var job = new ScrapeJob(WebsiteUrl: new Uri("https://itra.run/Races/RaceDetails/1234"), Date: "2026-04-10");
+        var enriched = ItraDiscoveryAgent.EnrichJobFromEventPageHtml(job, html, job.WebsiteUrl!);
+
+        Assert.Equal("2026-04-25", enriched.Date);
+    }
+
+    [Fact]
     public void EnrichItraJobFromEventPageHtml_UsesH3AndAboutDescriptionAndPageDistance()
     {
         const string html = """
@@ -360,7 +383,12 @@ public class RaceScrapeDiscoveryTests
             </html>
             """;
 
-        var initialJob = new ScrapeJob(WebsiteUrl: new Uri("https://itra.run/Races/RaceDetails/group"));
+        var initialJob = new ScrapeJob(
+            WebsiteUrl: new Uri("https://itra.run/Races/RaceDetails/group"),
+            Date: "2026-04-25",
+            Country: "PL",
+            Location: "Foo Town",
+            Distance: "14 km");
         using var client = new HttpClient(new MultiResponseHttpMessageHandler(
             new Dictionary<Uri, string>
             {
@@ -377,6 +405,11 @@ public class RaceScrapeDiscoveryTests
         Assert.Contains(enriched, j => j.Name == "Second Race");
         Assert.Contains(enriched, j => j.WebsiteUrl!.AbsoluteUri == "https://itra.run/Races/Register/1");
         Assert.Contains(enriched, j => j.WebsiteUrl!.AbsoluteUri == "https://itra.run/Races/Register/2");
+
+        var firstRace = Assert.Single(enriched, j => j.Name == "First Race");
+        Assert.Equal("2026-04-25", firstRace.Date);
+        Assert.Equal("PL", firstRace.Country);
+        Assert.Equal("Foo Town", firstRace.Location);
     }
 
     [Fact]

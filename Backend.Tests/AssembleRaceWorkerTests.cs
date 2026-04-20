@@ -495,6 +495,69 @@ public class AssembleRaceWorkerTests
     }
 
     [Fact]
+    public void AssembleRaces_DiscoveryMultiDistance_IncludesItraMetadata()
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "multirace.se",
+            Url = "https://multirace.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:00:00Z",
+                        Name = "Grand Trail Event",
+                        Date = "2025-09-15",
+                        Latitude = 59.0,
+                        Longitude = 18.0,
+                        Distance = "50 km, 21 km",
+                        Country = "SE",
+                        Location = "Gothenburg",
+                        ElevationGain = 2000,
+                        ItraPoints = 5,
+                        ItraNationalLeague = true,
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-18T22:00:00Z",
+                    Routes =
+                    [
+                        new ScrapedRouteOutput
+                        {
+                            Name = "BFS 21k",
+                            Distance = "21 km",
+                            ElevationGain = 500,
+                            Date = "2026-09-15",
+                        },
+                        new ScrapedRouteOutput
+                        {
+                            Name = "BFS 50k",
+                            Distance = "50 km",
+                            ElevationGain = 1500,
+                            Date = "2026-09-15",
+                        }
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Equal(2, races.Count);
+        Assert.All(races, r =>
+        {
+            Assert.Equal(5.0, (double)r.Properties[RaceScrapeDiscovery.PropItraPoints]);
+            Assert.True((bool)r.Properties[RaceScrapeDiscovery.PropItraNationalLeague]);
+        });
+    }
+
+    [Fact]
     public void AssembleRaces_DuplicateGpxSameDistance_PrefersNewestRouteDateAndOnlyCreatesDiscoveryMatches()
     {
         var doc = new RaceOrganizerDocument

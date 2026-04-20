@@ -521,9 +521,8 @@ public class QueueScrapeRaceJobs(
 
             var html = await response.Content.ReadAsStringAsync(cancellationToken);
             var jobs = ItraDiscoveryAgent.ParseCalendarPage(html, ItraDiscoveryAgent.CalendarUrl)
-                .Take(2)
                 .ToArray();
-            logger.LogInformation("ITRA: discovered {Count} races, limiting to {Limit} before enrichment", jobs.Length, 2);
+            logger.LogInformation("ITRA: discovered {Count} races before enrichment", jobs.Length);
             var enrichedJobs = await ItraDiscoveryAgent.EnrichEventPageDetailsAsync(jobs, client, cancellationToken);
             return enrichedJobs;
         }

@@ -57,6 +57,10 @@ public static partial class ItraDiscoveryAgent
         @"Distance:\s*<span\b[^>]*>(?<distance>[^<]+)</span>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
+    private static readonly Regex ItraRaceDateRegex = new(
+        @"Race Date:\s*(?:<span\b[^>]*>)?(?<date>[^<\r\n]+)(?:</span>)?",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
     private static readonly Regex RegisterLinkRegex = new(
         @"<a\b[^>]*href=[""'](?<href>[^""']+)[""'][^>]*>\s*Register to this race\s*</a>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -123,7 +127,13 @@ public static partial class ItraDiscoveryAgent
                 foreach (var buttonUrl in ExtractItraRaceButtonLinks(html, pageUrl))
                 {
                     if (!processedPageUrls.Contains(buttonUrl.AbsoluteUri))
-                        queue.Enqueue(new ScrapeJob(WebsiteUrl: buttonUrl, RaceType: "trail"));
+                        queue.Enqueue(new ScrapeJob(
+                            WebsiteUrl: buttonUrl,
+                            RaceType: "trail",
+                            Date: job.Date,
+                            Country: job.Country,
+                            Location: job.Location,
+                            Distance: job.Distance));
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -156,10 +166,12 @@ public static partial class ItraDiscoveryAgent
         var itraPoints = RaceHtmlScraper.ExtractItraPoints(html) ?? RaceHtmlScraper.ExtractTraceDeTrailItraPoints(html);
         var nationalLeague = ExtractItraNationalLeague(html);
         var pageDistance = ExtractItraEventDistance(html);
+        var pageDate = ExtractItraEventDate(html);
         var raceType = string.IsNullOrWhiteSpace(job.RaceType) ? "trail" : job.RaceType;
 
         return job with
         {
+            Date = pageDate ?? job.Date,
             WebsiteUrl = registerUrl ?? job.WebsiteUrl,
             ItraEventPageUrl = pageUrl,
             ItraNationalLeague = nationalLeague ?? job.ItraNationalLeague,
@@ -235,6 +247,16 @@ public static partial class ItraDiscoveryAgent
             return null;
 
         return ParseDistanceVerbose(HtmlDecodeAndStripTags(raw));
+    }
+
+    private static string? ExtractItraEventDate(string html)
+    {
+        var raw = ExtractText(ItraRaceDateRegex, html);
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var parsed = NormalizeDateToYyyyMmDd(HtmlDecodeAndStripTags(raw).Trim());
+        return string.IsNullOrWhiteSpace(parsed) ? raw.Trim() : parsed;
     }
 
     private static bool? ExtractItraNationalLeague(string html)

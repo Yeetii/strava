@@ -25,7 +25,7 @@ public class ScrapeRaceWorker
     private readonly BfsScraper _bfsScraper;
 
     // Domains handled by specialized scrapers or discovery — BFS skips these.
-    private static readonly string[] SpecialDomains = ["utmb.world", "itra.run", "tracedetrail.fr", "runagain.com"];
+    private static readonly string[] SpecialDomains = ["utmb.world", "itra.run", "tracedetrail.fr", "runagain.com", "statistik.d-u-v.org"];
 
     public ScrapeRaceWorker(
         IHttpClientFactory httpClientFactory,
@@ -178,9 +178,10 @@ public class ScrapeRaceWorker
     {
         var allDiscoveries = doc.Discovery?.Values.SelectMany(list => list).ToList() ?? [];
 
-        // Source URLs may contain UTMB, ITRA, TraceDeTrail, RunAgain, or generic website URLs.
+        // Source URLs may contain UTMB, TraceDeTrail ITRA endpoints, TraceDeTrail event pages,
+        // RunAgain URLs, generic website URLs, or ITRA source pages.
         Uri? utmbUrl = null;
-        var itraUrls = new List<Uri>();
+        var traceDeTrailItraUrls = new List<Uri>();
         Uri? traceDeTrailEventUrl = null;
         Uri? runagainUrl = null;
         Uri? websiteUrl = null;
@@ -194,9 +195,15 @@ public class ScrapeRaceWorker
                 var host = url.Host.ToLowerInvariant();
 
                 if (host.Contains("utmb.world")) utmbUrl ??= url;
-                else if (host.Contains("itra.run")) itraUrls.Add(url);
-                else if (host.Contains("tracedetrail.fr") && url.AbsolutePath.Contains("/en/outdoor-trail-running/"))
-                    traceDeTrailEventUrl ??= url;
+                else if (host.Contains("tracedetrail.fr"))
+                {
+                    if (IsTraceDeTrailItraUrl(url))
+                        traceDeTrailItraUrls.Add(url);
+                    else if (url.AbsolutePath.Contains("/en/outdoor-trail-running/", StringComparison.OrdinalIgnoreCase))
+                        traceDeTrailEventUrl ??= url;
+                    else
+                        websiteUrl ??= url;
+                }
                 else if (host.Contains("runagain.com")) runagainUrl ??= url;
                 else websiteUrl ??= url;
             }
@@ -273,7 +280,7 @@ public class ScrapeRaceWorker
             StartFee: startFee,
             Currency: currency,
             UtmbUrl: utmbUrl,
-            TraceDeTrailItraUrls: itraUrls.Count > 0 ? itraUrls : null,
+            TraceDeTrailItraUrls: traceDeTrailItraUrls.Count > 0 ? traceDeTrailItraUrls : null,
             TraceDeTrailEventUrl: traceDeTrailEventUrl,
             RunagainUrl: runagainUrl,
             WebsiteUrl: websiteUrl);
@@ -326,6 +333,18 @@ public class ScrapeRaceWorker
         }
 
         return urls;
+    }
+
+    private static bool IsTraceDeTrailItraUrl(Uri url)
+    {
+        if (url is null || !url.Host.Contains("tracedetrail.fr", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var segments = url.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 3
+            && string.Equals(segments[0], "trace", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[1], "getTraceItra", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(segments[2], out _);
     }
 
     /// <summary>
