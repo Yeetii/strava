@@ -112,6 +112,7 @@ public class AssembleRaceWorker(
 
         // 1b. Flatten individual discovery entries in priority order for per-route matching.
         var flatDiscoveries = FlattenDiscoveries(doc.Discovery);
+        flatDiscoveries = DeduplicateDiscoveriesByDistance(flatDiscoveries);
 
         // 2. Collect all scraped routes in priority order (routes with coordinates come first).
         var allRoutes = CollectRoutes(doc.Scrapers);
@@ -302,6 +303,97 @@ public class AssembleRaceWorker(
                     result.Add((key, e));
         }
         return result;
+    }
+
+    internal static List<(string Source, SourceDiscovery Entry)> DeduplicateDiscoveriesByDistance(
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> discoveries)
+    {
+        if (discoveries.Count == 0) return [];
+
+        var grouped = discoveries
+            .GroupBy(d => (
+                NameKey: NormalizeNameKey(d.Entry.Name),
+                DistanceKey: NormalizeDistanceKey(d.Entry.Distance)))
+            .ToList();
+
+        var result = new List<(string Source, SourceDiscovery Entry)>();
+        foreach (var group in grouped)
+        {
+            if (group.Key.DistanceKey is null)
+            {
+                result.AddRange(group);
+                continue;
+            }
+
+            var best = group
+                .OrderByDescending(d => ParseDate(d.Entry.Date))
+                .ThenByDescending(d => ParseDate(d.Entry.DiscoveredAtUtc))
+                .First();
+            result.Add(best);
+        }
+
+        return result;
+    }
+
+    private static string? NormalizeNameKey(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        return name.Trim().ToLowerInvariant();
+    }
+
+    private static string? NormalizeDistanceKey(string? distance)
+    {
+        if (string.IsNullOrWhiteSpace(distance)) return null;
+
+        var tokens = distance.Split(',')
+            .Select(t => t.Trim())
+            .Where(t => !string.IsNullOrEmpty(t))
+            .ToList();
+
+        if (tokens.Count == 0) return null;
+
+        var numericValues = new List<double>();
+        var otherTokens = new List<string>();
+
+        foreach (var token in tokens)
+        {
+            var stripped = System.Text.RegularExpressions.Regex.Replace(
+                token, @"(?i)\s*(km|k|mi|m)\s*$", "").Trim();
+            if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
+            {
+                numericValues.Add(value);
+            }
+            else
+            {
+                otherTokens.Add(token.ToLowerInvariant());
+            }
+        }
+
+        if (otherTokens.Count == 0)
+            return string.Join(",", numericValues.OrderBy(v => v)
+                .Select(v => v.ToString("G", System.Globalization.CultureInfo.InvariantCulture)));
+
+        return string.Join(",", tokens.Select(t => t.ToLowerInvariant()));
+    }
+
+    private static DateTime ParseDate(string? date)
+    {
+        if (string.IsNullOrWhiteSpace(date))
+            return DateTime.MinValue;
+
+        if (DateTime.TryParseExact(date, "yyyy-MM-dd",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var exact))
+        {
+            return exact;
+        }
+
+        return DateTime.TryParse(date, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed
+            : DateTime.MinValue;
     }
 
     /// <summary>

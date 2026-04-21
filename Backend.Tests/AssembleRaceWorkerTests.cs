@@ -44,6 +44,103 @@ public class AssembleRaceWorkerTests
     }
 
     [Fact]
+    public void AssembleRaces_NoScrapers_DeduplicatesSameDistanceDiscoveryByLaterDate()
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "ludvikaffi.se",
+            Url = "https://ludvikaffi.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-20T16:44:05.4039290Z",
+                        Name = "Ludvika stadslopp",
+                        Date = "2026-04-23",
+                        Latitude = 60.1506247,
+                        Longitude = 15.1812487,
+                        Distance = "10 km, 5 km",
+                        Country = "SE",
+                        Location = "Charlie Normans torg, Ludvika, Sweden",
+                        SourceUrls = ["http://ludvikaffi.se/"]
+                    },
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-20T16:44:05.4039290Z",
+                        Name = "Ludvika stadslopp",
+                        Date = "2025-05-17",
+                        Latitude = 60.1506247,
+                        Longitude = 15.1812487,
+                        Distance = "10 km, 5 km",
+                        Country = "SE",
+                        Location = "Charlie Normans torg, Ludvika, Sweden",
+                        SourceUrls = ["http://ludvikaffi.se/"]
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-20T16:48:50.5634799Z",
+                    ImageUrl = "https://klubbenonline.objects.dc-sto1.glesys.net/q2jYvI69EltmQVRV/YXgAUQEW2tZIo1l07VFTSwh2mh4cSs9OryNq2UZy.jpg",
+                    LogoUrl = "https://ludvikaffi.klubbenonline.se/build/assets/favicon-6b968d32.ico",
+                    ExtractedName = "Ludvika FFI",
+                    ExtractedDate = "2026-05-23",
+                    StartFee = "3000",
+                    Currency = "SEK"
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Single(races);
+        Assert.Equal("2026-04-23", races[0].Properties["date"].ToString());
+        Assert.Equal("Ludvika stadslopp", races[0].Properties["name"].ToString());
+    }
+
+    [Fact]
+    public void AssembleRaces_NoScrapers_DoesNotDeduplicateSameDistanceDifferentName()
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "example.se",
+            Url = "https://example.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-20T16:44:05.4039290Z",
+                        Name = "Race One",
+                        Date = "2026-04-23",
+                        Latitude = 60.1506247,
+                        Longitude = 15.1812487,
+                        Distance = "10 km",
+                    },
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-20T16:44:05.4039290Z",
+                        Name = "Race Two",
+                        Date = "2026-04-23",
+                        Latitude = 60.1506247,
+                        Longitude = 15.1812487,
+                        Distance = "10 km",
+                    }
+                ]
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Equal(2, races.Count);
+    }
+
+    [Fact]
     public void AssembleRaces_NoScrapersNoCoords_ReturnsEmpty()
     {
         var doc = new RaceOrganizerDocument
