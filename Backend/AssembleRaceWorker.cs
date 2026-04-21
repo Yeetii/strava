@@ -19,8 +19,10 @@ namespace Backend;
 public class AssembleRaceWorker(
     RaceOrganizerClient organizerClient,
     RaceCollectionClient raceCollectionClient,
+    ServiceBusClient serviceBusClient,
     ILogger<AssembleRaceWorker> logger)
 {
+    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     // Discovery source priority (highest → lowest).
     internal static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan"];
 
@@ -37,7 +39,7 @@ public class AssembleRaceWorker(
         if (string.IsNullOrWhiteSpace(organizerKey))
         {
             logger.LogWarning("Empty organizer key (MessageId={MessageId})", message.MessageId);
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "EmptyOrganizerKey");
+            await actions.DeadLetterMessageAsync(message, deadLetterReason: "EmptyOrganizerKey", cancellationToken: cancellationToken);
             return;
         }
 
@@ -47,8 +49,7 @@ public class AssembleRaceWorker(
         if (doc is null)
         {
             logger.LogWarning("Organizer document not found: {Key}", organizerKey);
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "DocumentNotFound",
-                deadLetterErrorDescription: $"No document for key '{organizerKey}'");
+            await actions.DeadLetterMessageAsync(message, deadLetterReason: "DocumentNotFound", deadLetterErrorDescription: $"No document for key '{organizerKey}'", cancellationToken: cancellationToken);
             return;
         }
 
@@ -70,9 +71,8 @@ public class AssembleRaceWorker(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "AssembleRaceWorker failed for {Key} (MessageId={MessageId})",
-                organizerKey, message.MessageId);
-            await TryDeadLetterAsync(actions, message, organizerKey, ex);
+            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                ex, actions, message, _serviceBusClient, ServiceBusConfig.AssembleRace, logger, cancellationToken);
         }
     }
 

@@ -57,18 +57,18 @@ public class GetRaceStats(
         var organizersTotalQuery = new QueryDefinition(
             "SELECT VALUE COUNT(1) FROM c");
 
-        var discoverySources = ["utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan", "manual", "manual-mistral"];
-        var scraperSources = ["utmb", "itra", "bfs", "tracedetrail"];
+        var discoverySources = new[] { "utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan", "manual", "manual-mistral" };
+        var scraperSources = new[] { "utmb", "itra", "bfs", "tracedetrail" };
 
         var discoveryCountTasks = discoverySources.ToDictionary(
             source => source,
             source => raceOrganizerClient.ExecuteQueryAsync<int>(
-                new QueryDefinition($"SELECT VALUE COUNT(1) FROM c WHERE IS_DEFINED(c.discovery.{source})")));
+                new QueryDefinition($"SELECT VALUE COUNT(1) FROM c WHERE IS_DEFINED(c.discovery[\"{source}\"])")));
 
         var scraperCountTasks = scraperSources.ToDictionary(
             source => source,
             source => raceOrganizerClient.ExecuteQueryAsync<int>(
-                new QueryDefinition($"SELECT VALUE COUNT(1) FROM c WHERE IS_DEFINED(c.scrapers.{source})")));
+                new QueryDefinition($"SELECT VALUE COUNT(1) FROM c WHERE IS_DEFINED(c.scrapers[\"{source}\"])")));
 
         var totalTask = raceCollectionClient.ExecuteQueryAsync<int>(totalQuery);
         var withCourseTask = raceCollectionClient.ExecuteQueryAsync<int>(withCourseQuery);

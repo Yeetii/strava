@@ -5,6 +5,7 @@ using Shared.Services;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Shared.Geo;
+using Shared.Constants;
 using Azure.Messaging.ServiceBus;
 using System.Text.Json;
 using Shared.Geo.SummitsCalculator;
@@ -21,19 +22,20 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     ServiceBusClient serviceBusClient,
     ISummitsCalculator _summitsCalculator)
 {
+    readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender("activityprocessed");
 
     [Function("SummitsWorker")]
     public async Task Run(
-        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions)
+        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions, CancellationToken cancellationToken)
     {
         var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var peaks = (await FetchNearbyPeaks(activities)).ToList();
-        var processingTasks = activities.Select(activity => ProcessSummitJob(jobs.First(x => x.Body.ToString() == activity.Id), actions, peaks, activity));
+        var processingTasks = activities.Select(activity => ProcessSummitJob(jobs.First(x => x.Body.ToString() == activity.Id), actions, peaks, activity, cancellationToken));
         await Task.WhenAll(processingTasks.ToArray());
     }
-    private async Task ProcessSummitJob(ServiceBusReceivedMessage job, ServiceBusMessageActions actions, List<Feature> peaks, Activity activity)
+    private async Task ProcessSummitJob(ServiceBusReceivedMessage job, ServiceBusMessageActions actions, List<Feature> peaks, Activity activity, CancellationToken cancellationToken)
     {
         try
         {
@@ -61,11 +63,9 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process summit job for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                activity.Id, job.MessageId, job.DeliveryCount);
-            await actions.DeadLetterMessageAsync(job,
-                deadLetterReason: nameof(SummitsWorker),
-                deadLetterErrorDescription: $"Activity {activity.Id}: {ex.Message}");
+            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                ex, actions, job, _serviceBusClient, ServiceBusConfig.CalculateSummitsJobs, _logger, cancellationToken);
+            return;
         }
     }
 

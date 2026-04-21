@@ -18,6 +18,7 @@ public class ScrapeRaceWorker
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RaceOrganizerClient _organizerClient;
+    private readonly ServiceBusClient _serviceBusClient;
     private readonly ServiceBusSender _assembleSender;
     private readonly ILogger<ScrapeRaceWorker> _logger;
 
@@ -35,6 +36,7 @@ public class ScrapeRaceWorker
     {
         _httpClientFactory = httpClientFactory;
         _organizerClient = organizerClient;
+        _serviceBusClient = serviceBusClient;
         _assembleSender = serviceBusClient.CreateSender(ServiceBusConfig.AssembleRace);
         _logger = logger;
 
@@ -143,9 +145,8 @@ public class ScrapeRaceWorker
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogError(ex, "ScrapeRaceWorker failed for {Key} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                organizerKey, message.MessageId, message.DeliveryCount);
-            await TryDeadLetterAsync(actions, message, organizerKey, ex);
+            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                ex, actions, message, _serviceBusClient, ServiceBusConfig.ScrapeRace, _logger, cancellationToken);
         }
     }
 
@@ -155,17 +156,6 @@ public class ScrapeRaceWorker
     {
         try { await actions.CompleteMessageAsync(message, ct); }
         catch (Exception ex) { _logger.LogDebug(ex, "Could not complete message (manual trigger?)"); }
-    }
-
-    private async Task TryDeadLetterAsync(ServiceBusMessageActions actions, ServiceBusReceivedMessage message, string key, Exception inner)
-    {
-        try
-        {
-            await actions.DeadLetterMessageAsync(message,
-                deadLetterReason: nameof(ScrapeRaceWorker),
-                deadLetterErrorDescription: $"{key}: {inner.Message}");
-        }
-        catch (Exception ex) { _logger.LogDebug(ex, "Could not dead-letter message (manual trigger?)"); }
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

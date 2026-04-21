@@ -10,13 +10,15 @@ namespace Backend
 {
     public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient)
     {
+        private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
         readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
         readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs);
 
         [Function(nameof(StravaActivitiesFetcher))]
         public async Task Run(
             [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
-            ServiceBusMessageActions actions)
+            ServiceBusMessageActions actions,
+            CancellationToken cancellationToken)
         {
             var fetchJob = message.Body.ToObjectFromJson<ActivitiesFetchJob>();
             try
@@ -42,13 +44,13 @@ namespace Backend
                     await _sbSender.SendMessageAsync(new ServiceBusMessage(JsonSerializer.Serialize(fetchJob)));
                 }
 
-                await actions.CompleteMessageAsync(message);
+                await actions.CompleteMessageAsync(message, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to fetch activities for user {UserId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                    fetchJob.UserId, message.MessageId, message.DeliveryCount);
-                await actions.DeadLetterMessageAsync(message, deadLetterReason: nameof(StravaActivitiesFetcher), deadLetterErrorDescription: ex.Message);
+                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                    ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, _logger, cancellationToken);
+                return;
             }
         }
     }

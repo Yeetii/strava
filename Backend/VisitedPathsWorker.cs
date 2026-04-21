@@ -14,8 +14,10 @@ public class VisitedPathsWorker(
     ILogger<VisitedPathsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<VisitedPath> _visitedPathsCollection,
-    [FromKeyedServices(FeatureKinds.Path)] TiledCollectionClient _pathsCollection)
+    [FromKeyedServices(FeatureKinds.Path)] TiledCollectionClient _pathsCollection,
+    ServiceBusClient serviceBusClient)
 {
+    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     private const int PathTileZoom = 11;
 
     // 50m ≈ 0.00045° – use a slightly larger threshold for a rough but fast check
@@ -33,7 +35,8 @@ public class VisitedPathsWorker(
     public async Task Run(
         [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
         ServiceBusReceivedMessage[] jobs,
-        ServiceBusMessageActions actions)
+        ServiceBusMessageActions actions,
+        CancellationToken cancellationToken)
     {
         var ids = jobs.Select(x => x.Body.ToString()).ToList();
         var activities = await FetchActivitySlims(ids);
@@ -53,7 +56,7 @@ public class VisitedPathsWorker(
         await Task.WhenAll(realJobs.Select(j => actions.RenewMessageLockAsync(j)));
 
         foreach (var job in jobs)
-            await ProcessJob(job, actions, activitiesList, decodedActivities, nearbyPaths);
+            await ProcessJob(job, actions, activitiesList, decodedActivities, nearbyPaths, cancellationToken);
     }
 
     private async Task ProcessJob(
@@ -61,7 +64,8 @@ public class VisitedPathsWorker(
         ServiceBusMessageActions actions,
         List<ActivitySlim> activitiesList,
         Dictionary<string, List<Coordinate>> decodedActivities,
-        List<Feature> nearbyPaths)
+        List<Feature> nearbyPaths,
+        CancellationToken cancellationToken)
     {
         var activityId = job.Body.ToString();
         try
@@ -131,19 +135,15 @@ public class VisitedPathsWorker(
         }
         catch (Exception ex)
         {
+            if (HasRealLockToken(job))
+            {
+                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                    ex, actions, job, _serviceBusClient, Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, _logger, cancellationToken);
+                return;
+            }
+
             _logger.LogError(ex, "Failed to process visited paths for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
                 activityId, job.MessageId, job.DeliveryCount);
-            try
-            {
-                if (HasRealLockToken(job))
-                    await actions.DeadLetterMessageAsync(job,
-                        deadLetterReason: nameof(VisitedPathsWorker),
-                        deadLetterErrorDescription: $"Activity {activityId}: {ex.Message}");
-            }
-            catch (Exception deadLetterEx)
-            {
-                _logger.LogWarning(deadLetterEx, "Failed to dead-letter message for activity {ActivityId} (lock may have expired)", activityId);
-            }
         }
     }
 

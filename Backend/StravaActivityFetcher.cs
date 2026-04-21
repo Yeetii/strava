@@ -14,14 +14,16 @@ namespace Backend
         public required string ActivityId { get; set; }
     }
 
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection)
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient)
     {
+        private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
         readonly HttpClient _backendApiClient = httpClientFactory.CreateClient("backendApiClient");
 
         [Function(nameof(StravaActivityFetcher))]
         public async Task Run(
             [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
-            ServiceBusMessageActions actions)
+            ServiceBusMessageActions actions,
+            CancellationToken cancellationToken)
         {
             var fetchJob = message.Body.ToObjectFromJson<ActivityFetchJob>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             try
@@ -35,13 +37,12 @@ namespace Backend
                 var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
                 var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
                 await _activitiesCollection.UpsertDocument(ActivityMapper.MapDetailedActivity(activity));
-                await actions.CompleteMessageAsync(message);
+                await actions.CompleteMessageAsync(message, cancellationToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to fetch activity {ActivityId} for user {UserId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                    fetchJob.ActivityId, fetchJob.UserId, message.MessageId, message.DeliveryCount);
-                await actions.DeadLetterMessageAsync(message, deadLetterReason: nameof(StravaActivityFetcher), deadLetterErrorDescription: ex.Message);
+                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                    ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivityFetchJobs, _logger, cancellationToken);
             }
         }
     }

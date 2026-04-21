@@ -17,6 +17,7 @@ public class ScrapeRaceMistralWorker
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RaceOrganizerClient _organizerClient;
+    private readonly ServiceBusClient _serviceBusClient;
     private readonly ServiceBusSender _assembleSender;
     private readonly ILogger<ScrapeRaceMistralWorker> _logger;
     private readonly string _agentId;
@@ -33,6 +34,7 @@ public class ScrapeRaceMistralWorker
     {
         _httpClientFactory = httpClientFactory;
         _organizerClient = organizerClient;
+        _serviceBusClient = serviceBusClient;
         _assembleSender = serviceBusClient.CreateSender(ServiceBusConfig.AssembleRace);
         _logger = logger;
         _agentId = configuration.GetValue<string>("MistralStudioAgentId") ?? throw new Exception("MistralStudioAgentId is not configured");
@@ -105,17 +107,9 @@ public class ScrapeRaceMistralWorker
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogError(ex, "ManualMistralScrapeWorker failed for {OrganizerKey}", organizerKey);
-            try
-            {
-                await actions.DeadLetterMessageAsync(message,
-                    deadLetterReason: nameof(ScrapeRaceMistralWorker),
-                    deadLetterErrorDescription: ex.Message);
-            }
-            catch (Exception inner)
-            {
-                _logger.LogDebug(inner, "Could not dead-letter message for {OrganizerKey}", organizerKey);
-            }
+            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                ex, actions, message, _serviceBusClient, ServiceBusConfig.MistralScrapeJobs, _logger, cancellationToken);
+            return;
         }
     }
 

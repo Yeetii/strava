@@ -11,8 +11,10 @@ namespace Backend;
 public class AdminBoundaryEnrichmentWorker(
     AdminBoundaryMetricsEnricher enricher,
     CollectionClient<StoredFeature> storedFeaturesCollection,
+    ServiceBusClient serviceBusClient,
     ILogger<AdminBoundaryEnrichmentWorker> logger)
 {
+    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     [Function(nameof(AdminBoundaryEnrichmentWorker))]
     public async Task Run(
         [ServiceBusTrigger(ServiceBusConfig.EnrichAdminBoundaryJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
@@ -41,12 +43,9 @@ public class AdminBoundaryEnrichmentWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to enrich admin boundary {BoundaryId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                    document.Id, message.MessageId, message.DeliveryCount);
-                await actions.DeadLetterMessageAsync(message,
-                    deadLetterReason: nameof(AdminBoundaryEnrichmentWorker),
-                    deadLetterErrorDescription: $"Boundary {document.Id}: {ex.Message}",
-                    cancellationToken: cancellationToken);
+                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                    ex, actions, message, _serviceBusClient, ServiceBusConfig.EnrichAdminBoundaryJobs, logger, cancellationToken);
+                continue;
             }
         }
 

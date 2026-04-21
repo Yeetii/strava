@@ -15,8 +15,10 @@ public class VisitedAreasWorker(
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<VisitedArea> _visitedAreasCollection,
     [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient _protectedAreasCollection,
-    AdminBoundariesCollectionClient _adminBoundariesCollection)
+    AdminBoundariesCollectionClient _adminBoundariesCollection,
+    ServiceBusClient serviceBusClient)
 {
+    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     private const int AreaTileZoom = 8;
     private const int RegionTileZoom = 6;
     private const int AdminLevelRegion = 4;
@@ -25,7 +27,8 @@ public class VisitedAreasWorker(
     public async Task Run(
         [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
         ServiceBusReceivedMessage[] jobs,
-        ServiceBusMessageActions actions)
+        ServiceBusMessageActions actions,
+        CancellationToken cancellationToken)
     {
         var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
@@ -35,7 +38,7 @@ public class VisitedAreasWorker(
 
         var nearbyAreas = (await FetchNearbyAreas(activitiesList)).ToList();
 
-        var processingTasks = jobs.Select(job => ProcessJob(job, actions, activitiesList, nearbyAreas));
+        var processingTasks = jobs.Select(job => ProcessJob(job, actions, activitiesList, nearbyAreas, cancellationToken));
         await Task.WhenAll(processingTasks);
     }
 
@@ -43,7 +46,8 @@ public class VisitedAreasWorker(
         ServiceBusReceivedMessage job,
         ServiceBusMessageActions actions,
         List<Activity> activitiesList,
-        List<StoredFeature> nearbyAreas)
+        List<StoredFeature> nearbyAreas,
+        CancellationToken cancellationToken)
     {
         var activityId = job.Body.ToString();
         try
@@ -93,11 +97,9 @@ public class VisitedAreasWorker(
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process visited areas for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                activityId, job.MessageId, job.DeliveryCount);
-            await actions.DeadLetterMessageAsync(job,
-                deadLetterReason: nameof(VisitedAreasWorker),
-                deadLetterErrorDescription: $"Activity {activityId}: {ex.Message}");
+            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                ex, actions, job, _serviceBusClient, Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs, _logger, cancellationToken);
+            return;
         }
     }
 
