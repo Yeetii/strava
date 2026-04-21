@@ -985,6 +985,15 @@ public class RaceScrapeDiscoveryTests
 
         Assert.Equal("my.raceresult.com~376823",
             RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://my.raceresult.com/376823/info")));
+
+        Assert.Equal("raceroster.com~events~2026~112366~day-of-the-dead-day-1-and-day-2",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://raceroster.com/events/2026/112366/day-of-the-dead-day-1-and-day-2/page/location-and-course-details")));
+
+        Assert.Equal("welcu.com~utcb",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://welcu.com/utcb/utcb2025")));
+
+        Assert.Equal("facebook.com~profile.php?id=61552551957764",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://www.facebook.com/profile.php?id=61552551957764")));
     }
     // ── BuildFeatureId (name+distance overload) ───────────────────────────────
 

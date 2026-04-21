@@ -21,8 +21,9 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         "runsignup.com",
         "ultrasignup.com",
         "my.raceresult.com",
+        "raceroster.com",
+        "welcu.com",
     };
-
     /// <summary>
     /// Derives a Cosmos-safe organizer key from a URL. For regular domains returns just the host
     /// (stripped of "www."). For platform hosts (Facebook, TraceDeTrail, etc.) keeps the
@@ -39,10 +40,14 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
             var path = url.AbsolutePath.Trim('/');
             if (!string.IsNullOrEmpty(path))
             {
-                if (host == "runsignup.com")
+                if (host == "facebook.com")
+                    path = NormalizeFacebookPath(path, url.Query);
+                else if (host == "runsignup.com")
                     path = NormalizeRunSignupPath(path);
-                else if (host == "my.raceresult.com")
-                    path = NormalizeRaceResultPath(path);
+                else if (host == "my.raceresult.com" || host == "welcu.com")
+                    path = NormalizeFirstPathSegment(path);
+                else if (host == "raceroster.com")
+                    path = NormalizeRaceRosterPath(path);
                 return $"{host}~{path.Replace('/', '~')}";
             }
         }
@@ -64,18 +69,58 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
             remaining.RemoveAt(0);
 
         if (remaining.Count > 3)
-            remaining = remaining.Skip(remaining.Count - 3).ToList();
+            remaining = [.. remaining.Skip(remaining.Count - 3)];
 
-        return string.Join("/", new[] { "Race" }.Concat(remaining));
+        return string.Join("/", ["Race", ..remaining]);
     }
 
-    private static string NormalizeRaceResultPath(string path)
+    private static string NormalizeFirstPathSegment(string path)
     {
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length == 0)
             return path;
 
-        return int.TryParse(segments[0], out _) ? segments[0] : path;
+        return segments[0];
+    }
+
+    private static string NormalizeRaceRosterPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 4)
+            return path;
+
+        if (!segments[0].Equals("events", StringComparison.OrdinalIgnoreCase))
+            return path;
+
+        return string.Join('/', segments.Take(4));
+    }
+
+    private static string NormalizeFacebookPath(string path, string query)
+    {
+        if (!path.Equals("profile.php", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(query))
+            return path;
+
+        var id = GetQueryValue(query, "id");
+        return string.IsNullOrWhiteSpace(id) ? path : $"{path}?id={id}";
+    }
+
+    private static string? GetQueryValue(string query, string key)
+    {
+        var trimmed = query.StartsWith("?", StringComparison.Ordinal) ? query[1..] : query;
+        foreach (var part in trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separatorIndex = part.IndexOf('=');
+            if (separatorIndex < 0)
+                continue;
+
+            var name = WebUtility.UrlDecode(part[..separatorIndex]);
+            if (!name.Equals(key, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return WebUtility.UrlDecode(part[(separatorIndex + 1)..]);
+        }
+
+        return null;
     }
 
     /// <summary>
