@@ -191,13 +191,13 @@ public class RaceHtmlScraperTests
         Assert.Equal("https://myrace.com/", result?.AbsoluteUri);
     }
 
-      [Fact]
-      public void ExtractRaceSiteUrl_HandlesHrefWithoutScheme()
-      {
-        const string html = """<a href=\"www.ungetuem.at\">Site de la course</a>""";
+    [Fact]
+    public void ExtractRaceSiteUrl_HandlesHrefWithoutScheme()
+    {
+        const string html = """<a href="www.ungetuem.at">Site de la course</a>""";
         var result = RaceHtmlScraper.ExtractRaceSiteUrl(html, new Uri("https://tracedetrail.fr/en/event/x"));
         Assert.Equal("https://www.ungetuem.at/", result?.AbsoluteUri);
-      }
+    }
 
     [Fact]
     public void ExtractRaceSiteUrl_ReturnsNullWhenNoneFound()

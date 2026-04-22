@@ -1297,12 +1297,12 @@ public static partial class RaceHtmlScraper
     };
 
     // Matches explicit price ranges like "60€ - 90€", "60 - 90 EUR", "€60 to €90".
-    [GeneratedRegex(@"(?<pre1>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num1>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post1>kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?\s*(?:[-–—]|to|till|until)\s*(?<pre2>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num2>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post2>kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<pre1>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num1>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post1>€|kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?\s*(?:[-–—]|to|till|until)\s*(?<pre2>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num2>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post2>€|kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?", RegexOptions.IgnoreCase)]
     private static partial Regex PriceRangeRegex();
 
     // Matches price amounts with optional currency prefix/suffix.
     // "500 kr", "€50", "SEK 300", "1 200 NOK", "kr 500", "$120", "600,- NOK".
-    [GeneratedRegex(@"(?<pre>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post>kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<pre>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post>€|kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?", RegexOptions.IgnoreCase)]
     private static partial Regex PriceRegex();
 
     // Matches JSON-LD "price" and "priceCurrency" in offers.

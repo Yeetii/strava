@@ -398,6 +398,7 @@ public static partial class ItraDiscoveryAgent
 
             jobs.Add(new ScrapeJob(
                 ItraEventPageUrl: eventUrl,
+                WebsiteUrl: eventUrl,
                 Name: string.IsNullOrWhiteSpace(name) ? null : name.Trim(),
                 ExternalIds: externalIds,
                 RaceType: "trail",

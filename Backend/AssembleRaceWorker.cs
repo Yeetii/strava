@@ -122,10 +122,9 @@ public class AssembleRaceWorker(
 
         if (dedupedRoutes.Count == 0)
         {
-            // No scraper output — fall back to a single point per discovery entry (if coords available).
-            var discoveries = doc.Discovery?.Values.SelectMany(x => x).ToList() ?? [];
+            // No scraper output — fall back to a single point per deduplicated discovery entry (if coords available).
             int idx = 0;
-            foreach (var d in discoveries)
+            foreach (var (_, d) in flatDiscoveries)
             {
                 if (d.Latitude is null || d.Longitude is null)
                     continue;
