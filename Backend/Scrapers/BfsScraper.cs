@@ -236,7 +236,7 @@ internal sealed class BfsScraper(ILogger logger)
         var date = RaceHtmlScraper.ExtractDate(html);
         var elevation = RaceHtmlScraper.ExtractElevationGain(html);
         var price = RaceHtmlScraper.ExtractPrice(html, pageUrl);
-        return (imageUrl, date, elevation, price?.Amount.ToString(), price?.Currency);
+        return (imageUrl, date, elevation, price?.Amount, price?.Currency);
     }
 
     /// <summary>Strip the fragment (#…) so URLs differing only by anchor are treated as the same page.</summary>
@@ -486,7 +486,7 @@ internal sealed class BfsScraper(ILogger logger)
 
         var startPageElevation = startPageHtml is not null ? RaceHtmlScraper.ExtractElevationGain(startPageHtml) : null;
         var price = startPageHtml is not null ? RaceHtmlScraper.ExtractPrice(startPageHtml, startUrl) : null;
-        var startFee = price?.Amount.ToString();
+        var startFee = price?.Amount;
         var currency = price?.Currency;
 
         if (gpxUrlToPage.Count == 0)

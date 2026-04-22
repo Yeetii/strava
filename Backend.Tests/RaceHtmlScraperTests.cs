@@ -274,4 +274,26 @@ public class RaceHtmlScraperTests
 
         Assert.Equal("2026-09-05", date);
     }
+
+    [Fact]
+    public void ExtractPrice_RecognisesEuroWordAsEur()
+    {
+        const string html = "<div>Startavgift: 35 Euro</div>";
+        var price = RaceHtmlScraper.ExtractPrice(html, new Uri("https://example.com/"));
+
+        Assert.NotNull(price);
+        Assert.Equal("35", price!.Amount);
+        Assert.Equal("EUR", price.Currency);
+    }
+
+    [Fact]
+    public void ExtractPrice_ParsesEuroRangeIntoAmountRangeAndEurCurrency()
+    {
+        const string html = "<div>Startavgift: 60€ - 90€</div>";
+        var price = RaceHtmlScraper.ExtractPrice(html, new Uri("https://example.com/"));
+
+        Assert.NotNull(price);
+        Assert.Equal("60-90", price!.Amount);
+        Assert.Equal("EUR", price.Currency);
+    }
 }

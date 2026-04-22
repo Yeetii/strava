@@ -8,6 +8,8 @@ namespace Backend;
 // for parsing HTTP API responses that are only consumed by ScrapeRaceWorker.
 public static partial class RaceHtmlScraper
 {
+    public record PriceInfo(string Amount, string Currency);
+
     // Keywords used to identify links to course/route pages.
     private static readonly string[] CourseKeywords = [
         "course", "parcours", "parcour",
@@ -1151,7 +1153,7 @@ public static partial class RaceHtmlScraper
     /// Looks for patterns like "500 kr", "€50", "SEK 300", "$120", "300 NOK", "1 200 SEK".
     /// Returns (amount, currency) or null.
     /// </summary>
-    public static (int Amount, string Currency)? ExtractPrice(string? html, Uri? pageUrl = null)
+    public static PriceInfo? ExtractPrice(string? html, Uri? pageUrl = null)
     {
         if (string.IsNullOrWhiteSpace(html)) return null;
 
@@ -1171,12 +1173,39 @@ public static partial class RaceHtmlScraper
             if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var p) && p > 0 && p < 100_000)
             {
                 if (string.IsNullOrEmpty(curr)) curr = KrCurrencyForTld(tld);
-                return (p, NormalizeCurrency(curr, tld));
+                return new PriceInfo(p.ToString(CultureInfo.InvariantCulture), NormalizeCurrency(curr, tld));
             }
         }
 
-        // 2. Visible text patterns.
-        var best = (Amount: 0, Currency: string.Empty);
+        // 2. Visible text patterns: prefer explicit ranges.
+        foreach (Match m in PriceRangeRegex().Matches(text))
+        {
+            var raw1 = m.Groups["num1"].Value.Replace(" ", "").Replace("\u00a0", "");
+            var raw2 = m.Groups["num2"].Value.Replace(" ", "").Replace("\u00a0", "");
+            if (!int.TryParse(raw1, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount1)
+                || !int.TryParse(raw2, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount2))
+            {
+                continue;
+            }
+
+            if (amount1 < 10 || amount1 > 100_000 || amount2 < 10 || amount2 > 100_000)
+                continue;
+
+            var currencyToken = m.Groups["pre1"].Value.Trim();
+            if (string.IsNullOrEmpty(currencyToken)) currencyToken = m.Groups["post1"].Value.Trim();
+            if (string.IsNullOrEmpty(currencyToken)) currencyToken = m.Groups["pre2"].Value.Trim();
+            if (string.IsNullOrEmpty(currencyToken)) currencyToken = m.Groups["post2"].Value.Trim();
+
+            var currency = ResolveCurrency(currencyToken, currencyToken, tld);
+            if (currency is null) continue;
+
+            var min = Math.Min(amount1, amount2);
+            var max = Math.Max(amount1, amount2);
+            return new PriceInfo($"{min}-{max}", NormalizeCurrency(currency, tld));
+        }
+
+        // 3. Single price values.
+        var best = (Amount: string.Empty, Currency: string.Empty);
         var bestScore = 0;
 
         foreach (Match m in PriceRegex().Matches(text))
@@ -1201,14 +1230,14 @@ public static partial class RaceHtmlScraper
             if (HasPriceContext(ctx)) score += 5;
             if (amount >= 100) score += 1; // more likely a real entry fee
 
-            if (score > bestScore || (score == bestScore && amount > best.Amount))
+            if (score > bestScore || (score == bestScore && amount > int.Parse(best.Amount, CultureInfo.InvariantCulture)))
             {
-                best = (amount, NormalizeCurrency(currency, tld));
+                best = (amount.ToString(CultureInfo.InvariantCulture), NormalizeCurrency(currency, tld));
                 bestScore = score;
             }
         }
 
-        return bestScore > 0 ? best : null;
+        return bestScore > 0 ? new PriceInfo(best.Amount, best.Currency) : null;
     }
 
     private static bool HasPriceContext(ReadOnlySpan<char> ctx)
@@ -1230,7 +1259,7 @@ public static partial class RaceHtmlScraper
 
     private static string? ResolveCurrency(string prefix, string suffix, string? tld)
     {
-        // Check prefix first (€, $, £, CHF, SEK, NOK, DKK, EUR, USD, GBP)
+        // Check prefix first (€, $, £, CHF, SEK, NOK, DKK, EUR, USD, GBP, EURO)
         var token = prefix.Length > 0 ? prefix : suffix;
         if (string.IsNullOrWhiteSpace(token)) return null;
         token = token.Trim('.', ',', ':').Trim();
@@ -1240,7 +1269,7 @@ public static partial class RaceHtmlScraper
             "SEK" => "SEK",
             "NOK" => "NOK",
             "DKK" => "DKK",
-            "€" or "EUR" => "EUR",
+            "€" or "EUR" or "EURO" or "EUROS" => "EUR",
             "$" or "USD" => "USD",
             "£" or "GBP" => "GBP",
             "CHF" => "CHF",
@@ -1263,12 +1292,17 @@ public static partial class RaceHtmlScraper
         "€" => "EUR",
         "$" => "USD",
         "£" => "GBP",
+        "EURO" or "EUROS" => "EUR",
         _ => currency.ToUpperInvariant()
     };
 
+    // Matches explicit price ranges like "60€ - 90€", "60 - 90 EUR", "€60 to €90".
+    [GeneratedRegex(@"(?<pre1>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num1>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post1>kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?\s*(?:[-–—]|to|till|until)\s*(?<pre2>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num2>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post2>kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?", RegexOptions.IgnoreCase)]
+    private static partial Regex PriceRangeRegex();
+
     // Matches price amounts with optional currency prefix/suffix.
     // "500 kr", "€50", "SEK 300", "1 200 NOK", "kr 500", "$120", "600,- NOK".
-    [GeneratedRegex(@"(?<pre>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|kr\.?)\s?)?(?<num>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post>kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK)?", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<pre>[€$£]|(?:SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS|kr\.?)\s?)?(?<num>\d[\d\s\u00a0]{0,6}\d|\d{1,5})(?:,-)?\s*(?<post>kr\.?|SEK|NOK|DKK|EUR|USD|GBP|CHF|ISK|EURO|EUROS)?", RegexOptions.IgnoreCase)]
     private static partial Regex PriceRegex();
 
     // Matches JSON-LD "price" and "priceCurrency" in offers.
