@@ -87,9 +87,9 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
     {
         [HttpResult]
         public required HttpResponseData Response { get; set; }
-        [CosmosDBOutput("%CosmosDb%", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
+        [CosmosDBOutput("DatabaseConfig.CosmosDb", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
         public Shared.Models.User? User { get; set; }
-        [CosmosDBOutput("%CosmosDb%", "%SessionsContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
+        [CosmosDBOutput("DatabaseConfig.CosmosDb", "%SessionsContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
         public Session? Session { get; set; }
         [ServiceBusOutput("activitiesfetchjobs", Connection = "ServicebusConnection")]
         public ActivitiesFetchJob? ActivitiesFetchJob { get; set; }

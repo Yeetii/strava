@@ -38,8 +38,8 @@ public class GetStreaks(ILoggerFactory loggerFactory)
     [Function("GetStreaks")]
     public IActionResult Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "{userId}/streaks")] HttpRequestData req, string userId,
     [CosmosDBInput(
-        databaseName: "%CosmosDb%",
-        containerName: "%ActivitiesContainer%",
+        databaseName: "DatabaseConfig.CosmosDb",
+        containerName: "DatabaseConfig.ActivitiesContainer",
         Connection  = "CosmosDBConnection",
         SqlQuery = "SELECT * FROM c where c.userId = {userId}"
         )] IEnumerable<Activity> activities)

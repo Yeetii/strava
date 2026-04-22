@@ -45,7 +45,7 @@ namespace Backend
         {
             [HttpResult]
             public required HttpResponseData Result { get; set; }
-            [CosmosDBOutput("%CosmosDb%", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
+            [CosmosDBOutput("DatabaseConfig.CosmosDb", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public User? WriteToUser { get; set; }
         }
     }

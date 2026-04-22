@@ -12,6 +12,7 @@ using Shared.Services;
 using Shared.Services.StravaClient;
 using Shared.Constants;
 using Microsoft.Extensions.Logging;
+using Azure.Storage.Blobs;
 using Backend;
 
 var host = new HostBuilder()
@@ -72,6 +73,15 @@ var host = new HostBuilder()
             return new CosmosClient(cosmosDbConnectionString, cosmosClientOptions);
         });
 
+        services.AddSingleton(serviceProvider =>
+        {
+            var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+            var storageConnectionString = configuration.GetValue<string>("AzureWebJobsStorage")
+                ?? throw new Exception("No AzureWebJobsStorage connection string found");
+            return new BlobServiceClient(storageConnectionString);
+        });
+
+        services.AddSingleton<RaceTileBuildService>();
 
         new CollectionClientBuilder(services)
             .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)

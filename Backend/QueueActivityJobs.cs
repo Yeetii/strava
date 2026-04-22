@@ -9,8 +9,8 @@ namespace Backend
         [Function(nameof(QueueActivityJobs))]
         public async Task Run(
             [CosmosDBTrigger(
-            databaseName: "%CosmosDb%",
-            containerName: "%ActivitiesContainer%",
+            databaseName: "DatabaseConfig.CosmosDb",
+            containerName: "DatabaseConfig.ActivitiesContainer",
             Connection = "CosmosDBConnection",
             LeaseContainerPrefix = "activityJobs",
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<Activity> updatedActivities)

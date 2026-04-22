@@ -1,0 +1,21 @@
+meta {
+  name: Trigger QueueRaceTileBuildJobs
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/QueueRaceTileBuildJobs
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": ""
+  }
+}
