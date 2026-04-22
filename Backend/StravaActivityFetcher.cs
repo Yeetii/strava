@@ -36,6 +36,13 @@ namespace Backend
 
                 var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
                 var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
+                if (activity is null)
+                {
+                    _logger.LogInformation("Strava activity {ActivityId} not found (404); completing message.", fetchJob.ActivityId);
+                    await actions.CompleteMessageAsync(message, cancellationToken);
+                    return;
+                }
+
                 await _activitiesCollection.UpsertDocument(ActivityMapper.MapDetailedActivity(activity));
                 await actions.CompleteMessageAsync(message, cancellationToken);
             }

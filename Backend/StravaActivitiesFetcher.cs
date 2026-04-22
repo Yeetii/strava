@@ -33,10 +33,15 @@ namespace Backend
                 var page = fetchJob.Page ?? 1;
 
                 var (activites, hasMorePages) = await _activitiesApi.GetActivitiesByAthlete(accessToken, page, fetchJob.Before, fetchJob.After);
+                if (activites is null)
+                {
+                    _logger.LogInformation("Strava athlete {UserId} not found (404); completing message.", fetchJob.UserId);
+                    await actions.CompleteMessageAsync(message, cancellationToken);
+                    return;
+                }
 
-                _logger.LogInformation("Fetched {amount} activities", activites?.Count() ?? 0);
-                if (activites != null)
-                    await _activitiesCollection.BulkUpsert(activites.Select(ActivityMapper.MapSummaryActivity));
+                _logger.LogInformation("Fetched {amount} activities", activites.Count());
+                await _activitiesCollection.BulkUpsert(activites.Select(ActivityMapper.MapSummaryActivity));
 
                 if (hasMorePages)
                 {

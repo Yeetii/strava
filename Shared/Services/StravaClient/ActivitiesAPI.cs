@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using Shared.Services.StravaClient.Model;
 
@@ -34,6 +35,9 @@ public class ActivitiesApi(HttpClient _stravaClient)
         };
 
         using var response = await _stravaClient.SendAsync(request);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return (null, false);
+
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync();
         var activities = JsonSerializer.Deserialize<List<SummaryActivity>>(body);
@@ -55,6 +59,9 @@ public class ActivitiesApi(HttpClient _stravaClient)
                 },
         };
         using var response = await _stravaClient.SendAsync(request);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync();
 
