@@ -62,12 +62,13 @@ public class RaceTileBuildService
         _logger.LogInformation("Marked race tiles dirty for rebuild in container {Container}.", _blobContainerName);
     }
 
-    public async Task BuildIfDirtyAsync(CancellationToken cancellationToken)
+    public async Task BuildIfDirtyAsync(CancellationToken cancellationToken, bool forceBuild = false)
     {
         var container = await GetContainerAsync(cancellationToken);
         var dirtyBlob = container.GetBlobClient(DirtyFlagBlobName);
+        var dirtyExists = await dirtyBlob.ExistsAsync(cancellationToken);
 
-        if (!await dirtyBlob.ExistsAsync(cancellationToken))
+        if (!forceBuild && !dirtyExists)
         {
             _logger.LogDebug("No dirty marker for race tile build in container {Container}.", _blobContainerName);
             return;
@@ -77,21 +78,14 @@ public class RaceTileBuildService
         var leaseAcquired = false;
         try
         {
-            await leaseClient.AcquireAsync(TimeSpan.FromSeconds(-1), cancellationToken: cancellationToken);
-            leaseAcquired = true;
-        }
-        catch (RequestFailedException ex) when (
-            ex.ErrorCode == BlobErrorCode.LeaseAlreadyPresent ||
-            ex.ErrorCode == BlobErrorCode.LeaseAlreadyBroken)
-        {
-            _logger.LogInformation("Race tile build is already in progress. Skipping this run.");
-            return;
-        }
+            if (dirtyExists)
+            {
+                await leaseClient.AcquireAsync(TimeSpan.FromSeconds(-1), cancellationToken: cancellationToken);
+                leaseAcquired = true;
+            }
 
-        try
-        {
             var runId = Guid.NewGuid().ToString("N");
-            _logger.LogInformation("Starting race tile build {RunId}.", runId);
+            _logger.LogInformation("Starting race tile build {RunId}. ForceBuild={ForceBuild}.", runId, forceBuild);
 
             var geoJsonPath = await ExportAllRaceFeaturesToGeoJsonAsync(runId, cancellationToken);
             var pmtilesPath = await BuildPmtilesAsync(runId, geoJsonPath, cancellationToken);
@@ -102,12 +96,16 @@ public class RaceTileBuildService
                 await dirtyBlob.DeleteIfExistsAsync(conditions: new BlobRequestConditions { LeaseId = leaseClient.LeaseId }, cancellationToken: cancellationToken);
                 leaseAcquired = false;
             }
-            else
-            {
-                await dirtyBlob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
-            }
 
             _logger.LogInformation("Race tile build completed successfully {RunId}.", runId);
+        }
+        catch (RequestFailedException ex) when (
+            dirtyExists &&
+            (ex.ErrorCode == BlobErrorCode.LeaseAlreadyPresent ||
+            ex.ErrorCode == BlobErrorCode.LeaseAlreadyBroken))
+        {
+            _logger.LogInformation("Race tile build is already in progress. Skipping this run.");
+            return;
         }
         catch (Exception ex)
         {
@@ -130,10 +128,11 @@ public class RaceTileBuildService
             "--output", outputPmtilesPath,
             "--layer=trails",
             "--minimum-zoom=0",
-            "--maximum-zoom=14",
+            "--zg",
             "--simplification=10",
-            "--cluster-distance=8",
+            "--cluster-distance=5",
             "--coalesce-smallest-as-needed",
+            "--no-feature-limit",
             "--force",
             geoJsonPath,
         ];

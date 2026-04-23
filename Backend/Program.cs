@@ -81,8 +81,6 @@ var host = new HostBuilder()
             return new BlobServiceClient(storageConnectionString);
         });
 
-        services.AddSingleton<RaceTileBuildService>();
-
         new CollectionClientBuilder(services)
             .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
             .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)

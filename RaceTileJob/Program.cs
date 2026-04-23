@@ -9,6 +9,8 @@ using RaceTileJob;
 var builder = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((context, config) =>
     {
+        config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
+        config.AddJsonFile("local.settings.json", optional: true, reloadOnChange: false);
         config.AddEnvironmentVariables();
         config.AddCommandLine(args);
     })
@@ -35,12 +37,14 @@ var builder = Host.CreateDefaultBuilder(args)
 
 using var host = builder.Build();
 using var scope = host.Services.CreateScope();
+var configuration = host.Services.GetRequiredService<IConfiguration>();
 var job = scope.ServiceProvider.GetRequiredService<RaceTileBuildService>();
 var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+var forceBuild = configuration.GetValue<bool>("ForceRaceTileBuild");
 
 try
 {
-    await job.BuildIfDirtyAsync(CancellationToken.None);
+    await job.BuildIfDirtyAsync(CancellationToken.None, forceBuild);
     return 0;
 }
 catch (Exception ex)

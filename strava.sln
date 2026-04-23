@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared.Benchmarks", "Shared
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RaceTileJob", "RaceTileJob\RaceTileJob.csproj", "{7B09C119-1B4C-4E0E-9F96-C608F2EE5B51}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RaceTileJob.Tests", "RaceTileJob.Tests\RaceTileJob.Tests.csproj", "{D787D740-1307-4BAD-81BC-DFE82D87DA27}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -111,6 +113,18 @@ Global
 		{7B09C119-1B4C-4E0E-9F96-C608F2EE5B51}.Release|x64.Build.0 = Release|Any CPU
 		{7B09C119-1B4C-4E0E-9F96-C608F2EE5B51}.Release|x86.ActiveCfg = Release|Any CPU
 		{7B09C119-1B4C-4E0E-9F96-C608F2EE5B51}.Release|x86.Build.0 = Release|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Debug|x64.Build.0 = Debug|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Debug|x86.Build.0 = Debug|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Release|x64.ActiveCfg = Release|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Release|x64.Build.0 = Release|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Release|x86.ActiveCfg = Release|Any CPU
+		{D787D740-1307-4BAD-81BC-DFE82D87DA27}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

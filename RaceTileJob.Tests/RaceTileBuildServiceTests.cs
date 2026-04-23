@@ -1,11 +1,12 @@
 using System.Text;
+using RaceTileJob;
 
-namespace Backend.Tests;
+namespace RaceTileJob.Tests;
 
 public class RaceTileBuildServiceTests
 {
     [Fact]
-    public void GetTippecanoeArguments_ReturnsExpectedArguments()
+    public void GetTippecanoeArguments_IncludesPreserveFeatureFlags()
     {
         var input = "/tmp/features.geojson";
         var output = "/tmp/trails.pmtiles";
@@ -20,8 +21,26 @@ public class RaceTileBuildServiceTests
         Assert.Contains("--simplification=10", args);
         Assert.Contains("--cluster-distance=8", args);
         Assert.Contains("--coalesce-smallest-as-needed", args);
+        Assert.Contains("--no-feature-limit", args);
         Assert.Contains("--force", args);
         Assert.Contains(input, args);
+        Assert.Equal(output, args[1]);
+        Assert.Equal(input, args[^1]);
+    }
+
+    [Fact]
+    public void IsValidPmtilesFile_ReturnsFalseForInvalidMagicHeader()
+    {
+        var temporaryFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(temporaryFile, Encoding.UTF8.GetBytes("NOTPMT").Concat(new byte[1024]).ToArray());
+            Assert.False(RaceTileBuildService.IsValidPmtilesFile(temporaryFile));
+        }
+        finally
+        {
+            File.Delete(temporaryFile);
+        }
     }
 
     [Fact]

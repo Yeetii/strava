@@ -1,14 +1,30 @@
+using Azure.Storage.Blobs;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
 
 namespace Backend;
 
-public class QueueRaceTileBuildJobs(RaceTileBuildService raceTileBuildService, ILogger<QueueRaceTileBuildJobs> logger)
+public class QueueRaceTileBuildJobs
 {
-    private readonly RaceTileBuildService _raceTileBuildService = raceTileBuildService;
-    private readonly ILogger<QueueRaceTileBuildJobs> _logger = logger;
+    private const string DirtyFlagBlobName = "dirty.flag";
+    private const string DefaultBlobContainerName = "race-tiles";
+
+    private readonly BlobServiceClient _blobServiceClient;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<QueueRaceTileBuildJobs> _logger;
+
+    public QueueRaceTileBuildJobs(
+        BlobServiceClient blobServiceClient,
+        IConfiguration configuration,
+        ILogger<QueueRaceTileBuildJobs> logger)
+    {
+        _blobServiceClient = blobServiceClient;
+        _configuration = configuration;
+        _logger = logger;
+    }
 
     [Function(nameof(QueueRaceTileBuildJobs))]
     public async Task Run(
@@ -28,6 +44,17 @@ public class QueueRaceTileBuildJobs(RaceTileBuildService raceTileBuildService, I
         }
 
         _logger.LogInformation("Race change feed detected {Count} updated race features.", updatedRaces.Count);
-        await _raceTileBuildService.MarkDirtyAsync(cancellationToken);
+        await MarkDirtyAsync(cancellationToken);
+    }
+
+    private async Task MarkDirtyAsync(CancellationToken cancellationToken)
+    {
+        var blobContainerName = _configuration.GetValue<string>(AppConfig.RaceTilesBlobContainerName) ?? DefaultBlobContainerName;
+        var container = _blobServiceClient.GetBlobContainerClient(blobContainerName);
+        await container.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+
+        var dirtyBlob = container.GetBlobClient(DirtyFlagBlobName);
+        await dirtyBlob.UploadAsync(BinaryData.FromString(DateTime.UtcNow.ToString("o")), overwrite: true, cancellationToken: cancellationToken);
+        _logger.LogInformation("Marked race tiles dirty for rebuild in container {Container}.", blobContainerName);
     }
 }
