@@ -2,6 +2,12 @@
 
 RaceTileJob is a small .NET console app that builds PMTiles for race trail geometry when the source data is marked dirty.
 
+> To force a rebuild regardless of the dirty marker, run:
+>
+> ```bash
+> dotnet run --project RaceTileJob.csproj -- --ForceRaceTileBuild true
+> ```
+>
 ## Requirements
 
 - .NET 8 SDK
@@ -26,38 +32,6 @@ Optional settings (configured in `appsettings.json`):
 - `RaceTilesBlobContainerName` - blob container name to use (default: `race-tiles`)
 - `TippecanoeBinaryPath` - path to the `tippecanoe` executable
 - `ForceRaceTileBuild` - when `true`, build even if no dirty marker exists (only the first run)
-
-## Run locally
-
-From the repository root:
-
-```bash
-cd RaceTileJob
-dotnet run --project RaceTileJob.csproj
-```
-
-Force a build even without a dirty marker:
-
-```bash
-dotnet run --project RaceTileJob.csproj -- --ForceRaceTileBuild true
-```
-
-Or using environment variables:
-
-```bash
-export CosmosDBConnection="<your-cosmos-connection>"
-export BlobStorageConnection="<your-blob-connection>"
-export RaceTilesBlobContainerName="race-tiles"
-export TippecanoeBinaryPath="/usr/local/bin/tippecanoe"
-
-dotnet run --project RaceTileJob.csproj
-```
-
-## Build
-
-```bash
-dotnet build RaceTileJob/RaceTileJob.csproj
-```
 
 ## Docker
 

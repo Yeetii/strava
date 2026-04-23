@@ -71,7 +71,7 @@ public class RaceTileBuildService
 
         if (!forceBuild && !dirtyExists)
         {
-            _logger.LogDebug("No dirty marker for race tile build in container {Container}.", _blobContainerName);
+            _logger.LogInformation("No dirty marker found in container {Container}; race tile build skipped.", _blobContainerName);
             return;
         }
 
@@ -129,11 +129,11 @@ public class RaceTileBuildService
             "--output", outputPmtilesPath,
             "--layer=trails",
             "--minimum-zoom=0",
-            "--maximum-zoom=14",
-            "--simplification=10",
-            "--coalesce-smallest-as-needed",
+            "-zg", // Automatically choose a maxzoom that should be sufficient to clearly distinguish the features and the detail within each feature
+            "-r1",
             "--no-tile-size-limit",
             "--no-feature-limit",
+            "--drop-densest-as-needed",
             "--force",
             geoJsonPath,
         ];
@@ -194,7 +194,13 @@ public class RaceTileBuildService
             var page = await iterator.ReadNextAsync(cancellationToken);
             foreach (var feature in page)
             {
-                features.Add(feature.ToFeature());
+                var geoJsonFeature = feature.ToFeature();
+                if (geoJsonFeature.Id is not null)
+                {
+                    geoJsonFeature.Properties["featureId"] = geoJsonFeature.Id;
+                }
+
+                features.Add(geoJsonFeature);
             }
         }
 
