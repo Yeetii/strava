@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Backend.Scrapers;
 
 namespace Backend;
 
@@ -207,8 +208,24 @@ public static partial class RaceHtmlScraper
                 results.Add(uri);
         }
 
+        // Cloud shared folders are often linked as "Downloads" / "download area" without "gpx" in the anchor text.
+        foreach (Match match in AnchorRegex().Matches(html))
+        {
+            var href = match.Groups["href"].Value;
+            if (href.StartsWith('#')) continue;
+            if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
+            if (uri.Scheme is not ("http" or "https")) continue;
+            if (!IsGoogleDriveSharedFolder(uri) && !DropboxShareParser.IsDropboxSharedFolder(uri)) continue;
+            if (seen.Add(uri.AbsoluteUri))
+                results.Add(uri);
+        }
+
         return results;
     }
+
+    private static bool IsGoogleDriveSharedFolder(Uri uri) =>
+        uri.Host.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase)
+        && uri.AbsolutePath.StartsWith("/drive/folders/", StringComparison.OrdinalIgnoreCase);
 
     // Extracts download links based on well-known download keywords in the visible link text.
     // Keywords: "Ladda ner", "Hämta", "Download" (case-insensitive partial match).

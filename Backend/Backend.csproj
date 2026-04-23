@@ -17,6 +17,7 @@
     <PackageReference Include="Azure.Storage.Blobs" Version="12.25.0" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Backend.Tests" />
     <ProjectReference Include="..\Shared\Shared.csproj" />
   </ItemGroup>
   <ItemGroup>

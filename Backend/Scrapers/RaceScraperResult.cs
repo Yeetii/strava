@@ -27,4 +27,9 @@ public record ScrapedRoute(
     Uri? LogoUrl = null,
     string? Date = null,
     string? StartFee = null,
-    string? Currency = null);
+    string? Currency = null,
+    /// <summary>
+    /// One of <see cref="GpxSourceKind"/> when coordinates came from a GPX file or cloud folder zip;
+    /// null for coordinate-less course placeholders or non-file traces.
+    /// </summary>
+    string? GpxSource = null);

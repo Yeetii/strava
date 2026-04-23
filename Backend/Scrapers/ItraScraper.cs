@@ -45,7 +45,8 @@ internal sealed class ItraScraper(ILogger logger) : IRaceScraper
             routes.Add(new ScrapedRoute(
                 Coordinates: coordinates,
                 Distance: distance,
-                ElevationGain: traceData.ElevationGain));
+                ElevationGain: traceData.ElevationGain,
+                GpxSource: GpxSourceKind.Itra));
         }
 
         return routes.Count > 0 ? new RaceScraperResult(routes) : null;

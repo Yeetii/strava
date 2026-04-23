@@ -202,7 +202,8 @@ internal sealed class BfsScraper(ILogger logger)
                 LogoUrl: bfsResult.LogoUrl,
                 Date: date,
                 StartFee: routeStartFee ?? bfsResult.StartFee,
-                Currency: routeCurrency ?? bfsResult.Currency));
+                Currency: routeCurrency ?? bfsResult.Currency,
+                GpxSource: GpxSourceResolver.Resolve(gpxUrl, startUrl)));
         }
 
         var scrapedDate = bfsResult.Routes.Select(r => r.Date).FirstOrDefault(d => d is not null) ?? bfsResult.StartPageDate;
@@ -266,6 +267,9 @@ internal sealed class BfsScraper(ILogger logger)
         var externalGpxProbes = new Dictionary<string, (string Html, Uri PageUrl)>(StringComparer.OrdinalIgnoreCase);
         // Google Drive folder URLs found during BFS — resolved to download links after the BFS loop.
         var driveFolderProbes = new Dictionary<string, (string Html, Uri PageUrl)>(StringComparer.OrdinalIgnoreCase);
+        // Dropbox shared folders — downloaded as zip after BFS; GPX entries stored for inline fetch.
+        var dropboxFolderProbes = new Dictionary<string, (string Html, Uri PageUrl)>(StringComparer.OrdinalIgnoreCase);
+        var inlineGpxByUrl = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string? startPageHtml = null;
 
         // Process one depth level at a time, fetching all pages in the level concurrently.
@@ -303,6 +307,12 @@ internal sealed class BfsScraper(ILogger logger)
                 if (pageUrl.AbsoluteUri.Equals(startUrl.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
                     startPageHtml = html;
 
+                // Visiting a cloud folder page directly (e.g. scrape URL is only the share link).
+                if (IsGoogleDriveFolder(pageUrl))
+                    driveFolderProbes.TryAdd(pageUrl.AbsoluteUri, (html, pageUrl));
+                if (DropboxShareParser.IsDropboxSharedFolder(pageUrl))
+                    dropboxFolderProbes.TryAdd(pageUrl.AbsoluteUri, (html, pageUrl));
+
                 var pageGpxLinks = RaceHtmlScraper.ExtractGpxLinksFromHtml(html, pageUrl);
                 if (pageGpxLinks.Count > 0)
                     pagesWithGpx.Add((pageUrl, html));
@@ -311,6 +321,10 @@ internal sealed class BfsScraper(ILogger logger)
                     if (IsGoogleDriveFolder(gpxLink))
                     {
                         driveFolderProbes.TryAdd(gpxLink.AbsoluteUri, (html, pageUrl));
+                    }
+                    else if (DropboxShareParser.IsDropboxSharedFolder(gpxLink))
+                    {
+                        dropboxFolderProbes.TryAdd(gpxLink.AbsoluteUri, (html, pageUrl));
                     }
                     else if (IsSameDomain(gpxLink, startUrl) || gpxLink.AbsolutePath.EndsWith(".gpx", StringComparison.OrdinalIgnoreCase))
                     {
@@ -365,6 +379,8 @@ internal sealed class BfsScraper(ILogger logger)
                 {
                     if (IsGoogleDriveFolder(dlLink))
                         driveFolderProbes.TryAdd(dlLink.AbsoluteUri, (html, pageUrl));
+                    else if (DropboxShareParser.IsDropboxSharedFolder(dlLink))
+                        dropboxFolderProbes.TryAdd(dlLink.AbsoluteUri, (html, pageUrl));
                 }
 
                 if (depth < MaxDepth)
@@ -430,6 +446,27 @@ internal sealed class BfsScraper(ILogger logger)
         if (driveFolderProbes.Count > 0)
             logger.LogDebug("BFS: Drive folder probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
 
+        // Dropbox shared folders: dl=1 returns a zip; extract .gpx files and register clickable folder URLs + fragment per entry.
+        foreach (var (folderUrl, (sourceHtml, sourcePageUrl)) in dropboxFolderProbes.Take(5))
+        {
+            logger.LogDebug("BFS: probing Dropbox shared folder {Url}", folderUrl);
+            var folderUri = new Uri(folderUrl);
+            var zipBytes = await TryFetchDropboxFolderZipAsync(httpClient, folderUri, cancellationToken);
+            if (zipBytes is null) continue;
+
+            var extracted = DropboxShareParser.ExtractGpxFromZip(zipBytes);
+            logger.LogDebug("BFS: Dropbox folder yielded {Count} GPX entries from zip", extracted.Count);
+            foreach (var (entryPath, gpxXml) in extracted)
+            {
+                var entryUri = DropboxShareParser.ToSharedFolderEntryUri(folderUri, entryPath);
+                inlineGpxByUrl[entryUri.AbsoluteUri] = gpxXml;
+                gpxUrlToPage.TryAdd(entryUri.AbsoluteUri, (sourceHtml, sourcePageUrl));
+            }
+        }
+
+        if (dropboxFolderProbes.Count > 0)
+            logger.LogDebug("BFS: Dropbox folder probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
+
         // Fetch external CSS stylesheets from the start page so background-image URLs are found by image extraction.
         string? cssContent = null;
         if (startPageHtml is not null)
@@ -493,7 +530,8 @@ internal sealed class BfsScraper(ILogger logger)
             return new BfsResult([], imageUrl, logoUrl, startPageDate, coursePages, extractedName, startFee, currency, startPageElevation);
 
         // Fetch all GPX URLs concurrently.
-        var gpxTasks = gpxUrlToPage.Keys.Select(url => TryFetchGpxFromUrlAsync(httpClient, new Uri(url), cancellationToken));
+        var gpxTasks = gpxUrlToPage.Keys.Select(url =>
+            TryFetchGpxFromUrlAsync(httpClient, new Uri(url), cancellationToken, inlineGpxByUrl));
         var gpxResults = await Task.WhenAll(gpxTasks);
         var parsedCount = gpxResults.Count(r => r.HasValue);
         var failedCount = gpxUrlToPage.Count - parsedCount;
@@ -525,9 +563,21 @@ internal sealed class BfsScraper(ILogger logger)
     private async Task<(ParsedGpxRoute Route, Uri GpxUrl)?> TryFetchGpxFromUrlAsync(
         HttpClient httpClient,
         Uri url,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? inlineGpxByUrl = null)
     {
-        var content = await TryFetchStringAsync(httpClient, url, cancellationToken);
+        if (inlineGpxByUrl?.TryGetValue(url.AbsoluteUri, out var inlineXml) == true)
+        {
+            var inlineParsed = GpxParser.TryParseRoute(inlineXml);
+            if (inlineParsed is not null)
+                return (inlineParsed, url);
+        }
+
+        var fetchUrl = DropboxShareParser.IsDropboxHost(url) && DropboxShareParser.IsDropboxSharedFile(url)
+            ? DropboxShareParser.WithDl1(url)
+            : url;
+
+        var content = await TryFetchStringAsync(httpClient, fetchUrl, cancellationToken, inlineGpxByUrl);
         if (content is null) return null;
 
         var parsed = GpxParser.TryParseRoute(content);
@@ -546,7 +596,7 @@ internal sealed class BfsScraper(ILogger logger)
         logger.LogDebug("BFS: {Url} has {Count} secondary URLs", url, secondaryUrls.Count);
         var secondaryTasks = secondaryUrls.Take(10).Select(async link =>
         {
-            var linkContent = await TryFetchStringAsync(httpClient, link, cancellationToken);
+            var linkContent = await TryFetchStringAsync(httpClient, link, cancellationToken, inlineGpxByUrl);
             if (linkContent is null) return ((ParsedGpxRoute, Uri)?)null;
             var linkParsed = GpxParser.TryParseRoute(linkContent);
             return linkParsed is not null ? (linkParsed, link) : null;
@@ -558,13 +608,24 @@ internal sealed class BfsScraper(ILogger logger)
 
     private const int MaxResponseBytes = 2 * 1024 * 1024; // 2 MB
 
-    private async Task<string?> TryFetchStringAsync(HttpClient httpClient, Uri url, CancellationToken cancellationToken)
+    private async Task<string?> TryFetchStringAsync(
+        HttpClient httpClient,
+        Uri url,
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? inlineGpxByUrl = null)
     {
+        if (inlineGpxByUrl?.TryGetValue(url.AbsoluteUri, out var inline) == true)
+            return inline;
+
+        var fetchUri = DropboxShareParser.IsDropboxHost(url) && DropboxShareParser.IsDropboxSharedFile(url)
+            ? DropboxShareParser.WithDl1(url)
+            : url;
+
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(30));
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, fetchUri);
             if (httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
                 request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Peakshunters/1.0)");
             using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
@@ -597,9 +658,20 @@ internal sealed class BfsScraper(ILogger logger)
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "BfsScraper: could not fetch {Url}", url);
+            logger.LogDebug(ex, "BfsScraper: could not fetch {Url}", fetchUri);
             return null;
         }
+    }
+
+    private async Task<byte[]?> TryFetchDropboxFolderZipAsync(
+        HttpClient httpClient,
+        Uri folderShareUrl,
+        CancellationToken cancellationToken)
+    {
+        var bytes = await DropboxShareParser.TryDownloadSharedFolderZipAsync(httpClient, folderShareUrl, cancellationToken);
+        if (bytes is null)
+            logger.LogDebug("BfsScraper: could not download Dropbox folder zip {Url}", folderShareUrl);
+        return bytes;
     }
 
     /// <summary>Checks whether a URL points to a Google Drive folder.</summary>

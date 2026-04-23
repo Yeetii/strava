@@ -115,6 +115,20 @@ public class RaceHtmlScraperTests
         Assert.Single(links, u => u.AbsoluteUri == "https://example.com/race.gpx");
     }
 
+    [Fact]
+    public void ExtractGpxLinksFromHtml_FindsDropboxFolder_when_anchor_has_no_gpx_word()
+    {
+        const string html = """
+            <html><body>
+              <p>GPX from the <a href="https://www.dropbox.com/sh/npbmlzm6saso1bc/AADPKBDsvV2ynm89zKN7DpT8a?dl=0">download area</a>.</p>
+            </body></html>
+            """;
+
+        var links = RaceHtmlScraper.ExtractGpxLinksFromHtml(html, new Uri("https://mmctrail.no/100m"));
+
+        Assert.Contains(links, u => u.Host.Contains("dropbox", StringComparison.OrdinalIgnoreCase));
+    }
+
     // ── ExtractDownloadLinksFromHtml ──────────────────────────────────────────
 
     [Fact]

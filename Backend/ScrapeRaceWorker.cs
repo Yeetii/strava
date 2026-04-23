@@ -354,7 +354,7 @@ public class ScrapeRaceWorker
             StartFee = result.StartFee,
             Currency = result.Currency,
             Routes = result.Routes.Count > 0
-                ? result.Routes.Select(r => new ScrapedRouteOutput
+                ? [.. result.Routes.Select(r => new ScrapedRouteOutput
                 {
                     Coordinates = r.Coordinates.Count >= 2
                         ? r.Coordinates.Select(c => new[] { c.Lng, c.Lat }).ToList()
@@ -369,7 +369,8 @@ public class ScrapeRaceWorker
                     Date = r.Date,
                     StartFee = r.StartFee,
                     Currency = r.Currency,
-                }).ToList()
+                    GpxSource = r.GpxSource,
+                })]
                 : null,
         };
     }

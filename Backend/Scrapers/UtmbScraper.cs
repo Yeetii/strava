@@ -65,7 +65,8 @@ internal sealed class UtmbScraper(ILogger logger) : IRaceScraper
                 Coordinates: parsed.Coordinates,
                 SourceUrl: job.UtmbUrl,
                 Name: parsed.Name,
-                GpxUrl: gpxUrl);
+                GpxUrl: gpxUrl,
+                GpxSource: GpxSourceKind.Utmb);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

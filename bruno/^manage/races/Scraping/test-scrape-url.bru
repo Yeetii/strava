@@ -1,16 +1,16 @@
 meta {
   name: Test Scrape URL
   type: http
-  seq: 6
+  seq: 1
 }
 
 get {
-  url: http://localhost:123/api/scrape/test?url=https://thearctictriple.no
+  url: http://localhost:1234/api/scrape/test?url=https://mmctrail.no
   body: none
   auth: none
 }
 
 params:query {
-  url: https://thearctictriple.no
+  url: https://mmctrail.no
   ~code: {{functionKey}}
 }

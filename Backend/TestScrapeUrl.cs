@@ -54,6 +54,7 @@ public class TestScrapeUrl(
                 date = r.Date,
                 startFee = r.StartFee,
                 currency = r.Currency,
+                gpxSource = r.GpxSource,
             }) ?? [],
         };
 

@@ -99,4 +99,9 @@ public class ScrapedRouteOutput
     public string? Date { get; set; }
     public string? StartFee { get; set; }
     public string? Currency { get; set; }
+
+    /// <summary>
+    /// Where GPX coordinates came from: <c>dropbox</c>, <c>google_drive</c>, <c>internal_gpx</c>, <c>external_gpx</c>.
+    /// </summary>
+    public string? GpxSource { get; set; }
 }

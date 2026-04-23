@@ -1,11 +1,11 @@
 meta {
-  name: DiscoverItraRaces
+  name: Trigger QueueRaceTileBuildJobs
   type: http
-  seq: 8
+  seq: 7
 }
 
 post {
-  url: {{backendUrl}}/admin/functions/DiscoverItraRaces
+  url: {{backendUrl}}/admin/functions/QueueRaceTileBuildJobs
   body: json
   auth: none
 }

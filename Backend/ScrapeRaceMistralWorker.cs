@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.IO;
 using Azure.Messaging.ServiceBus;
 using Backend.Scrapers;
 using Microsoft.Azure.Functions.Worker;
@@ -132,18 +133,11 @@ public class ScrapeRaceMistralWorker
             routes.Add(await BuildRouteAsync(candidate, url, httpClient, cancellationToken));
         }
 
-        if (routes.Count == 0)
+        // Mistral often omits GPX; HTML may link Dropbox as "Downloads" / "download area" (no "gpx" in anchor text).
+        if (!routes.Any(r => r.Coordinates.Count >= 2))
         {
-            var fallbackGpxUrls = RaceHtmlScraper.ExtractGpxLinksFromHtml(html, url);
-            foreach (var gpxUrl in fallbackGpxUrls)
-            {
-                routes.Add(await BuildRouteAsync(new MistralAgentRouteCandidate
-                {
-                    GpxUrl = gpxUrl.AbsoluteUri,
-                    SourceUrl = gpxUrl.AbsoluteUri,
-                    Name = fallbackName
-                }, url, httpClient, cancellationToken));
-            }
+            routes.Clear();
+            await AppendRoutesFromHtmlGpxDiscoveryAsync(routes, html, url, httpClient, fallbackName, cancellationToken);
         }
 
         var websiteUrl = TryParseUri(assistantResponse.WebsiteUrl, url) ?? url;
@@ -155,6 +149,56 @@ public class ScrapeRaceMistralWorker
             ExtractedDate: assistantResponse.ExtractedDate,
             StartFee: assistantResponse.StartFee,
             Currency: assistantResponse.Currency);
+    }
+
+    private async Task AppendRoutesFromHtmlGpxDiscoveryAsync(
+        List<ScrapedRoute> routes,
+        string html,
+        Uri pageUrl,
+        HttpClient httpClient,
+        string? fallbackName,
+        CancellationToken cancellationToken)
+    {
+        foreach (var gpxUrl in RaceHtmlScraper.ExtractGpxLinksFromHtml(html, pageUrl))
+        {
+            if (DropboxShareParser.IsDropboxSharedFolder(gpxUrl))
+            {
+                var zipBytes = await DropboxShareParser.TryDownloadSharedFolderZipAsync(httpClient, gpxUrl, cancellationToken);
+                if (zipBytes is null) continue;
+                foreach (var (entryPath, gpxXml) in DropboxShareParser.ExtractGpxFromZip(zipBytes))
+                {
+                    var fileLabel = Path.GetFileNameWithoutExtension(entryPath.Replace('\\', '/').Split('/').Last());
+                    var parsed = GpxParser.TryParseRoute(gpxXml, fileLabel);
+                    if (parsed is null) continue;
+                    var routeName = string.IsNullOrWhiteSpace(fallbackName)
+                        ? parsed.Name
+                        : $"{fallbackName.TrimEnd()} — {fileLabel}";
+                    var entryUri = DropboxShareParser.ToSharedFolderEntryUri(gpxUrl, entryPath);
+                    routes.Add(new ScrapedRoute(
+                        Coordinates: parsed.Coordinates,
+                        SourceUrl: pageUrl,
+                        Name: routeName.Trim(),
+                        Distance: null,
+                        ElevationGain: null,
+                        GpxUrl: entryUri,
+                        ImageUrl: null,
+                        LogoUrl: null,
+                        Date: null,
+                        StartFee: null,
+                        Currency: null,
+                        GpxSource: GpxSourceResolver.Resolve(entryUri, pageUrl)));
+                }
+            }
+            else
+            {
+                routes.Add(await BuildRouteAsync(new MistralAgentRouteCandidate
+                {
+                    GpxUrl = gpxUrl.AbsoluteUri,
+                    SourceUrl = pageUrl.AbsoluteUri,
+                    Name = fallbackName
+                }, pageUrl, httpClient, cancellationToken));
+            }
+        }
     }
 
     private async Task<ScrapedRoute> BuildRouteAsync(
@@ -191,19 +235,23 @@ public class ScrapeRaceMistralWorker
             LogoUrl: null,
             Date: candidate.Date,
             StartFee: candidate.StartFee,
-            Currency: candidate.Currency);
+            Currency: candidate.Currency,
+            GpxSource: gpxUrl is not null ? GpxSourceResolver.Resolve(gpxUrl, pageUrl) : null);
     }
 
     private async Task<string?> TryFetchStringAsync(HttpClient httpClient, Uri url, CancellationToken cancellationToken)
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            var fetchUri = DropboxShareParser.IsDropboxSharedFile(url)
+                ? DropboxShareParser.WithDl1(url)
+                : url;
+            using var request = new HttpRequestMessage(HttpMethod.Get, fetchUri);
             request.Headers.UserAgent.ParseAdd("(https://peakshunters.erikmagnusson.com)");
             using var response = await httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Failed to fetch {Url}: {StatusCode}", url, response.StatusCode);
+                _logger.LogWarning("Failed to fetch {Url}: {StatusCode}", fetchUri, response.StatusCode);
                 return null;
             }
             return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -388,6 +436,7 @@ public class ScrapeRaceMistralWorker
                     Date = r.Date,
                     StartFee = r.StartFee,
                     Currency = r.Currency,
+                    GpxSource = r.GpxSource,
                 }).ToList()
                 : null,
         };
