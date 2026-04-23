@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
@@ -87,8 +88,8 @@ public class RaceTileBuildService
             var runId = Guid.NewGuid().ToString("N");
             _logger.LogInformation("Starting race tile build {RunId}. ForceBuild={ForceBuild}.", runId, forceBuild);
 
-            var geoJsonPath = await ExportAllRaceFeaturesToGeoJsonAsync(runId, cancellationToken);
-            var pmtilesPath = await BuildPmtilesAsync(runId, geoJsonPath, cancellationToken);
+            var (geoJsonPath, geoJsonFeatureCount) = await ExportAllRaceFeaturesToGeoJsonAsync(runId, cancellationToken);
+            var (pmtilesPath, pmtilesFeatureCount) = await BuildPmtilesAsync(runId, geoJsonPath, cancellationToken);
             await ValidateAndPublishPmtilesAsync(container, runId, pmtilesPath, cancellationToken);
 
             if (leaseAcquired)
@@ -97,7 +98,7 @@ public class RaceTileBuildService
                 leaseAcquired = false;
             }
 
-            _logger.LogInformation("Race tile build completed successfully {RunId}.", runId);
+            _logger.LogInformation("Race tile build completed successfully {RunId}. Wrote {FeatureCount} PMTiles features.", runId, pmtilesFeatureCount);
         }
         catch (RequestFailedException ex) when (
             dirtyExists &&
@@ -130,12 +131,28 @@ public class RaceTileBuildService
             "--minimum-zoom=0",
             "--maximum-zoom=14",
             "--simplification=10",
-            "--cluster-distance=5",
             "--coalesce-smallest-as-needed",
+            "--no-tile-size-limit",
             "--no-feature-limit",
             "--force",
             geoJsonPath,
         ];
+    }
+
+    public static int ParseTippecanoeFeatureCount(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return -1;
+
+        var match = Regex.Match(output, @"Wrote\s+(?<count>\d+)\s+features", RegexOptions.IgnoreCase);
+        if (match.Success && int.TryParse(match.Groups["count"].Value, out var count))
+            return count;
+
+        match = Regex.Match(output, @"(?<count>\d+)\s+features", RegexOptions.IgnoreCase);
+        if (match.Success && int.TryParse(match.Groups["count"].Value, out count))
+            return count;
+
+        return -1;
     }
 
     public static bool IsValidPmtilesFile(string path, int minimumSizeBytes = MinimumPmtilesSizeBytes)
@@ -163,7 +180,7 @@ public class RaceTileBuildService
         return container;
     }
 
-    private async Task<string> ExportAllRaceFeaturesToGeoJsonAsync(string runId, CancellationToken cancellationToken)
+    private async Task<(string GeoJsonPath, int FeatureCount)> ExportAllRaceFeaturesToGeoJsonAsync(string runId, CancellationToken cancellationToken)
     {
         var container = _cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.RacesContainer);
         var query = new QueryDefinition("SELECT * FROM c WHERE c.kind = @kind")
@@ -189,10 +206,10 @@ public class RaceTileBuildService
         await File.WriteAllTextAsync(geoJsonPath, geoJson, cancellationToken);
 
         _logger.LogInformation("Exported {Count} race features to GeoJSON for run {RunId}.", features.Count, runId);
-        return geoJsonPath;
+        return (geoJsonPath, features.Count);
     }
 
-    private async Task<string> BuildPmtilesAsync(string runId, string geoJsonPath, CancellationToken cancellationToken)
+    private async Task<(string OutputPath, int FeatureCount)> BuildPmtilesAsync(string runId, string geoJsonPath, CancellationToken cancellationToken)
     {
         if (!File.Exists(_tippecanoeBinary))
             throw new FileNotFoundException(
@@ -236,8 +253,9 @@ public class RaceTileBuildService
             throw new InvalidOperationException($"Tippecanoe failed with exit code {process.ExitCode}: {stderr}");
         }
 
+        var featureCount = ParseTippecanoeFeatureCount(stdout.ToString() + stderr.ToString());
         _logger.LogInformation("Tippecanoe finished for run {RunId} with {OutputBytes} bytes using binary {Binary}.", runId, new FileInfo(outputPath).Length, _tippecanoeBinary);
-        return outputPath;
+        return (outputPath, featureCount);
     }
 
     private static string? FindTippecanoeBinary()

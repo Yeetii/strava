@@ -21,6 +21,7 @@ public class RaceTileBuildServiceTests
         Assert.Contains("--simplification=10", args);
         Assert.Contains("--cluster-distance=8", args);
         Assert.Contains("--coalesce-smallest-as-needed", args);
+        Assert.Contains("--no-tile-size-limit", args);
         Assert.Contains("--no-feature-limit", args);
         Assert.Contains("--force", args);
         Assert.Contains(input, args);
@@ -58,6 +59,26 @@ public class RaceTileBuildServiceTests
         {
             File.Delete(temporaryFile);
         }
+    }
+
+    [Fact]
+    public void ParseTippecanoeFeatureCount_ReturnsCountFromOutput()
+    {
+        var output = "Wrote 1700 features to /tmp/trails.pmtiles\nSome other info";
+
+        var count = RaceTileBuildService.ParseTippecanoeFeatureCount(output);
+
+        Assert.Equal(1700, count);
+    }
+
+    [Fact]
+    public void ParseTippecanoeFeatureCount_ReturnsNegativeWhenMissing()
+    {
+        var output = "No feature count present";
+
+        var count = RaceTileBuildService.ParseTippecanoeFeatureCount(output);
+
+        Assert.Equal(-1, count);
     }
 
     [Fact]
