@@ -103,6 +103,86 @@ public class AssembleRaceWorkerTests
     }
 
     [Fact]
+    public void DistancesRoughMatchKm_Ultra509And511_IsMatch()
+    {
+        Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(509, 511));
+        Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(511, 509));
+    }
+
+    [Fact]
+    public void DistancesRoughMatchKm_Marathon45And50_IsNotMatch()
+    {
+        Assert.False(AssembleRaceWorker.DistancesRoughMatchKm(45, 50));
+    }
+
+    [Fact]
+    public void BuildCanonicalRouteKmMap_RejectsTransitiveNeighborChainWhenMinAndMaxDifferTooMuch()
+    {
+        // Consecutive pairs match (~2%), but 100 vs 104 exceeds 3% of 104 → must not be one cluster.
+        Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(100, 102));
+        Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(102, 104));
+        Assert.False(AssembleRaceWorker.DistancesRoughMatchKm(100, 104));
+
+        var map = AssembleRaceWorker.BuildCanonicalRouteKmMap([100.0, 102.0, 104.0]);
+        Assert.Equal(100.0, map[100.0]);
+        Assert.Equal(100.0, map[102.0]);
+        Assert.Equal(104.0, map[104.0]);
+    }
+
+    [Fact]
+    public void BuildCanonicalRouteKmMap_UltraCluster_EveryPairWithin3PercentOfLonger()
+    {
+        var kms = new List<double> { 509.0, 510.0, 511.0 };
+        foreach (var i in Enumerable.Range(0, kms.Count))
+            foreach (var j in Enumerable.Range(i + 1, kms.Count - i - 1))
+                Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(kms[i], kms[j]));
+
+        var map = AssembleRaceWorker.BuildCanonicalRouteKmMap(kms);
+        Assert.All(kms, k => Assert.Equal(509.0, map[k]));
+    }
+
+    [Fact]
+    public void AssembleRaces_NoScrapers_DeduplicatesExGotland509And511SameName()
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "exgotland.se",
+            Url = "https://exgotland.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-20T16:44:05.4039290Z",
+                        Name = "Ex Gotland Run",
+                        Date = "2026-06-01",
+                        Latitude = 57.6348,
+                        Longitude = 18.2948,
+                        Distance = "509 km",
+                        Country = "SE",
+                    },
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-21T10:00:00Z",
+                        Name = "Ex Gotland Run",
+                        Date = "2026-06-01",
+                        Latitude = 57.6348,
+                        Longitude = 18.2948,
+                        Distance = "511 km",
+                        Country = "SE",
+                    }
+                ]
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Single(races);
+        Assert.Equal("Ex Gotland Run", races[0].Properties["name"].ToString());
+    }
+
+    [Fact]
     public void AssembleRaces_NoScrapers_DoesNotDeduplicateSameDistanceDifferentName()
     {
         var doc = new RaceOrganizerDocument
@@ -190,7 +270,7 @@ public class AssembleRaceWorkerTests
 
         var races = AssembleRaceWorker.AssembleRaces(doc);
 
-        // Scraper routes sorted: 8 km, 12 km, 33 km, 45 km; then unclaimed 21 km appended.
+        // Scraper routes sorted: 8 km, 12 km, 33 km, 49 km; then unclaimed 21 km appended.
         var distances = races
             .Select(r => r.Properties.TryGetValue("distance", out var d) ? d?.ToString() : null)
             .ToList();
@@ -198,7 +278,7 @@ public class AssembleRaceWorkerTests
         Assert.Equal("8 km", distances[0]);
         Assert.Equal("12 km", distances[1]);
         Assert.Equal("33 km", distances[2]);
-        Assert.Equal("45 km", distances[3]);
+        Assert.Equal("49 km", distances[3]);
         Assert.Equal("21 km", distances[4]);
     }
 
@@ -222,13 +302,13 @@ public class AssembleRaceWorkerTests
     {
         var doc = MakeGbgTrailrunDoc();
 
-        // The 45 km route in BFS has date = 2026-08-23.
+        // The 49 km route in BFS has date = 2026-08-23.
         var races = AssembleRaceWorker.AssembleRaces(doc);
 
-        var race45 = races.Single(r => r.Properties.TryGetValue("distance", out var d) && d?.ToString() == "45 km");
+        var race49 = races.Single(r => r.Properties.TryGetValue("distance", out var d) && d?.ToString() == "49 km");
         // Discovery date is 2026-09-05, bfs route date is 2026-08-23.
         // 2026-09-05 > 2026-08-23, so discovery date should win.
-        Assert.Equal("2026-09-05", race45.Properties["date"].ToString());
+        Assert.Equal("2026-09-05", race49.Properties["date"].ToString());
     }
 
     [Fact]
@@ -251,9 +331,9 @@ public class AssembleRaceWorkerTests
 
         var races = AssembleRaceWorker.AssembleRaces(doc);
 
-        var race45 = races.Single(r => r.Properties.TryGetValue("distance", out var d) && d?.ToString() == "45 km");
+        var race49 = races.Single(r => r.Properties.TryGetValue("distance", out var d) && d?.ToString() == "49 km");
         // BFS date 2026-08-23 > discovery date 2025-09-05 → bfs date wins.
-        Assert.Equal("2026-08-23", race45.Properties["date"].ToString());
+        Assert.Equal("2026-08-23", race49.Properties["date"].ToString());
     }
 
     [Fact]
@@ -884,7 +964,7 @@ public class AssembleRaceWorkerTests
     [Fact]
     public void AssembleRaces_CloseDistanceClaimsDiscovery()
     {
-        // Scraper route at 45 km should claim the 50 km discovery distance (within 15%).
+        // Scraper route at 49 km should claim the 50 km discovery distance (under 3% of 50 km).
         var doc = new RaceOrganizerDocument
         {
             Id = "close.se",
@@ -910,7 +990,7 @@ public class AssembleRaceWorkerTests
                     ScrapedAtUtc = "2026-04-18T22:00:00Z",
                     Routes =
                     [
-                        new ScrapedRouteOutput { Name = "BFS 45k", Distance = "45 km" }
+                        new ScrapedRouteOutput { Name = "BFS 49k", Distance = "49 km" }
                     ]
                 }
             }
@@ -918,9 +998,9 @@ public class AssembleRaceWorkerTests
 
         var races = AssembleRaceWorker.AssembleRaces(doc);
 
-        // 45 km route claims the 50 km discovery → no unclaimed distances.
+        // 49 km route claims the 50 km discovery → no unclaimed distances.
         Assert.Single(races);
-        Assert.Equal("45 km", races[0].Properties["distance"].ToString());
+        Assert.Equal("49 km", races[0].Properties["distance"].ToString());
     }
 
     [Fact]
@@ -1161,8 +1241,8 @@ public class AssembleRaceWorkerTests
                         new ScrapedRouteOutput
                         {
                             SourceUrl = "https://gbgtrailrun.se/tavlingsinfo/",
-                            Name = "Gbgtrailrun 45 km",
-                            Distance = "45 km",
+                            Name = "Gbgtrailrun 49 km",
+                            Distance = "49 km",
                             Date = "2026-08-23",
                             StartFee = "200",
                             Currency = "SEK",

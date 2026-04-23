@@ -1,11 +1,11 @@
 meta {
-  name: DiscoverTraceDeTrailRaces
+  name: AssembleRaceWorker
   type: http
-  seq: 6
+  seq: 9
 }
 
 post {
-  url: {{backendUrl}}/admin/functions/DiscoverTraceDeTrailRaces
+  url: {{backendUrl}}/admin/functions/AssembleRaceWorker
   body: json
   auth: none
 }
@@ -16,6 +16,6 @@ headers {
 
 body:json {
   {
-    "input": ""
+    "input": "gbgtrailrun.se"
   }
 }

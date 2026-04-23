@@ -309,22 +309,54 @@ public class AssembleRaceWorker(
     {
         if (discoveries.Count == 0) return [];
 
-        var grouped = discoveries
-            .GroupBy(d => (
-                NameKey: NormalizeNameKey(d.Entry.Name),
-                DistanceKey: NormalizeDistanceKey(d.Entry.Distance)))
-            .ToList();
+        var arr = discoveries.ToList();
+        var n = arr.Count;
+        var parent = new int[n];
+        for (int i = 0; i < n; i++) parent[i] = i;
+
+        int Find(int x)
+        {
+            while (parent[x] != x)
+                x = parent[x] = parent[parent[x]];
+            return x;
+        }
+
+        void Union(int a, int b)
+        {
+            a = Find(a);
+            b = Find(b);
+            if (a != b) parent[b] = a;
+        }
+
+        static string NameBucketKey(string? name) =>
+            NormalizeNameKey(name) ?? "\u0000anon";
+
+        for (int i = 0; i < n; i++)
+        {
+            for (int j = i + 1; j < n; j++)
+            {
+                if (!string.Equals(NameBucketKey(arr[i].Entry.Name), NameBucketKey(arr[j].Entry.Name),
+                        StringComparison.Ordinal))
+                    continue;
+                if (DiscoveryDistanceFieldsRoughMatch(arr[i].Entry.Distance, arr[j].Entry.Distance))
+                    Union(i, j);
+            }
+        }
+
+        var components = new Dictionary<int, List<int>>();
+        for (int i = 0; i < n; i++)
+        {
+            var r = Find(i);
+            if (!components.TryGetValue(r, out var list))
+                components[r] = list = [];
+            list.Add(i);
+        }
 
         var result = new List<(string Source, SourceDiscovery Entry)>();
-        foreach (var group in grouped)
+        foreach (var list in components.Values.OrderBy(g => g.Min()))
         {
-            if (group.Key.DistanceKey is null)
-            {
-                result.AddRange(group);
-                continue;
-            }
-
-            var best = group
+            var best = list
+                .Select(idx => arr[idx])
                 .OrderByDescending(d => ParseDate(d.Entry.Date))
                 .ThenByDescending(d => ParseDate(d.Entry.DiscoveredAtUtc))
                 .First();
@@ -338,6 +370,55 @@ public class AssembleRaceWorker(
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         return name.Trim().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// True when two distances (km) differ by strictly less than 3% of the larger value
+    /// (e.g. 509 km vs 511 km).
+    /// </summary>
+    public static bool DistancesRoughMatchKm(double aKm, double bKm)
+    {
+        var diff = Math.Abs(aKm - bKm);
+        if (diff == 0) return true;
+        var longer = Math.Max(aKm, bKm);
+        if (longer <= 0) return false;
+        return diff < 0.03 * longer;
+    }
+
+    private static bool IsPureNumericCommaSeparatedDistance(string distance)
+    {
+        var tokens = distance.Split(',')
+            .Select(t => t.Trim())
+            .Where(t => !string.IsNullOrEmpty(t))
+            .ToList();
+        if (tokens.Count == 0) return false;
+        foreach (var token in tokens)
+        {
+            var stripped = System.Text.RegularExpressions.Regex.Replace(
+                token, @"(?i)\s*(km|k|mi|m)\s*$", "").Trim();
+            if (!double.TryParse(stripped, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out _))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool DiscoveryDistanceFieldsRoughMatch(string? da, string? db)
+    {
+        if (string.IsNullOrWhiteSpace(da) && string.IsNullOrWhiteSpace(db)) return true;
+        if (string.IsNullOrWhiteSpace(da) || string.IsNullOrWhiteSpace(db)) return false;
+        if (!IsPureNumericCommaSeparatedDistance(da) || !IsPureNumericCommaSeparatedDistance(db))
+            return string.Equals(NormalizeDistanceKey(da), NormalizeDistanceKey(db), StringComparison.Ordinal);
+
+        var na = ParseDistanceList(da).OrderBy(x => x).ToList();
+        var nb = ParseDistanceList(db).OrderBy(x => x).ToList();
+        if (na.Count != nb.Count) return false;
+        for (int i = 0; i < na.Count; i++)
+        {
+            if (!DistancesRoughMatchKm(na[i], nb[i]))
+                return false;
+        }
+        return true;
     }
 
     private static string? NormalizeDistanceKey(string? distance)
@@ -410,9 +491,7 @@ public class AssembleRaceWorker(
         if (routeKm is null || orderedDiscoveries.Count == 0)
             return fallback;
 
-        const double toleranceKm = 1.0;
-
-        // Within tolerance, prefer closest distance match. Single-distance entries win over
+        // Within ~3% of the longer distance, prefer closest distance match. Single-distance entries win over
         // multi-distance entries at the same delta. Source priority (list order) breaks ties.
         SourceDiscovery? bestSingle = null;
         double bestSingleDelta = double.MaxValue;
@@ -424,8 +503,10 @@ public class AssembleRaceWorker(
             var dists = ParseDistanceList(entry.Distance);
             if (dists.Count == 0) continue;
 
-            double closestDelta = dists.Min(d => Math.Abs(d - routeKm.Value));
-            if (closestDelta > toleranceKm) continue;
+            var matching = dists.Where(d => DistancesRoughMatchKm(d, routeKm.Value)).ToList();
+            if (matching.Count == 0) continue;
+
+            double closestDelta = matching.Min(d => Math.Abs(d - routeKm.Value));
 
             if (dists.Count == 1)
             {
@@ -469,8 +550,9 @@ public class AssembleRaceWorker(
     }
 
     /// <summary>
-    /// Claims the closest discovery distance for the given route km. If a discovery distance
-    /// is within 15% (min 2 km) of the route, it is added to <paramref name="claimedKm"/>.
+    /// Claims the closest discovery distance for the given route km when that discovery distance
+    /// is within ~3% of the longer of the two values; the claimed numeric is then added to
+    /// <paramref name="claimedKm"/>.
     /// </summary>
     internal static void ClaimClosestDistance(
         double routeKm,
@@ -484,6 +566,7 @@ public class AssembleRaceWorker(
         {
             foreach (var d in ParseDistanceList(entry.Distance))
             {
+                if (!DistancesRoughMatchKm(d, routeKm)) continue;
                 var delta = Math.Abs(d - routeKm);
                 if (delta < bestDelta)
                 {
@@ -493,8 +576,7 @@ public class AssembleRaceWorker(
             }
         }
 
-        var tolerance = Math.Max(routeKm * 0.15, 2.0);
-        if (bestDist.HasValue && bestDelta <= tolerance)
+        if (bestDist.HasValue)
             claimedKm.Add(bestDist.Value);
     }
 
@@ -522,8 +604,9 @@ public class AssembleRaceWorker(
                 if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var km))
                 {
-                    if (!seenKm.Add(km)) continue;
-                    if (!claimedKm.Contains(km))
+                    if (seenKm.Any(s => DistancesRoughMatchKm(s, km))) continue;
+                    seenKm.Add(km);
+                    if (!claimedKm.Any(c => DistancesRoughMatchKm(c, km)))
                         numeric.Add((km, trimmed));
                 }
                 else
@@ -611,8 +694,22 @@ public class AssembleRaceWorker(
         if (routes.Count <= 1)
             return routes;
 
+        var distinctKm = routes
+            .Select(r => ParseDistanceKm(r.Route.Distance))
+            .Where(k => k.HasValue)
+            .Select(k => k!.Value)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+        var canonicalRouteKm = BuildCanonicalRouteKmMap(distinctKm);
+
         var grouped = routes
-            .GroupBy(r => ParseDistanceKm(r.Route.Distance))
+            .GroupBy(r =>
+            {
+                var km = ParseDistanceKm(r.Route.Distance);
+                if (km is null) return (double?)null;
+                return canonicalRouteKm.GetValueOrDefault(km.Value, km.Value);
+            })
             .ToList();
 
         var result = new List<(string ScraperKey, ScrapedRouteOutput Route)>();
@@ -635,17 +732,52 @@ public class AssembleRaceWorker(
         return result;
     }
 
+    /// <summary>
+    /// Maps each distinct route km to a canonical km (cluster minimum). Values are clustered in
+    /// ascending order; <paramref name="sortedDistinctKm"/> must be sorted ascending.
+    /// A value joins the current cluster only if it is within ~3% of the <em>cluster minimum</em>
+    /// (same rule as <see cref="DistancesRoughMatchKm"/>), so every pair in a cluster is within
+    /// ~3% of <c>max(pair)</c> — not only consecutive neighbors.
+    /// </summary>
+    internal static Dictionary<double, double> BuildCanonicalRouteKmMap(List<double> sortedDistinctKm)
+    {
+        var map = new Dictionary<double, double>();
+        if (sortedDistinctKm.Count == 0) return map;
+
+        double clusterMin = sortedDistinctKm[0];
+        var clusters = new List<List<double>> { new() { clusterMin } };
+        foreach (var v in sortedDistinctKm.Skip(1))
+        {
+            var last = clusters[^1];
+            if (DistancesRoughMatchKm(clusterMin, v))
+                last.Add(v);
+            else
+            {
+                clusters.Add(new List<double> { v });
+                clusterMin = v;
+            }
+        }
+
+        foreach (var c in clusters)
+        {
+            var canon = c.Min();
+            foreach (var v in c)
+                map[v] = canon;
+        }
+
+        return map;
+    }
+
     private static int CountMatchingDiscoveryEntries(
         double routeKm,
         IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries)
     {
         var seenEntries = new HashSet<SourceDiscovery>();
-        const double toleranceKm = 1.0;
 
         foreach (var (_, entry) in flatDiscoveries)
         {
             var dists = ParseDistanceList(entry.Distance);
-            if (dists.Any(d => Math.Abs(d - routeKm) <= toleranceKm))
+            if (dists.Any(d => DistancesRoughMatchKm(d, routeKm)))
                 seenEntries.Add(entry);
         }
 
