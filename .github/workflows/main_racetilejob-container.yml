@@ -18,11 +18,11 @@ on:
   workflow_dispatch:
 
 env:
-  ACR_NAME: 'my-acr-name'
-  ACR_REGISTRY: 'my-acr-name.azurecr.io'
-  ACR_REPOSITORY: 'racetilejob'
-  AZURE_CONTAINERAPP_NAME: 'my-containerapp-name'
-  AZURE_RESOURCE_GROUP: 'my-resource-group'
+  ACR_NAME: 'strava'
+  ACR_REGISTRY: 'strava.azurecr.io'
+  ACR_REPOSITORY: 'strava-backend'
+  AZURE_CONTAINERAPP_NAME: 'strava-container-app'
+  AZURE_RESOURCE_GROUP: 'strava'
 
 jobs:
   build-and-deploy:
