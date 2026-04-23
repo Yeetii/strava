@@ -128,7 +128,7 @@ public class RaceTileBuildService
             "--output", outputPmtilesPath,
             "--layer=trails",
             "--minimum-zoom=0",
-            "--zg",
+            "--maximum-zoom=14",
             "--simplification=10",
             "--cluster-distance=5",
             "--coalesce-smallest-as-needed",
