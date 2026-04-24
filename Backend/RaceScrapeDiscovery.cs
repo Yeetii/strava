@@ -183,7 +183,7 @@ public static partial class RaceScrapeDiscovery
             return null;
 
         var parts = distanceVerbose
-            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         string? bestToken = null;
         double bestDelta = double.MaxValue;
@@ -221,7 +221,7 @@ public static partial class RaceScrapeDiscovery
             return null;
 
         var parts = distanceVerbose
-            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var formatted = new List<string>(parts.Length);
         foreach (var part in parts)
@@ -1510,7 +1510,7 @@ public static partial class RaceScrapeDiscovery
     private static IReadOnlyList<(double Km, string Formatted)> ParseVerboseDistanceParts(string distanceVerbose)
     {
         var parts = distanceVerbose
-            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var result = new List<(double, string)>(parts.Length);
         foreach (var part in parts)

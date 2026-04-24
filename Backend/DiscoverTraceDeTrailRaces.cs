@@ -1,6 +1,7 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
+using System.Globalization;
 using System.Net;
 
 namespace Backend;
@@ -13,84 +14,68 @@ public class DiscoverTraceDeTrailRaces(
 {
     private static readonly Uri CalendarUrl = new("https://tracedetrail.fr/event/getEventsCalendar/all/all/all");
     private const string CalendarReferer = "https://tracedetrail.fr/en/calendar";
-    private const int MaxRequestsPerRun = 450;
+    private const int StartMonthOffset = -12;
+    private const int EndMonthOffset = 12;
 
     [Function(nameof(DiscoverTraceDeTrailRaces))]
     public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
     {
-        var jobs = await FetchJobsAsync(cancellationToken);
-        var keys = await discoveryService.DiscoverAndWriteAsync("tracedetrail", jobs, cancellationToken);
-        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+        await discoveryService.EnqueueDiscoveryMessageAsync(new RaceDiscoveryMessage("tracedetrail"), delay: null, cancellationToken);
     }
 
-    private async Task<IReadOnlyCollection<ScrapeJob>> FetchJobsAsync(CancellationToken cancellationToken)
+    public async Task<bool> ProcessPageAsync(int page, CancellationToken cancellationToken)
+    {
+        var jobs = await FetchPageJobsAsync(page, cancellationToken);
+        var keys = await discoveryService.DiscoverAndWriteAsync("tracedetrail", jobs, cancellationToken);
+        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+
+        return page < TotalPages;
+    }
+
+    private async Task<IReadOnlyCollection<ScrapeJob>> FetchPageJobsAsync(int page, CancellationToken cancellationToken)
     {
         var httpClient = httpClientFactory.CreateClient();
         var jobsByUrl = new Dictionary<string, ScrapeJob>(StringComparer.OrdinalIgnoreCase);
-        var now = DateTime.UtcNow;
         var knownTraceDeTrailIds = await organizerClient.FetchKnownTraceDeTrailIdsAsync(cancellationToken);
         int skippedKnownEvents = 0;
-        var requestsRemaining = MaxRequestsPerRun;
+        var date = MonthForPage(page);
 
-        foreach (var monthOffset in Enumerable.Range(-12, 25))
+        using var request = new HttpRequestMessage(HttpMethod.Post, CalendarUrl)
         {
-            if (requestsRemaining <= 0) break;
+            Content = new FormUrlEncodedContent(
+            [
+                new KeyValuePair<string, string>("month", date.Month.ToString(CultureInfo.InvariantCulture)),
+                new KeyValuePair<string, string>("year", date.Year.ToString(CultureInfo.InvariantCulture))
+            ]),
+        };
+        request.Headers.Referrer = new Uri(CalendarReferer);
 
-            var date = now.AddMonths(monthOffset);
-            try
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            throw new HttpRequestException($"TraceDeTrail calendar returned 429 for {date.Month}/{date.Year}", null, response.StatusCode);
+
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        foreach (var job in RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(json))
+        {
+            var eventId = job.ExternalIds?.TryGetValue("tracedetrailEventId", out var tId) == true ? tId : null;
+            var itraEventId = job.ExternalIds?.TryGetValue("itraEventId", out var iId) == true ? iId : null;
+
+            if ((!string.IsNullOrWhiteSpace(eventId) && knownTraceDeTrailIds.Contains(eventId!))
+                || (!string.IsNullOrWhiteSpace(itraEventId) && knownTraceDeTrailIds.Contains(itraEventId!)))
             {
-                using var request = new HttpRequestMessage(HttpMethod.Post, CalendarUrl)
-                {
-                    Content = new FormUrlEncodedContent(
-                    [
-                        new KeyValuePair<string, string>("month", date.Month.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                        new KeyValuePair<string, string>("year", date.Year.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                    ]),
-                };
-                request.Headers.Referrer = new Uri(CalendarReferer);
-
-                using var response = await httpClient.SendAsync(request, cancellationToken);
-                requestsRemaining--;
-
-                if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                {
-                    logger.LogWarning("TraceDeTrail: calendar returned 429 for {Month}/{Year}, stopping", date.Month, date.Year);
-                    break;
-                }
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    logger.LogWarning("TraceDeTrail: calendar returned {Status} for {Month}/{Year}", response.StatusCode, date.Month, date.Year);
-                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
-                    continue;
-                }
-
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                foreach (var job in RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(json))
-                {
-                    var eventId = job.ExternalIds?.TryGetValue("tracedetrailEventId", out var tId) == true ? tId : null;
-                    var itraEventId = job.ExternalIds?.TryGetValue("itraEventId", out var iId) == true ? iId : null;
-
-                    if ((!string.IsNullOrWhiteSpace(eventId) && knownTraceDeTrailIds.Contains(eventId!))
-                        || (!string.IsNullOrWhiteSpace(itraEventId) && knownTraceDeTrailIds.Contains(itraEventId!)))
-                    {
-                        skippedKnownEvents++;
-                        continue;
-                    }
-
-                    var key = job.TraceDeTrailItraUrls?.FirstOrDefault()?.AbsoluteUri ?? job.TraceDeTrailEventUrl?.AbsoluteUri;
-                    if (key is not null)
-                        jobsByUrl.TryAdd(key, job);
-                }
+                skippedKnownEvents++;
+                continue;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "TraceDeTrail: failed to fetch calendar for {Month}/{Year}", date.Month, date.Year);
-            }
+
+            var key = job.TraceDeTrailItraUrls?.FirstOrDefault()?.AbsoluteUri ?? job.TraceDeTrailEventUrl?.AbsoluteUri;
+            if (key is not null)
+                jobsByUrl.TryAdd(key, job);
         }
 
-        logger.LogInformation("TraceDeTrail: discovered {Count} unique jobs, skipped {Skipped} already-known events, requests remaining {Remaining}, enriching with site URLs…",
-            jobsByUrl.Count, skippedKnownEvents, requestsRemaining);
+        logger.LogInformation("TraceDeTrail: discovered {Count} unique jobs, skipped {Skipped} already-known events for {Month}/{Year}, enriching with site URLs",
+            jobsByUrl.Count, skippedKnownEvents, date.Month, date.Year);
 
         var enriched = new List<ScrapeJob>(jobsByUrl.Count);
         var stoppedEventEnrichment = false;
@@ -98,26 +83,23 @@ public class DiscoverTraceDeTrailRaces(
 
         foreach (var job in jobsByUrl.Values)
         {
-            if (job.TraceDeTrailEventUrl is null || stoppedEventEnrichment || requestsRemaining <= 0)
+            if (job.TraceDeTrailEventUrl is null || stoppedEventEnrichment)
                 continue;
 
-            using var response = await httpClient.GetAsync(job.TraceDeTrailEventUrl, cancellationToken);
-            requestsRemaining--;
+            using var eventResponse = await httpClient.GetAsync(job.TraceDeTrailEventUrl, cancellationToken);
 
-            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            if (eventResponse.StatusCode == HttpStatusCode.TooManyRequests)
             {
-                stoppedEventEnrichment = true;
-                logger.LogWarning("TraceDeTrail: received 429 from {Url}, stopping event page enrichment", job.TraceDeTrailEventUrl);
+                throw new HttpRequestException($"TraceDeTrail event page returned 429 for {job.TraceDeTrailEventUrl}", null, response.StatusCode);
+            }
+
+            if (!eventResponse.IsSuccessStatusCode)
+            {
+                logger.LogDebug("TraceDeTrail: {Status} fetching {Url}", eventResponse.StatusCode, job.TraceDeTrailEventUrl);
                 continue;
             }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                logger.LogDebug("TraceDeTrail: {Status} fetching {Url}", response.StatusCode, job.TraceDeTrailEventUrl);
-                continue;
-            }
-
-            var html = await response.Content.ReadAsStringAsync(cancellationToken);
+            var html = await eventResponse.Content.ReadAsStringAsync(cancellationToken);
             var siteUrl = RaceHtmlScraper.ExtractRaceSiteUrl(html, job.TraceDeTrailEventUrl);
             var location = RaceHtmlScraper.ExtractTraceDeTrailLocation(html);
 
@@ -171,4 +153,9 @@ public class DiscoverTraceDeTrailRaces(
         logger.LogInformation("TraceDeTrail: resolved {Resolved}/{Total} event site URLs", resolved, jobsByUrl.Count);
         return enriched.ToArray();
     }
+
+    private static int TotalPages => EndMonthOffset - StartMonthOffset + 1;
+
+    internal static DateTime MonthForPage(int page)
+        => DateTime.UtcNow.AddMonths(StartMonthOffset + Math.Max(page, 1) - 1);
 }

@@ -130,6 +130,8 @@ var host = new HostBuilder()
             return new SummitsCalculatorWithBoundingBoxFilter();
         });
         services.AddSingleton<RaceDiscoveryService>();
+        services.AddSingleton<DiscoverDuvRaces>();
+        services.AddSingleton<DiscoverTraceDeTrailRaces>();
     })
     .Build();
 

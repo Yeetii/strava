@@ -8,7 +8,7 @@ public static class RaceTypeNormalizer
             return null;
 
         var parts = raceType
-            .Split([',', ';', '/', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Split(new[] { ',', ';', '/', '_' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => p.ToLowerInvariant())
             .Select(p => RaceTypeAliases.TryGetValue(p, out var mapped) ? mapped : p)
             .Where(p => p.Length > 0)
