@@ -18,8 +18,8 @@ namespace CosmosBulkDelete
                 Console.WriteLine("Usage: dotnet run <container> <query> [partitionKeyProperty]");
                 Console.WriteLine("Cosmos connection and DB will be read from ../API/local.settings.json");
                 Console.WriteLine("Example: dotnet run raceOrganizers 'WHERE is_defined(c.discovery.betrail)' /id");
-                Console.WriteLine("Composite partition key example: dotnet run races 'WHERE NOT CONTAINS(c.id, ".")' \"x,y\"");
-                Console.WriteLine("Nested composite key example: dotnet run races 'WHERE NOT CONTAINS(c.id, ".")' '/x/y,/a/b'");
+                Console.WriteLine("Composite partition key example: dotnet run races 'WHERE NOT CONTAINS(c.id, \".\")' \"x,y\"");
+                Console.WriteLine("Nested composite key example: dotnet run races 'WHERE NOT CONTAINS(c.id, \".\")' '/x/y,/a/b'");
                 Console.WriteLine("When your filter contains quotes, use single quotes around the full query or escape inner quotes.");
                 return;
             }
