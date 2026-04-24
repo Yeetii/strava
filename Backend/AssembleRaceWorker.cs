@@ -1,3 +1,4 @@
+using System.Globalization;
 using BAMCIS.GeoJSON;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
@@ -16,7 +17,7 @@ namespace Backend;
 /// hints and scraper output into final <see cref="StoredFeature"/> race documents, and upserts
 /// them into the races Cosmos container.
 /// </summary>
-public class AssembleRaceWorker(
+public partial class AssembleRaceWorker(
     RaceOrganizerClient organizerClient,
     RaceCollectionClient raceCollectionClient,
     ServiceBusClient serviceBusClient,
@@ -56,17 +57,34 @@ public class AssembleRaceWorker(
         try
         {
             var races = AssembleRaces(doc);
-            logger.LogInformation("Assembling {Count} races for {Key}", races.Count, organizerKey);
+            logger.LogInformation("Built {Count} race feature(s) for {Key}", races.Count, organizerKey);
 
             foreach (var race in races)
             {
                 await raceCollectionClient.UpsertDocument(race, cancellationToken);
             }
 
+            logger.LogInformation("Upserted {UpsertedCount} race document(s) to Cosmos for {Key}", races.Count, organizerKey);
+
+            if (RaceCollectionClient.TryGetHighestRaceSlotIndex(organizerKey, races, out var maxSlot))
+            {
+                var patchOfDeathIds = await raceCollectionClient.MarkHigherRaceSlotsExpiredAsync(
+                    organizerKey, maxSlot, cancellationToken);
+                if (patchOfDeathIds.Count > 0)
+                {
+                    const int maxIdsInLog = 40;
+                    var idPreview = patchOfDeathIds.Count <= maxIdsInLog
+                        ? string.Join(", ", patchOfDeathIds)
+                        : string.Join(", ", patchOfDeathIds.Take(maxIdsInLog))
+                          + $" … (+{patchOfDeathIds.Count - maxIdsInLog} more)";
+                    logger.LogInformation(
+                        "Patch of death (ttl=1): patched {Count} superseded race document(s) for {Key} (slot index > {MaxSlot}). Ids: {Ids}",
+                        patchOfDeathIds.Count, organizerKey, maxSlot, idPreview);
+                }
+            }
+
             // Record assembly timestamp on the organizer document.
             await organizerClient.PatchLastAssembledAsync(organizerKey, cancellationToken);
-
-            logger.LogInformation("Assembled {Count} races for {Key}", races.Count, organizerKey);
             await TryCompleteAsync(actions, message, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -165,11 +183,13 @@ public class AssembleRaceWorker(
             // Find the most specific matching discovery entry for this route's distance.
             var bestDiscovery = FindBestDiscoveryForRoute(routeKm, flatDiscoveries, mergedDiscovery);
 
-            // Claim the closest discovery distance.
-            if (routeKm.HasValue)
-                ClaimClosestDistance(routeKm.Value, flatDiscoveries, claimedKm);
-
             var props = BuildProperties(bestDiscovery, scraperKey, route, scraperImageUrl, scraperLogoUrl, websiteUrl);
+
+            // Mark every discovery-listed km that matches the effective route length (route field
+            // or merged props) so unclaimed discovery points are not emitted for the same race.
+            var effectiveKm = ParseEffectiveRouteKmForClaiming(routeKm, props);
+            if (effectiveKm.HasValue)
+                ClaimRoughlyMatchingDiscoveryDistances(effectiveKm.Value, flatDiscoveries, claimedKm);
 
             // Try to build a LineString if the route has coordinates.
             if (route.Coordinates is { Count: >= 2 })
@@ -189,6 +209,9 @@ public class AssembleRaceWorker(
             // Fall back to a point using discovery coordinates.
             if (coordsDiscovery is not null)
             {
+                if (effectiveKm.HasValue && AssemblyAlreadyCoversRoughDistanceKm(effectiveKm.Value, results))
+                    continue;
+
                 results.Add(BuildPointFeature(featureId,
                     coordsDiscovery.Longitude!.Value, coordsDiscovery.Latitude!.Value, props));
             }
@@ -201,6 +224,9 @@ public class AssembleRaceWorker(
             var unclaimed = GetUnclaimedDiscoveryDistances(flatDiscoveries, claimedKm);
             foreach (var (distKm, distLabel) in unclaimed)
             {
+                if (distKm.HasValue && AssemblyAlreadyCoversRoughDistanceKm(distKm.Value, results))
+                    continue;
+
                 var featureId = $"{organizerKey}-{results.Count}";
                 var bestDisc = distKm.HasValue
                     ? FindBestDiscoveryForRoute(distKm, flatDiscoveries, mergedDiscovery)
@@ -372,254 +398,23 @@ public class AssembleRaceWorker(
         return name.Trim().ToLowerInvariant();
     }
 
-    /// <summary>
-    /// True when two distances (km) differ by strictly less than 3% of the larger value
-    /// (e.g. 509 km vs 511 km).
-    /// </summary>
-    public static bool DistancesRoughMatchKm(double aKm, double bKm)
-    {
-        var diff = Math.Abs(aKm - bKm);
-        if (diff == 0) return true;
-        var longer = Math.Max(aKm, bKm);
-        if (longer <= 0) return false;
-        return diff < 0.03 * longer;
-    }
-
-    private static bool IsPureNumericCommaSeparatedDistance(string distance)
-    {
-        var tokens = distance.Split(',')
-            .Select(t => t.Trim())
-            .Where(t => !string.IsNullOrEmpty(t))
-            .ToList();
-        if (tokens.Count == 0) return false;
-        foreach (var token in tokens)
-        {
-            var stripped = System.Text.RegularExpressions.Regex.Replace(
-                token, @"(?i)\s*(km|k|mi|m)\s*$", "").Trim();
-            if (!double.TryParse(stripped, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out _))
-                return false;
-        }
-        return true;
-    }
-
-    private static bool DiscoveryDistanceFieldsRoughMatch(string? da, string? db)
-    {
-        if (string.IsNullOrWhiteSpace(da) && string.IsNullOrWhiteSpace(db)) return true;
-        if (string.IsNullOrWhiteSpace(da) || string.IsNullOrWhiteSpace(db)) return false;
-        if (!IsPureNumericCommaSeparatedDistance(da) || !IsPureNumericCommaSeparatedDistance(db))
-            return string.Equals(NormalizeDistanceKey(da), NormalizeDistanceKey(db), StringComparison.Ordinal);
-
-        var na = ParseDistanceList(da).OrderBy(x => x).ToList();
-        var nb = ParseDistanceList(db).OrderBy(x => x).ToList();
-        if (na.Count != nb.Count) return false;
-        for (int i = 0; i < na.Count; i++)
-        {
-            if (!DistancesRoughMatchKm(na[i], nb[i]))
-                return false;
-        }
-        return true;
-    }
-
-    private static string? NormalizeDistanceKey(string? distance)
-    {
-        if (string.IsNullOrWhiteSpace(distance)) return null;
-
-        var tokens = distance.Split(',')
-            .Select(t => t.Trim())
-            .Where(t => !string.IsNullOrEmpty(t))
-            .ToList();
-
-        if (tokens.Count == 0) return null;
-
-        var numericValues = new List<double>();
-        var otherTokens = new List<string>();
-
-        foreach (var token in tokens)
-        {
-            var stripped = System.Text.RegularExpressions.Regex.Replace(
-                token, @"(?i)\s*(km|k|mi|m)\s*$", "").Trim();
-            if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var value))
-            {
-                numericValues.Add(value);
-            }
-            else
-            {
-                otherTokens.Add(token.ToLowerInvariant());
-            }
-        }
-
-        if (otherTokens.Count == 0)
-            return string.Join(",", numericValues.OrderBy(v => v)
-                .Select(v => v.ToString("G", System.Globalization.CultureInfo.InvariantCulture)));
-
-        return string.Join(",", tokens.Select(t => t.ToLowerInvariant()));
-    }
-
     private static DateTime ParseDate(string? date)
     {
         if (string.IsNullOrWhiteSpace(date))
             return DateTime.MinValue;
 
         if (DateTime.TryParseExact(date, "yyyy-MM-dd",
-            System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.None, out var exact))
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var exact))
         {
             return exact;
         }
 
-        return DateTime.TryParse(date, System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+        return DateTime.TryParse(date, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
             out var parsed)
             ? parsed
             : DateTime.MinValue;
-    }
-
-    /// <summary>
-    /// Finds the best matching discovery entry for a route at <paramref name="routeKm"/>.
-    /// Prefers entries whose Distance field contains exactly one distance matching the route
-    /// (most specific). Falls back to multi-distance entries that contain the distance, then
-    /// to <paramref name="fallback"/>.
-    /// Within the same specificity tier, the first match by priority order wins.
-    /// </summary>
-    public static SourceDiscovery FindBestDiscoveryForRoute(
-        double? routeKm,
-        IReadOnlyList<(string Source, SourceDiscovery Entry)> orderedDiscoveries,
-        SourceDiscovery fallback)
-    {
-        if (routeKm is null || orderedDiscoveries.Count == 0)
-            return fallback;
-
-        // Within ~3% of the longer distance, prefer closest distance match. Single-distance entries win over
-        // multi-distance entries at the same delta. Source priority (list order) breaks ties.
-        SourceDiscovery? bestSingle = null;
-        double bestSingleDelta = double.MaxValue;
-        SourceDiscovery? bestMulti = null;
-        double bestMultiDelta = double.MaxValue;
-
-        foreach (var (_, entry) in orderedDiscoveries)
-        {
-            var dists = ParseDistanceList(entry.Distance);
-            if (dists.Count == 0) continue;
-
-            var matching = dists.Where(d => DistancesRoughMatchKm(d, routeKm.Value)).ToList();
-            if (matching.Count == 0) continue;
-
-            double closestDelta = matching.Min(d => Math.Abs(d - routeKm.Value));
-
-            if (dists.Count == 1)
-            {
-                if (closestDelta < bestSingleDelta)
-                {
-                    bestSingle = entry;
-                    bestSingleDelta = closestDelta;
-                }
-            }
-            else
-            {
-                if (closestDelta < bestMultiDelta)
-                {
-                    bestMulti = entry;
-                    bestMultiDelta = closestDelta;
-                }
-            }
-        }
-
-        return bestSingle ?? bestMulti ?? fallback;
-    }
-
-    /// <summary>
-    /// Parses a comma-separated distance string (e.g. "50 km, 33 km, 21 km") into a list of
-    /// numeric km values.
-    /// </summary>
-    public static List<double> ParseDistanceList(string? distance)
-    {
-        if (string.IsNullOrWhiteSpace(distance)) return [];
-
-        var result = new List<double>();
-        foreach (var token in distance.Split(','))
-        {
-            var stripped = System.Text.RegularExpressions.Regex.Replace(
-                token.Trim(), @"(?i)\s*(km|k)\s*$", "").Trim();
-            if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var km))
-                result.Add(km);
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Claims the closest discovery distance for the given route km when that discovery distance
-    /// is within ~3% of the longer of the two values; the claimed numeric is then added to
-    /// <paramref name="claimedKm"/>.
-    /// </summary>
-    internal static void ClaimClosestDistance(
-        double routeKm,
-        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries,
-        HashSet<double> claimedKm)
-    {
-        double? bestDist = null;
-        double bestDelta = double.MaxValue;
-
-        foreach (var (_, entry) in flatDiscoveries)
-        {
-            foreach (var d in ParseDistanceList(entry.Distance))
-            {
-                if (!DistancesRoughMatchKm(d, routeKm)) continue;
-                var delta = Math.Abs(d - routeKm);
-                if (delta < bestDelta)
-                {
-                    bestDelta = delta;
-                    bestDist = d;
-                }
-            }
-        }
-
-        if (bestDist.HasValue)
-            claimedKm.Add(bestDist.Value);
-    }
-
-    /// <summary>
-    /// Returns all individual discovery distances not yet claimed, sorted ascending.
-    /// Each item carries the original label (e.g. "21 km") for property use.
-    /// </summary>
-    internal static List<(double? Km, string Label)> GetUnclaimedDiscoveryDistances(
-        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries,
-        HashSet<double> claimedKm)
-    {
-        var seenKm = new HashSet<double>();
-        var seenLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var numeric = new List<(double? Km, string Label)>();
-        var labels = new List<(double? Km, string Label)>();
-
-        foreach (var (_, entry) in flatDiscoveries)
-        {
-            if (string.IsNullOrWhiteSpace(entry.Distance)) continue;
-            foreach (var token in entry.Distance.Split(','))
-            {
-                var trimmed = token.Trim();
-                var stripped = System.Text.RegularExpressions.Regex.Replace(
-                    trimmed, @"(?i)\s*(km|k)\s*$", "").Trim();
-                if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var km))
-                {
-                    if (seenKm.Any(s => DistancesRoughMatchKm(s, km))) continue;
-                    seenKm.Add(km);
-                    if (!claimedKm.Any(c => DistancesRoughMatchKm(c, km)))
-                        numeric.Add((km, trimmed));
-                }
-                else
-                {
-                    if (seenLabels.Add(trimmed))
-                        labels.Add((null, trimmed));
-                }
-            }
-        }
-
-        numeric.Sort((a, b) => a.Km!.Value.CompareTo(b.Km!.Value));
-        numeric.AddRange(labels);
-        return numeric;
     }
 
     /// <summary>
@@ -687,103 +482,6 @@ public class AssembleRaceWorker(
         return [.. withCoords, .. withoutCoords];
     }
 
-    private static List<(string ScraperKey, ScrapedRouteOutput Route)> DeduplicateRoutesByDistance(
-        List<(string ScraperKey, ScrapedRouteOutput Route)> routes,
-        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries)
-    {
-        if (routes.Count <= 1)
-            return routes;
-
-        var distinctKm = routes
-            .Select(r => ParseDistanceKm(r.Route.Distance))
-            .Where(k => k.HasValue)
-            .Select(k => k!.Value)
-            .Distinct()
-            .OrderBy(x => x)
-            .ToList();
-        var canonicalRouteKm = BuildCanonicalRouteKmMap(distinctKm);
-
-        var grouped = routes
-            .GroupBy(r =>
-            {
-                var km = ParseDistanceKm(r.Route.Distance);
-                if (km is null) return (double?)null;
-                return canonicalRouteKm.GetValueOrDefault(km.Value, km.Value);
-            })
-            .ToList();
-
-        var result = new List<(string ScraperKey, ScrapedRouteOutput Route)>();
-        foreach (var group in grouped)
-        {
-            if (group.Key is null)
-            {
-                result.AddRange(group);
-                continue;
-            }
-
-            var allowedCount = Math.Max(1, CountMatchingDiscoveryEntries(group.Key.Value, flatDiscoveries));
-            var kept = group
-                .OrderByDescending(r => r.Route.Date ?? string.Empty)
-                .ThenByDescending(r => r.Route.Coordinates is { Count: >= 2 })
-                .Take(allowedCount);
-            result.AddRange(kept);
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Maps each distinct route km to a canonical km (cluster minimum). Values are clustered in
-    /// ascending order; <paramref name="sortedDistinctKm"/> must be sorted ascending.
-    /// A value joins the current cluster only if it is within ~3% of the <em>cluster minimum</em>
-    /// (same rule as <see cref="DistancesRoughMatchKm"/>), so every pair in a cluster is within
-    /// ~3% of <c>max(pair)</c> — not only consecutive neighbors.
-    /// </summary>
-    internal static Dictionary<double, double> BuildCanonicalRouteKmMap(List<double> sortedDistinctKm)
-    {
-        var map = new Dictionary<double, double>();
-        if (sortedDistinctKm.Count == 0) return map;
-
-        double clusterMin = sortedDistinctKm[0];
-        var clusters = new List<List<double>> { new() { clusterMin } };
-        foreach (var v in sortedDistinctKm.Skip(1))
-        {
-            var last = clusters[^1];
-            if (DistancesRoughMatchKm(clusterMin, v))
-                last.Add(v);
-            else
-            {
-                clusters.Add(new List<double> { v });
-                clusterMin = v;
-            }
-        }
-
-        foreach (var c in clusters)
-        {
-            var canon = c.Min();
-            foreach (var v in c)
-                map[v] = canon;
-        }
-
-        return map;
-    }
-
-    private static int CountMatchingDiscoveryEntries(
-        double routeKm,
-        IReadOnlyList<(string Source, SourceDiscovery Entry)> flatDiscoveries)
-    {
-        var seenEntries = new HashSet<SourceDiscovery>();
-
-        foreach (var (_, entry) in flatDiscoveries)
-        {
-            var dists = ParseDistanceList(entry.Distance);
-            if (dists.Any(d => DistancesRoughMatchKm(d, routeKm)))
-                seenEntries.Add(entry);
-        }
-
-        return seenEntries.Count;
-    }
-
     // ── Property building ────────────────────────────────────────────────
 
     /// <summary>
@@ -828,7 +526,7 @@ public class AssembleRaceWorker(
             props[RaceScrapeDiscovery.PropLocation] = discovery.Location;
 
         if (!string.IsNullOrWhiteSpace(discovery.RaceType))
-            props[RaceScrapeDiscovery.PropRaceType] = discovery.RaceType;
+            props[RaceScrapeDiscovery.PropRaceType] = RaceTypeNormalizer.NormalizeRaceType(discovery.RaceType) ?? "";
 
         if (!string.IsNullOrWhiteSpace(discovery.Description))
             props[RaceScrapeDiscovery.PropDescription] = discovery.Description;
@@ -947,7 +645,7 @@ public class AssembleRaceWorker(
     private static StoredFeature BuildPointFeature(string featureId, double lng, double lat, Dictionary<string, dynamic> props)
     {
         var geometry = new Point(new Position(lng, lat));
-        var coord = new Shared.Models.Coordinate(lng, lat);
+        var coord = new Coordinate(lng, lat);
         var (x, y) = SlippyTileCalculator.WGS84ToTileIndex(coord, RaceCollectionClient.DefaultZoom);
 
         return new StoredFeature
@@ -980,20 +678,6 @@ public class AssembleRaceWorker(
                 if (value is not null) return value;
             }
         }
-        return null;
-    }
-
-    /// <summary>Parses the first numeric km value from a distance string like "33 km" or "33 km, 21 km".</summary>
-    public static double? ParseDistanceKm(string? distance)
-    {
-        if (string.IsNullOrWhiteSpace(distance))
-            return null;
-
-        var first = distance.Split(',')[0].Trim();
-        var stripped = System.Text.RegularExpressions.Regex.Replace(first, @"(?i)(km|k|mi|m)\s*$", "").Trim();
-        if (double.TryParse(stripped, System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.InvariantCulture, out var km))
-            return km;
         return null;
     }
 }

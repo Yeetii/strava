@@ -187,43 +187,29 @@ public static partial class RaceScrapeDiscovery
 
         string? bestToken = null;
         double bestDelta = double.MaxValue;
+        double? bestMatchedKm = null;
 
         foreach (var part in parts)
         {
-            double km;
-            string formatted;
+            if (!RaceDistanceKm.TryParseCommaListTokenKilometers(part, out var km))
+                continue;
 
-            if (TryParseMarathonKeyword(part, out var marathonKm))
-            {
-                km = marathonKm;
-                formatted = FormatDistanceKm(km);
-            }
-            else
-            {
-                var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
-                var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
-
-                if (!double.TryParse(stripped, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
-                    continue;
-
-                km = suffix == "mi" ? value * 1.60934 : value;
-                formatted = FormatDistanceKm(km);
-            }
-
+            var formatted = FormatDistanceKm(km);
             var delta = Math.Abs(km - distanceKm);
             if (delta < bestDelta)
             {
                 bestDelta = delta;
                 bestToken = formatted;
+                bestMatchedKm = km;
             }
         }
 
-        if (bestToken is null)
+        if (bestToken is null || bestMatchedKm is null)
             return null;
 
-        // Accept the match only if it is within 25% of the GPX distance.
-        var tolerance = distanceKm * 0.25;
-        return bestDelta <= tolerance ? bestToken : null;
+        return RaceDistanceKm.WithinRelativeOfReference(distanceKm, bestMatchedKm.Value, 0.25)
+            ? bestToken
+            : null;
     }
 
     // Normalises a verbose distance string (e.g. "100K, 50K, Marathon") to the standard form ("100 km, 50 km, 42 km").
@@ -240,26 +226,10 @@ public static partial class RaceScrapeDiscovery
         var formatted = new List<string>(parts.Length);
         foreach (var part in parts)
         {
-            if (TryParseMarathonKeyword(part, out var marathonKm))
-            {
-                formatted.Add(FormatDistanceKm(marathonKm));
-                continue;
-            }
-
-            // Strip trailing 'K', 'KM', 'km', 'm', 'mi' (case-insensitive) before numeric parse
-            var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
-            var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
-
-            if (double.TryParse(stripped, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
-            {
-                // Treat "mi" as miles → convert to km
-                var km = suffix == "mi" ? value * 1.60934 : value;
+            if (RaceDistanceKm.TryParseCommaListTokenKilometers(part, out var km))
                 formatted.Add(FormatDistanceKm(km));
-            }
             else
-            {
                 formatted.Add(part); // pass through as-is
-            }
         }
 
         return string.Join(", ", formatted);
@@ -357,9 +327,6 @@ public static partial class RaceScrapeDiscovery
         ["royaume-uni"] = "GB", ["royaume uni"] = "GB",
         ["états-unis"] = "US", ["etats-unis"] = "US", ["etats unis"] = "US",
     };
-
-    [GeneratedRegex(@"(?i)(km|k|mi|m)\s*$")]
-    private static partial Regex DistanceSuffixRegex();
 
     [GeneratedRegex(@"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$")]
     private static partial Regex DottedDateRegex();
@@ -956,27 +923,9 @@ public static partial class RaceScrapeDiscovery
     }
 
 
-    // Returns true if the token is a marathon keyword and sets km to the corresponding distance.
-    // "marathon" → 42 km, "halvmarathon" / "half marathon" / "half-marathon" → 21 km.
-    public static bool TryParseMarathonKeyword(string token, out double km)
-    {
-        if (token.Equals("marathon", StringComparison.OrdinalIgnoreCase))
-        {
-            km = 42.0;
-            return true;
-        }
-
-        if (token.Equals("halvmarathon", StringComparison.OrdinalIgnoreCase) ||
-            token.Equals("half marathon", StringComparison.OrdinalIgnoreCase) ||
-            token.Equals("half-marathon", StringComparison.OrdinalIgnoreCase))
-        {
-            km = 21.0;
-            return true;
-        }
-
-        km = 0;
-        return false;
-    }
+    /// <inheritdoc cref="RaceDistanceKm.TryParseMarathonKeyword" />
+    public static bool TryParseMarathonKeyword(string token, out double km) =>
+        RaceDistanceKm.TryParseMarathonKeyword(token, out km);
 
     // Parses a verbose distance string into a list of (km, formatted) pairs.
     // Marathon keywords are translated; non-parseable tokens are skipped.
@@ -988,20 +937,8 @@ public static partial class RaceScrapeDiscovery
         var result = new List<(double, string)>(parts.Length);
         foreach (var part in parts)
         {
-            if (TryParseMarathonKeyword(part, out var marathonKm))
-            {
-                result.Add((marathonKm, FormatDistanceKm(marathonKm)));
-                continue;
-            }
-
-            var stripped = DistanceSuffixRegex().Replace(part, "").Trim();
-            var suffix = DistanceSuffixRegex().Match(part).Value.ToLowerInvariant();
-
-            if (double.TryParse(stripped, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
-            {
-                var km = suffix == "mi" ? value * 1.60934 : value;
+            if (RaceDistanceKm.TryParseCommaListTokenKilometers(part, out var km))
                 result.Add((km, FormatDistanceKm(km)));
-            }
         }
 
         return result;
@@ -1042,7 +979,7 @@ public static partial class RaceScrapeDiscovery
             for (int i = 0; i < routeDistancesKm.Count; i++)
             {
                 var delta = Math.Abs(routeDistancesKm[i] - verboseKm);
-                if (delta <= verboseKm * 0.25 && delta < bestDelta)
+                if (RaceDistanceKm.WithinRelativeOfReference(verboseKm, routeDistancesKm[i], 0.25) && delta < bestDelta)
                 {
                     bestDelta = delta;
                     bestIdx = i;

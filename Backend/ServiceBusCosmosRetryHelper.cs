@@ -10,6 +10,14 @@ public static class ServiceBusCosmosRetryHelper
     private static readonly TimeSpan MinRetryDelay = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromHours(2);
 
+    /// <summary>
+    /// False when the host injected a synthetic message (e.g. admin HTTP trigger): there is no
+    /// Service Bus peek-lock, so message settlement calls fail with an empty lock token.
+    /// </summary>
+    public static bool HasRealLockToken(ServiceBusReceivedMessage message) =>
+        !string.IsNullOrEmpty(message.LockToken)
+        && message.LockToken != Guid.Empty.ToString();
+
     public static int GetRetryCount(ServiceBusReceivedMessage message)
     {
         if (!message.ApplicationProperties.TryGetValue(RetryCountProperty, out var raw))
@@ -33,6 +41,14 @@ public static class ServiceBusCosmosRetryHelper
         ILogger logger,
         CancellationToken cancellationToken)
     {
+        if (!HasRealLockToken(message))
+        {
+            logger.LogWarning(exception,
+                "Service Bus retry skipped for message {MessageId}: no peek-lock token (admin/manual run). Original error: {Error}",
+                message.MessageId, exception.Message);
+            return;
+        }
+
         var retryCount = GetRetryCount(message);
         if (retryCount >= MaxRetryCount)
         {

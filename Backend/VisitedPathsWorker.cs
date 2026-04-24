@@ -28,9 +28,6 @@ public class VisitedPathsWorker(
 
     private record ActivitySlim(string Id, string UserId, string? Polyline, string? SummaryPolyline);
 
-    private static bool HasRealLockToken(ServiceBusReceivedMessage message) =>
-        message.LockToken != Guid.Empty.ToString();
-
     [Function(nameof(VisitedPathsWorker))]
     public async Task Run(
         [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
@@ -52,7 +49,7 @@ public class VisitedPathsWorker(
         var nearbyPaths = (await FetchNearbyPaths(decodedActivities)).ToList();
 
         // Renew locks after the potentially slow shared data fetch
-        var realJobs = jobs.Where(HasRealLockToken).ToList();
+        var realJobs = jobs.Where(ServiceBusCosmosRetryHelper.HasRealLockToken).ToList();
         await Task.WhenAll(realJobs.Select(j => actions.RenewMessageLockAsync(j)));
 
         foreach (var job in jobs)
@@ -75,7 +72,7 @@ public class VisitedPathsWorker(
             if (activity == null || !decodedActivities.TryGetValue(activityId, out var activityPoints) || activityPoints.Count == 0)
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
-                if (HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+                if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
@@ -86,7 +83,7 @@ public class VisitedPathsWorker(
 
             if (visitedPaths.Count == 0)
             {
-                if (HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+                if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
@@ -129,13 +126,13 @@ public class VisitedPathsWorker(
                 }
             }
 
-            if (HasRealLockToken(job)) await actions.RenewMessageLockAsync(job);
+            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.RenewMessageLockAsync(job);
             await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
-            if (HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
         {
-            if (HasRealLockToken(job))
+            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job))
             {
                 await ServiceBusCosmosRetryHelper.HandleRetryAsync(
                     ex, actions, job, _serviceBusClient, Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, _logger, cancellationToken);

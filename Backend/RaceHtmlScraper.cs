@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Backend.Scrapers;
+using Shared.Services;
 
 namespace Backend;
 
@@ -107,7 +108,7 @@ public static partial class RaceHtmlScraper
         double? best = null;
         foreach (var distance in ExtractDistancesFromContent(html))
         {
-            var km = AssembleRaceWorker.ParseDistanceKm(distance);
+            var km = RaceDistanceKm.TryParsePrimarySegmentKilometers(distance);
             if (km is null) continue;
             if (!best.HasValue || km.Value > best.Value)
                 best = km.Value;

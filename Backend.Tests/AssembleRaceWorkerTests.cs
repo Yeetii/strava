@@ -1,4 +1,4 @@
-using Backend;
+using BAMCIS.GeoJSON;
 using Shared.Models;
 
 namespace Backend.Tests;
@@ -113,6 +113,146 @@ public class AssembleRaceWorkerTests
     public void DistancesRoughMatchKm_Marathon45And50_IsNotMatch()
     {
         Assert.False(AssembleRaceWorker.DistancesRoughMatchKm(45, 50));
+    }
+
+    [Fact]
+    public void ClaimRoughlyMatchingDiscoveryDistances_Claims163And164For163KmGpx()
+    {
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("duv", new SourceDiscovery { DiscoveredAtUtc = "Z", Distance = "164 km" }),
+            ("runagain", new SourceDiscovery { DiscoveredAtUtc = "Z", Distance = "8 km, 20 km, 40 km, 70 km, 100 km, 163 km" }),
+        };
+        var claimed = new HashSet<double>();
+        AssembleRaceWorker.ClaimRoughlyMatchingDiscoveryDistances(163.0, flat, claimed);
+        Assert.Contains(163.0, claimed);
+        Assert.Contains(164.0, claimed);
+        Assert.DoesNotContain(100.0, claimed);
+        Assert.DoesNotContain(8.0, claimed);
+    }
+
+    [Fact]
+    public void CountRedundantMeasurementSingletons_Duv164VsRunagain163_IsOne()
+    {
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("duv", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "DUV", Distance = "164 km" }),
+            ("runagain", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "RG", Distance = "8 km, 20 km, 163 km" }),
+        };
+        Assert.Equal(1, AssembleRaceWorker.CountRedundantMeasurementSingletons(163.0, flat));
+        Assert.Equal(1, AssembleRaceWorker.CountRoughMatchingDiscoveryRouteSlots(163.0, flat));
+    }
+
+    [Fact]
+    public void CountRedundantMeasurementSingletons_UtmbExactTokensOnMulti_AreNotRedundant()
+    {
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("utmb", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "U100", Distance = "100 km" }),
+            ("utmb", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "CCC", Distance = "101 km" }),
+            ("loppkartan", new SourceDiscovery { DiscoveredAtUtc = "Z", Name = "Gen", Distance = "100 km, 101 km, 55 km" }),
+        };
+        Assert.Equal(0, AssembleRaceWorker.CountRedundantMeasurementSingletons(100.0, flat));
+        Assert.Equal(3, AssembleRaceWorker.CountRoughMatchingDiscoveryRouteSlots(100.0, flat));
+    }
+
+    [Fact]
+    public void CountRoughMatchingDiscoveryRouteSlots_TwoSingletonsNoMulti_IsTwo()
+    {
+        var flat = new List<(string Source, SourceDiscovery Entry)>
+        {
+            ("a", new SourceDiscovery { DiscoveredAtUtc = "Z", Distance = "50 km" }),
+            ("b", new SourceDiscovery { DiscoveredAtUtc = "Z", Distance = "52 km" }),
+        };
+        Assert.Equal(2, AssembleRaceWorker.CountRoughMatchingDiscoveryRouteSlots(51.0, flat));
+    }
+
+    [Fact]
+    public void AssemblyAlreadyCoversRoughDistanceKm_LineAt163Covers164()
+    {
+        var results = new List<StoredFeature>
+        {
+            new StoredFeature
+            {
+                Id = "race:t-0",
+                FeatureId = "t-0",
+                Kind = "race",
+                X = 0,
+                Y = 0,
+                Zoom = 8,
+                Geometry = new LineString(new[] { new Position(0, 0), new Position(1, 1) }),
+                Properties = new Dictionary<string, dynamic> { [RaceScrapeDiscovery.PropDistance] = "163 km" },
+            }
+        };
+
+        Assert.True(AssembleRaceWorker.AssemblyAlreadyCoversRoughDistanceKm(164, results));
+        Assert.False(AssembleRaceWorker.AssemblyAlreadyCoversRoughDistanceKm(55, results));
+
+        var pointOnly = new List<StoredFeature>
+        {
+            new StoredFeature
+            {
+                Id = "race:t-1",
+                FeatureId = "t-1",
+                Kind = "race",
+                X = 0,
+                Y = 0,
+                Zoom = 8,
+                Geometry = new Point(new Position(0, 0)),
+                Properties = new Dictionary<string, dynamic> { [RaceScrapeDiscovery.PropDistance] = "100 km" },
+            }
+        };
+        Assert.False(AssembleRaceWorker.AssemblyAlreadyCoversRoughDistanceKm(101, pointOnly));
+    }
+
+    /// <summary>
+    /// Published distance is a comma list with shorter races first; the ultra leg must still count
+    /// for coverage (ParseDistanceKm alone would only see the first token).
+    /// </summary>
+    [Fact]
+    public void AssemblyAlreadyCoversRoughDistanceKm_CommaListUsesEveryToken()
+    {
+        var results = new List<StoredFeature>
+        {
+            new StoredFeature
+            {
+                Id = "race:t-ultra",
+                FeatureId = "t-ultra",
+                Kind = "race",
+                X = 0,
+                Y = 0,
+                Zoom = 8,
+                Geometry = new LineString(new[] { new Position(0, 0), new Position(1, 1) }),
+                Properties = new Dictionary<string, dynamic>
+                {
+                    [RaceScrapeDiscovery.PropDistance] = "50 km, 163 km",
+                },
+            }
+        };
+
+        Assert.True(AssembleRaceWorker.AssemblyAlreadyCoversRoughDistanceKm(164, results));
+    }
+
+    [Fact]
+    public void AssemblyAlreadyCoversRoughDistanceKm_NoDistanceProp_UsesPolylineLength()
+    {
+        // ~163 km along the equator (lon delta) — no PropDistance so coverage uses geometry.
+        var results = new List<StoredFeature>
+        {
+            new StoredFeature
+            {
+                Id = "race:t-gpx",
+                FeatureId = "t-gpx",
+                Kind = "race",
+                X = 0,
+                Y = 0,
+                Zoom = 8,
+                Geometry = new LineString(new[] { new Position(0, 0), new Position(1.47, 0) }),
+                Properties = new Dictionary<string, dynamic>(),
+            }
+        };
+
+        Assert.True(AssembleRaceWorker.AssemblyAlreadyCoversRoughDistanceKm(164, results));
     }
 
     [Fact]
@@ -527,9 +667,11 @@ public class AssembleRaceWorkerTests
     [InlineData("8 km", 8.0)]
     [InlineData("50 km, 33 km", 50.0)]    // first token only
     [InlineData("5k", 5.0)]
+    [InlineData("10M", 16.0934)]           // capital M = statute miles → km
+    [InlineData("400m", 0.4)]              // lowercase m = metres → km
     [InlineData(null, null)]
     [InlineData("", null)]
-    [InlineData("marathon", null)]         // unparseable
+    [InlineData("marathon", 42.0)]         // keyword → km (shared with comma-list parsing)
     public void ParseDistanceKm_ReturnsExpected(string? input, double? expected)
     {
         var result = AssembleRaceWorker.ParseDistanceKm(input);
@@ -1168,6 +1310,7 @@ public class AssembleRaceWorkerTests
     [Theory]
     [InlineData("50 km, 33 km, 21 km", new[] { 50.0, 33.0, 21.0 })]
     [InlineData("8 km", new[] { 8.0 })]
+    [InlineData("Marathon, 10 km", new[] { 42.0, 10.0 })]
     [InlineData("", new double[0])]
     [InlineData(null, new double[0])]
     public void ParseDistanceList_ReturnsExpected(string? input, double[] expected)
