@@ -17,10 +17,9 @@ public class RaceTileBuildServiceTests
         Assert.Contains(output, args);
         Assert.Contains("--layer=trails", args);
         Assert.Contains("--minimum-zoom=0", args);
-        Assert.Contains("--maximum-zoom=14", args);
-        Assert.Contains("--simplification=10", args);
-        Assert.Contains("--cluster-distance=8", args);
-        Assert.Contains("--coalesce-smallest-as-needed", args);
+        Assert.Contains("-zg", args);
+        Assert.Contains("-r1", args);
+        Assert.Contains("--drop-densest-as-needed", args);
         Assert.Contains("--no-tile-size-limit", args);
         Assert.Contains("--no-feature-limit", args);
         Assert.Contains("--force", args);
