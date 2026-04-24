@@ -1026,7 +1026,7 @@ public static partial class RaceHtmlScraper
         var tldIdx = host.LastIndexOf('.');
         if (tldIdx > 0) host = host[..tldIdx];
         // Split on dots and hyphens.
-        return host.Split(['.', '-'], StringSplitOptions.RemoveEmptyEntries)
+        return host.Split(new[] { '.', '-' }, StringSplitOptions.RemoveEmptyEntries)
             .Where(w => w.Length >= 3)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
