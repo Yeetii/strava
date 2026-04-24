@@ -15,10 +15,10 @@ public class GetOrganizerStats(
 {
     private static readonly string[] DiscoveryAgents =
     [
-        "utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan", "manual", "manual-mistral"
+        "utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan", "betrail", "manual", "manual-mistral"
     ];
 
-    private static readonly string[] ScraperAgents = ["utmb", "itra", "bfs", "tracedetrail"];
+    private static readonly string[] ScraperAgents = ["utmb", "itra", "bfs"];
 
     [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
@@ -90,11 +90,15 @@ public class GetOrganizerStats(
                     $"AND IS_DEFINED(c.scrapers[\"{scraper}\"].routes) " +
                     $"AND ARRAY_LENGTH(c.scrapers[\"{scraper}\"].routes) > 0")));
 
+        // ── Top organisers by number of discoveries ──────────────────────────
+        var topDiscoveryOrganizersTask = raceOrganizerClient.ExecuteQueryAsync<TopDiscoveryOrganizer>(
+            new QueryDefinition("SELECT c.id, c.url, c.discovery FROM c WHERE IS_DEFINED(c.discovery)"));
+
         // ── Wait for everything ───────────────────────────────────────────────
         var allTasks = new List<Task>
         {
             totalTask, assembledTask, withAnyDiscoveryTask, withAnyScraperTask,
-            withBothTask, noDiscoveryNoScraperTask,
+            withBothTask, noDiscoveryNoScraperTask, topDiscoveryOrganizersTask,
         };
         allTasks.AddRange(agentCountTasks.Values);
         allTasks.AddRange(agentExclusiveTasks.Values);
@@ -149,6 +153,25 @@ public class GetOrganizerStats(
                         withoutRoutes = scraperTotal - withRoutes,
                     };
                 }),
+            topByDiscoveries = topDiscoveryOrganizersTask.Result
+                .Select(o => new
+                {
+                    DiscoveryCount = o.Discovery?.Values.Sum(list => list?.Count ?? 0) ?? 0,
+                    o.Id,
+                    o.Url,
+                    SourceUrlsByAgent = (o.Discovery ?? new Dictionary<string, List<DiscoveryUrlsOnly>>())
+                        .ToDictionary(
+                            kv => kv.Key,
+                            kv => (kv.Value ?? new List<DiscoveryUrlsOnly>())
+                                .SelectMany(d => d.SourceUrls ?? new List<string>())
+                                .Where(u => !string.IsNullOrWhiteSpace(u))
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .OrderBy(u => u, StringComparer.OrdinalIgnoreCase)
+                                .ToList()),
+                })
+                .OrderByDescending(o => o.DiscoveryCount)
+                .Take(15)
+                .ToList(),
         };
 
         var response = req.CreateResponse(HttpStatusCode.OK);
@@ -165,4 +188,7 @@ public class GetOrganizerStats(
         return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
             && providedKeys.FirstOrDefault() == adminKey;
     }
+
+    private record TopDiscoveryOrganizer(string Id, string Url, Dictionary<string, List<DiscoveryUrlsOnly>>? Discovery);
+    private record DiscoveryUrlsOnly(List<string>? SourceUrls);
 }

@@ -23,6 +23,13 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         "my.raceresult.com",
         "raceroster.com",
         "welcu.com",
+        "betrail.run",
+        "itra.run",
+        "sites.google.com",
+        "runagain.com",
+        "klikego.com",
+        "mp.weixin.qq.com",
+        "fr.milesrepublic.com"
     };
     /// <summary>
     /// Derives a Cosmos-safe organizer key from a URL. For regular domains returns just the host
@@ -44,10 +51,20 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
                     path = NormalizeFacebookPath(path, url.Query);
                 else if (host == "runsignup.com")
                     path = NormalizeRunSignupPath(path);
+                else if (host == "ultrasignup.com")
+                    path = NormalizeUltraSignupPath(path, url.Query);
                 else if (host == "my.raceresult.com" || host == "welcu.com")
                     path = NormalizeFirstPathSegment(path);
                 else if (host == "raceroster.com")
                     path = NormalizeRaceRosterPath(path);
+                else if (host == "betrail.run")
+                    path = NormalizeBeTrailPath(path);
+                else if (host == "itra.run")
+                    path = NormalizeItraPath(path);
+                else if (host == "sites.google.com")
+                    path = NormalizeSitesGooglePath(path);
+                else if (host == "klikego.com")
+                    path = NormalizeKlikegoPath(path);
                 return $"{host}~{path.Replace('/', '~')}";
             }
         }
@@ -74,6 +91,19 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         return string.Join("/", ["Race", ..remaining]);
     }
 
+    // UltraSignup: /register.aspx?did=<id>, /results_event.aspx?did=<id>, /entrants_event.aspx?did=<id>
+    // all describe the same event — the race identity lives entirely in the `did` query param.
+    // Collapse every .aspx tab to `register.aspx?did=<id>` so one organizer document covers them all.
+    // Paths without `did` (e.g. modern /race/<slug> style) fall through unchanged.
+    private static string NormalizeUltraSignupPath(string path, string query)
+    {
+        if (!path.EndsWith(".aspx", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(query))
+            return path;
+
+        var did = GetQueryValue(query, "did");
+        return string.IsNullOrWhiteSpace(did) ? path : $"register.aspx?did={did}";
+    }
+
     private static string NormalizeFirstPathSegment(string path)
     {
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -93,6 +123,71 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
             return path;
 
         return string.Join('/', segments.Take(4));
+    }
+
+    // Klikego registration pages: /inscription/<event-slug>/<discipline>/<registration-id>?<params>
+    // → keep only inscription/<event-slug>. The discipline and numeric registration id identify
+    // one sub-race on the event, but the event itself is identified purely by the slug.
+    private static string NormalizeKlikegoPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var idx = Array.FindIndex(segments, s => s.Equals("inscription", StringComparison.OrdinalIgnoreCase));
+        if (idx < 0 || idx + 1 >= segments.Length)
+            return path;
+
+        return $"inscription/{segments[idx + 1]}";
+    }
+
+    // BeTrail race pages: /race/<slug>/[<year>/[<tab>]] → keep only race/<slug>.
+    // Accepts an optional language prefix (/en/, /fr/, /nl/, …) which is dropped so that
+    // translations of the same page collapse to a single organizer key.
+    private static string NormalizeBeTrailPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var raceIdx = Array.FindIndex(segments, s => s.Equals("race", StringComparison.OrdinalIgnoreCase));
+        if (raceIdx < 0 || raceIdx + 1 >= segments.Length)
+            return path;
+
+        return $"race/{segments[raceIdx + 1]}";
+    }
+
+    // ITRA race pages: /Races/RaceDetails/<name>/<year>/<id> → keep only /Races/RaceDetails/<name>.
+    // The year and ITRA race-id trail uniquely identify an edition; we group all editions under the name.
+    private static string NormalizeItraPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 3)
+            return path;
+
+        if (!segments[0].Equals("Races", StringComparison.OrdinalIgnoreCase)
+            || !segments[1].Equals("RaceDetails", StringComparison.OrdinalIgnoreCase))
+        {
+            return path;
+        }
+
+        return string.Join('/', segments.Take(3));
+    }
+
+    // Google Sites: collapse to the site root regardless of hosting flavour.
+    //   /site/<name>/<page>…        → site/<name>
+    //   /view/<name>/<page>…        → view/<name>
+    //   /<custom-domain>/<name>/…   → <custom-domain>       (workspace-hosted: the domain itself is the identity)
+    private static string NormalizeSitesGooglePath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+            return path;
+
+        var first = segments[0];
+        if (first.Equals("site", StringComparison.OrdinalIgnoreCase)
+            || first.Equals("view", StringComparison.OrdinalIgnoreCase))
+        {
+            return segments.Length >= 2 ? $"{first}/{segments[1]}" : first;
+        }
+
+        // Workspace / custom-domain sites: the first segment is a domain (contains a dot)
+        // and uniquely identifies the organizer on its own.
+        return first;
     }
 
     private static string NormalizeFacebookPath(string path, string query)

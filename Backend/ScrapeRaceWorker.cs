@@ -26,7 +26,7 @@ public class ScrapeRaceWorker
     private readonly BfsScraper _bfsScraper;
 
     // Domains handled by specialized scrapers or discovery — BFS skips these.
-    private static readonly string[] SpecialDomains = ["utmb.world", "itra.run", "tracedetrail.fr", "runagain.com", "statistik.d-u-v.org"];
+    private static readonly string[] SpecialDomains = ["utmb.world", "itra.run", "tracedetrail.fr", "runagain.com", "statistik.d-u-v.org", "betrail.run"];
 
     public ScrapeRaceWorker(
         IHttpClientFactory httpClientFactory,
@@ -290,7 +290,7 @@ public class ScrapeRaceWorker
         void TryAdd(Uri uri)
         {
             var host = uri.Host.ToLowerInvariant();
-            if (SpecialDomains.Any(d => host.Contains(d)))
+            if (SpecialDomains.Any(host.Contains))
                 return;
             if (seen.Add(uri.GetLeftPart(UriPartial.Path)))
                 urls.Add(uri);

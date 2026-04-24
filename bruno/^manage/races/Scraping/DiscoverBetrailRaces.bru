@@ -1,11 +1,11 @@
 meta {
-  name: AssembleRaceWorker
+  name: DiscoverBetrailRaces
   type: http
   seq: 9
 }
 
 post {
-  url: {{backendUrl}}/admin/functions/AssembleRaceWorker
+  url: {{backendUrl}}/admin/functions/DiscoverBetrailRaces
   body: json
   auth: none
 }
@@ -16,6 +16,6 @@ headers {
 
 body:json {
   {
-    "input": "mmctrail.no"
+    "input": ""
   }
 }

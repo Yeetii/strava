@@ -225,6 +225,350 @@ public class TiledCollectionClient(
         return await ExecuteQueryAsync<StoredFeature>(query, cancellationToken: cancellationToken);
     }
 
+    // Cosmos SQL predicate that matches the GeoJSON point passed in via @lng/@lat
+    // when the document geometry is a polygon/multi-polygon that contains it.
+    private const string WithinPredicate =
+        "ST_WITHIN({'type':'Point','coordinates':[@lng,@lat]}, c.geometry)";
+
+    // Cosmos SQL predicate that matches documents whose geometry is within @radius
+    // metres of the GeoJSON point passed in via @lng/@lat.
+    private const string WithinRadiusPredicate =
+        "ST_DISTANCE(c.geometry, {'type':'Point','coordinates':[@lng,@lat]}) <= @radius";
+
+    // Excludes pointer and empty-marker docs so the spatial predicate only runs against
+    // real feature geometry. Cheap to evaluate before the ST_* call.
+    private const string RealDocumentPredicate =
+        "(NOT IS_DEFINED(c.properties.isPointer) OR c.properties.isPointer = false) " +
+        "AND NOT STARTSWITH(c.id, \"empty-\")";
+
+    /// <summary>
+    /// Returns the stored features whose geometry contains <paramref name="point"/>.
+    /// Filters by the client's <c>kind</c> and by the slippy tile containing the point
+    /// (partition-scoped) before running Cosmos' native <c>ST_WITHIN</c> — so big
+    /// polygon documents are only materialised when they are actually candidates.
+    /// Pointer documents that land on the tile are resolved so multi-tile features
+    /// (e.g. countries) are still found.
+    /// </summary>
+    public Task<IEnumerable<StoredFeature>> FindFeaturesContainingPoint(
+        Coordinate point,
+        CancellationToken cancellationToken = default)
+        => FindFeaturesContainingPoint(point, null, null, cancellationToken);
+
+    public async Task<IEnumerable<StoredFeature>> FindFeaturesContainingPoint(
+        Coordinate point,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken = default)
+    {
+        var tile = SlippyTileCalculator.WGS84ToTileIndex(point, _storeZoom);
+        var spatialParameters = WithinParameters(point);
+
+        var matches = await QueryAtTileWithSpatialPredicate<StoredFeature>(
+            tile, "*", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        var pointerStoredIds = await GetPointerStoredIdsAtTile(tile, additionalFilter, additionalParameters, cancellationToken);
+        var resolved = await ResolveStoredIdsWithSpatialPredicate<StoredFeature>(
+            pointerStoredIds, "*", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        return matches
+            .Concat(resolved)
+            .DistinctBy(d => d.Id, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Same as <see cref="FindFeaturesContainingPoint(Coordinate, CancellationToken)"/> but projects only
+    /// the document id. Useful when the caller just needs existence / identity and wants to avoid
+    /// transferring large polygon geometries.
+    /// </summary>
+    public Task<IEnumerable<string>> FindFeatureIdsContainingPoint(
+        Coordinate point,
+        CancellationToken cancellationToken = default)
+        => FindFeatureIdsContainingPoint(point, null, null, cancellationToken);
+
+    public async Task<IEnumerable<string>> FindFeatureIdsContainingPoint(
+        Coordinate point,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken = default)
+    {
+        var tile = SlippyTileCalculator.WGS84ToTileIndex(point, _storeZoom);
+        var spatialParameters = WithinParameters(point);
+
+        var matchIds = await QueryAtTileWithSpatialPredicate<string>(
+            tile, "VALUE c.id", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        var pointerStoredIds = await GetPointerStoredIdsAtTile(tile, additionalFilter, additionalParameters, cancellationToken);
+        var resolvedIds = await ResolveStoredIdsWithSpatialPredicate<string>(
+            pointerStoredIds, "VALUE c.id", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        return matchIds.Concat(resolvedIds).Distinct(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Returns the stored features within <paramref name="radiusMeters"/> of <paramref name="point"/>.
+    /// Filters by the client's <c>kind</c> and by the set of slippy tiles covering the
+    /// bounding box around the radius, then runs Cosmos' native <c>ST_DISTANCE</c>.
+    /// Pointer documents in any candidate tile are resolved so multi-tile features still match.
+    /// </summary>
+    public Task<IEnumerable<StoredFeature>> FindFeaturesWithinRadius(
+        Coordinate point,
+        int radiusMeters,
+        CancellationToken cancellationToken = default)
+        => FindFeaturesWithinRadius(point, radiusMeters, null, null, cancellationToken);
+
+    public async Task<IEnumerable<StoredFeature>> FindFeaturesWithinRadius(
+        Coordinate point,
+        int radiusMeters,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken = default)
+    {
+        var tiles = GetTilesCoveringRadius(point, radiusMeters);
+        var spatialParameters = WithinRadiusParameters(point, radiusMeters);
+
+        var matches = await QueryAtTilesWithSpatialPredicate<StoredFeature>(
+            tiles, "*", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        var pointerStoredIds = await GetPointerStoredIdsAtTiles(tiles, additionalFilter, additionalParameters, cancellationToken);
+        var resolved = await ResolveStoredIdsWithSpatialPredicate<StoredFeature>(
+            pointerStoredIds, "*", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        return matches
+            .Concat(resolved)
+            .DistinctBy(d => d.Id, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Same as <see cref="FindFeaturesWithinRadius(Coordinate, int, CancellationToken)"/> but projects only
+    /// the document id to save RU when large geometries would otherwise be transferred.
+    /// </summary>
+    public Task<IEnumerable<string>> FindFeatureIdsWithinRadius(
+        Coordinate point,
+        int radiusMeters,
+        CancellationToken cancellationToken = default)
+        => FindFeatureIdsWithinRadius(point, radiusMeters, null, null, cancellationToken);
+
+    public async Task<IEnumerable<string>> FindFeatureIdsWithinRadius(
+        Coordinate point,
+        int radiusMeters,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken = default)
+    {
+        var tiles = GetTilesCoveringRadius(point, radiusMeters);
+        var spatialParameters = WithinRadiusParameters(point, radiusMeters);
+
+        var matchIds = await QueryAtTilesWithSpatialPredicate<string>(
+            tiles, "VALUE c.id", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        var pointerStoredIds = await GetPointerStoredIdsAtTiles(tiles, additionalFilter, additionalParameters, cancellationToken);
+        var resolvedIds = await ResolveStoredIdsWithSpatialPredicate<string>(
+            pointerStoredIds, "VALUE c.id", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        return matchIds.Concat(resolvedIds).Distinct(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Returns the set of slippy-tile keys at <see cref="_storeZoom"/> whose bounding boxes
+    /// cover the axis-aligned square of <paramref name="radiusMeters"/> around
+    /// <paramref name="center"/>. This is the cheap bounding-box pre-filter required by the
+    /// Geo-First Performance principle before running <c>ST_DISTANCE</c>.
+    /// </summary>
+    internal IReadOnlyList<(int x, int y)> GetTilesCoveringRadius(Coordinate center, int radiusMeters)
+    {
+        var southWest = GeoSpatialFunctions.ShiftCoordinate(center, -radiusMeters, -radiusMeters);
+        var northEast = GeoSpatialFunctions.ShiftCoordinate(center, radiusMeters, radiusMeters);
+
+        var swTile = SlippyTileCalculator.WGS84ToTileIndex(southWest, _storeZoom);
+        var neTile = SlippyTileCalculator.WGS84ToTileIndex(northEast, _storeZoom);
+
+        // Slippy tile Y grows southwards; normalise so we can iterate with min/max.
+        var minX = Math.Min(swTile.x, neTile.x);
+        var maxX = Math.Max(swTile.x, neTile.x);
+        var minY = Math.Min(swTile.y, neTile.y);
+        var maxY = Math.Max(swTile.y, neTile.y);
+
+        var tiles = new List<(int x, int y)>((maxX - minX + 1) * (maxY - minY + 1));
+        for (var x = minX; x <= maxX; x++)
+            for (var y = minY; y <= maxY; y++)
+                tiles.Add((x, y));
+        return tiles;
+    }
+
+    private static Dictionary<string, object?> WithinParameters(Coordinate point) => new()
+    {
+        ["@lng"] = point.Lng,
+        ["@lat"] = point.Lat,
+    };
+
+    private static Dictionary<string, object?> WithinRadiusParameters(Coordinate point, int radiusMeters) => new()
+    {
+        ["@lng"] = point.Lng,
+        ["@lat"] = point.Lat,
+        ["@radius"] = radiusMeters,
+    };
+
+    private async Task<IEnumerable<T>> QueryAtTileWithSpatialPredicate<T>(
+        (int x, int y) tile,
+        string projection,
+        string spatialPredicate,
+        IReadOnlyDictionary<string, object?> spatialParameters,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken)
+    {
+        var queryText = $"SELECT {projection} FROM c " +
+                        "WHERE c.x = @x AND c.y = @y AND c.kind = @kind " +
+                        $"AND {RealDocumentPredicate} " +
+                        $"AND {spatialPredicate}";
+        if (!string.IsNullOrWhiteSpace(additionalFilter))
+            queryText += $" AND ({additionalFilter})";
+
+        var queryDefinition = new QueryDefinition(queryText)
+            .WithParameter("@kind", _kind)
+            .WithParameter("@x", tile.x)
+            .WithParameter("@y", tile.y);
+        ApplyParameters(queryDefinition, spatialParameters);
+        ApplyParameters(queryDefinition, additionalParameters);
+
+        var requestOptions = new QueryRequestOptions
+        {
+            PartitionKey = new PartitionKeyBuilder().Add((double)tile.x).Add((double)tile.y).Build()
+        };
+        return await ExecuteQueryAsync<T>(queryDefinition, requestOptions, cancellationToken);
+    }
+
+    private async Task<IEnumerable<T>> QueryAtTilesWithSpatialPredicate<T>(
+        IReadOnlyList<(int x, int y)> tiles,
+        string projection,
+        string spatialPredicate,
+        IReadOnlyDictionary<string, object?> spatialParameters,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken)
+    {
+        if (tiles.Count == 0)
+            return [];
+
+        if (tiles.Count == 1)
+            return await QueryAtTileWithSpatialPredicate<T>(
+                tiles[0], projection, spatialPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+
+        var keyConditions = string.Join(" OR ", tiles.Select((_, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
+        var queryText = $"SELECT {projection} FROM c " +
+                        $"WHERE ({keyConditions}) AND c.kind = @kind " +
+                        $"AND {RealDocumentPredicate} " +
+                        $"AND {spatialPredicate}";
+        if (!string.IsNullOrWhiteSpace(additionalFilter))
+            queryText += $" AND ({additionalFilter})";
+
+        var queryDefinition = new QueryDefinition(queryText)
+            .WithParameter("@kind", _kind);
+        for (var i = 0; i < tiles.Count; i++)
+        {
+            queryDefinition = queryDefinition
+                .WithParameter($"@x{i}", tiles[i].x)
+                .WithParameter($"@y{i}", tiles[i].y);
+        }
+        ApplyParameters(queryDefinition, spatialParameters);
+        ApplyParameters(queryDefinition, additionalParameters);
+
+        return await ExecuteQueryAsync<T>(queryDefinition, cancellationToken: cancellationToken);
+    }
+
+    private Task<IEnumerable<string>> GetPointerStoredIdsAtTile(
+        (int x, int y) tile,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken)
+        => GetPointerStoredIdsAtTiles(new[] { tile }, additionalFilter, additionalParameters, cancellationToken);
+
+    private async Task<IEnumerable<string>> GetPointerStoredIdsAtTiles(
+        IReadOnlyList<(int x, int y)> tiles,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken)
+    {
+        if (tiles.Count == 0)
+            return [];
+
+        var keyConditions = string.Join(" OR ", tiles.Select((_, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
+        var queryText = $"SELECT VALUE c.properties.{StoredFeature.PointerStoredDocumentIdProperty} FROM c " +
+                        $"WHERE ({keyConditions}) AND c.kind = @kind " +
+                        "AND c.properties.isPointer = true";
+        if (!string.IsNullOrWhiteSpace(additionalFilter))
+            queryText += $" AND ({additionalFilter})";
+
+        var queryDefinition = new QueryDefinition(queryText).WithParameter("@kind", _kind);
+        for (var i = 0; i < tiles.Count; i++)
+        {
+            queryDefinition = queryDefinition
+                .WithParameter($"@x{i}", tiles[i].x)
+                .WithParameter($"@y{i}", tiles[i].y);
+        }
+        ApplyParameters(queryDefinition, additionalParameters);
+
+        QueryRequestOptions? requestOptions = null;
+        if (tiles.Count == 1)
+        {
+            requestOptions = new QueryRequestOptions
+            {
+                PartitionKey = new PartitionKeyBuilder().Add((double)tiles[0].x).Add((double)tiles[0].y).Build()
+            };
+        }
+
+        var ids = await ExecuteQueryAsync<string>(queryDefinition, requestOptions, cancellationToken);
+        return ids
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal);
+    }
+
+    private async Task<IEnumerable<T>> ResolveStoredIdsWithSpatialPredicate<T>(
+        IEnumerable<string> storedIds,
+        string projection,
+        string spatialPredicate,
+        IReadOnlyDictionary<string, object?> spatialParameters,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken)
+    {
+        var idList = storedIds.ToList();
+        if (idList.Count == 0)
+            return [];
+
+        // Match GetByIdsAsync chunking to stay under the Cosmos SQL IN(...) limit.
+        const int maxIdsPerQuery = 256;
+        var results = new List<T>();
+        for (var offset = 0; offset < idList.Count; offset += maxIdsPerQuery)
+        {
+            var chunk = idList.Skip(offset).Take(maxIdsPerQuery).ToList();
+            var idParams = string.Join(",", chunk.Select((_, i) => $"@id{i}"));
+            var queryText = $"SELECT {projection} FROM c " +
+                            $"WHERE c.id IN ({idParams}) AND c.kind = @kind " +
+                            $"AND {RealDocumentPredicate} " +
+                            $"AND {spatialPredicate}";
+            if (!string.IsNullOrWhiteSpace(additionalFilter))
+                queryText += $" AND ({additionalFilter})";
+
+            var queryDefinition = new QueryDefinition(queryText).WithParameter("@kind", _kind);
+            for (var i = 0; i < chunk.Count; i++)
+                queryDefinition = queryDefinition.WithParameter($"@id{i}", chunk[i]);
+            ApplyParameters(queryDefinition, spatialParameters);
+            ApplyParameters(queryDefinition, additionalParameters);
+
+            results.AddRange(await ExecuteQueryAsync<T>(queryDefinition, cancellationToken: cancellationToken));
+        }
+        return results;
+    }
+
+    private static void ApplyParameters(QueryDefinition queryDefinition, IReadOnlyDictionary<string, object?>? parameters)
+    {
+        if (parameters is null)
+            return;
+        foreach (var (name, value) in parameters)
+            queryDefinition.WithParameter(name, value);
+    }
+
     protected virtual async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, CancellationToken cancellationToken = default)
     {
         if (_fetcher is null)

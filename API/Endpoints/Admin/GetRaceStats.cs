@@ -12,7 +12,6 @@ namespace API.Endpoints.Admin;
 
 public class GetRaceStats(
     RaceCollectionClient raceCollectionClient,
-    RaceOrganizerClient raceOrganizerClient,
     IConfiguration configuration)
 {
     [OpenApiOperation(tags: ["Admin"])]
@@ -54,22 +53,6 @@ public class GetRaceStats(
             "SELECT s AS source, COUNT(1) AS count FROM c JOIN s IN c.properties.sources WHERE c.kind = @kind GROUP BY s")
             .WithParameter("@kind", FeatureKinds.Race);
 
-        var organizersTotalQuery = new QueryDefinition(
-            "SELECT VALUE COUNT(1) FROM c");
-
-        var discoverySources = new[] { "utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan", "manual", "manual-mistral" };
-        var scraperSources = new[] { "utmb", "itra", "bfs", "tracedetrail" };
-
-        var discoveryCountTasks = discoverySources.ToDictionary(
-            source => source,
-            source => raceOrganizerClient.ExecuteQueryAsync<int>(
-                new QueryDefinition($"SELECT VALUE COUNT(1) FROM c WHERE IS_DEFINED(c.discovery[\"{source}\"])")));
-
-        var scraperCountTasks = scraperSources.ToDictionary(
-            source => source,
-            source => raceOrganizerClient.ExecuteQueryAsync<int>(
-                new QueryDefinition($"SELECT VALUE COUNT(1) FROM c WHERE IS_DEFINED(c.scrapers[\"{source}\"])")));
-
         var totalTask = raceCollectionClient.ExecuteQueryAsync<int>(totalQuery);
         var withCourseTask = raceCollectionClient.ExecuteQueryAsync<int>(withCourseQuery);
         var pointOnlyTask = raceCollectionClient.ExecuteQueryAsync<int>(pointOnlyQuery);
@@ -77,10 +60,6 @@ public class GetRaceStats(
         var withRaceTypeTask = raceCollectionClient.ExecuteQueryAsync<int>(withRaceTypeQuery);
         var raceTypeBreakdownTask = raceCollectionClient.ExecuteQueryAsync<RaceTypeCount>(raceTypeBreakdownQuery);
         var sourceBreakdownTask = raceCollectionClient.ExecuteQueryAsync<SourceCount>(sourceBreakdownQuery);
-        var organizersTotalTask = raceOrganizerClient.ExecuteQueryAsync<int>(organizersTotalQuery);
-
-        var discoveryCountTasksList = discoveryCountTasks.Values.ToList();
-        var scraperCountTasksList = scraperCountTasks.Values.ToList();
 
         await Task.WhenAll(
             totalTask,
@@ -89,10 +68,7 @@ public class GetRaceStats(
             withDateTask,
             withRaceTypeTask,
             raceTypeBreakdownTask,
-            sourceBreakdownTask,
-            organizersTotalTask);
-
-        await Task.WhenAll(discoveryCountTasksList.Concat(scraperCountTasksList));
+            sourceBreakdownTask);
 
         var body = new
         {
@@ -101,20 +77,19 @@ public class GetRaceStats(
             pointOnly = pointOnlyTask.Result.FirstOrDefault(),
             withDate = withDateTask.Result.FirstOrDefault(),
             withRaceType = withRaceTypeTask.Result.FirstOrDefault(),
-            organizersTotal = organizersTotalTask.Result.FirstOrDefault(),
             byRaceType = raceTypeBreakdownTask.Result
+                .SelectMany(x => (x.RaceType ?? "(null)")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .DefaultIfEmpty("(null)")
+                    .Select(part => new { RaceType = part, x.Count }))
+                .GroupBy(x => x.RaceType)
+                .Select(g => new { RaceType = g.Key, Count = g.Sum(x => x.Count) })
                 .OrderByDescending(x => x.Count)
-                .ToDictionary(x => x.RaceType ?? "(null)", x => x.Count),
+                .ToDictionary(x => x.RaceType, x => x.Count),
             bySource = sourceBreakdownTask.Result
                 .Where(x => x.Count > 20)
                 .OrderByDescending(x => x.Count)
                 .ToDictionary(x => x.Source ?? "(unknown)", x => x.Count),
-            organizerDiscoveries = discoverySources.ToDictionary(
-                source => source,
-                source => discoveryCountTasks[source].Result.FirstOrDefault()),
-            organizerScrapes = scraperSources.ToDictionary(
-                source => source,
-                source => scraperCountTasks[source].Result.FirstOrDefault()),
         };
 
         var response = req.CreateResponse(HttpStatusCode.OK);

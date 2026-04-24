@@ -956,6 +956,162 @@ public class RaceScrapeDiscoveryTests
         Assert.Null(job.WebsiteUrl);
     }
 
+    [Fact]
+    public void ParseBeTrailEvents_EmitsOneJobPerRaceWithRaceLevelData()
+    {
+        // Realistic-shaped payload mirroring https://www.betrail.run/api/events-drizzle:
+        // { body: { events: [ { ..., trail: { website, alias2, place, country }, races: [...] } ] } }
+        const string payload = """
+            {
+              "body": {
+                "events": [
+                  {
+                    "id": 13485985,
+                    "title": "Epicurienne Trail - 2025",
+                    "alias": "2025",
+                    "date": 1757714400,
+                    "country": "FR",
+                    "trail": {
+                      "id": 960170,
+                      "alias2": "epicurienne-trail",
+                      "website": "https://www.epicurienne-trail.com/trail-ultra-gourmand",
+                      "place": "Castelnau d'Estrétefonds",
+                      "country": "FR",
+                      "organizer": "CRBP Raid 31"
+                    },
+                    "races": [
+                      {
+                        "id": 13485986,
+                        "alias": "16km",
+                        "race_name": "La Gastronome",
+                        "title": "Epicurienne Trail - 2025 - 16km | La Gastronome",
+                        "date": 1757714400,
+                        "distance": 16,
+                        "elevation": 350,
+                        "category": "nature",
+                        "race_type": "solo",
+                        "official_ranking_url": "https://resultat.chrono-start.fr/race/4468/ranking?export=pdf"
+                      },
+                      {
+                        "id": 13485987,
+                        "alias": "22km",
+                        "race_name": "L'Epicurienne",
+                        "title": "Epicurienne Trail - 2025 - 22km | L'Epicurienne",
+                        "date": 1757714400,
+                        "distance": 22,
+                        "elevation": 550,
+                        "category": "nature_xl",
+                        "race_type": "solo"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseBeTrailEvents(payload).ToArray();
+
+        Assert.Equal(2, jobs.Length);
+
+        // Per-race jobs share the canonical event URL (BeTrail has no per-race URLs).
+        var first = jobs[0];
+        Assert.Equal("https://www.betrail.run/race/epicurienne-trail/2025", first.BetrailUrl!.AbsoluteUri);
+        Assert.Equal("https://www.epicurienne-trail.com/trail-ultra-gourmand", first.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("16 km", first.Distance);
+        Assert.Equal(350, first.ElevationGain);
+        Assert.Equal("FR", first.Country);
+        Assert.Equal("Castelnau d'Estrétefonds", first.Location);
+        Assert.Equal("CRBP Raid 31", first.Organizer);
+        Assert.Equal("2025-09-12", first.Date); // unix 1757714400 → 2025-09-12 UTC
+        Assert.Equal("13485986", first.ExternalIds!["betrail"]);
+
+        var second = jobs[1];
+        Assert.Equal("https://www.betrail.run/race/epicurienne-trail/2025", second.BetrailUrl!.AbsoluteUri);
+        Assert.Equal("22 km", second.Distance);
+        Assert.Equal(550, second.ElevationGain);
+        Assert.Equal("13485987", second.ExternalIds!["betrail"]);
+    }
+
+    [Fact]
+    public void ParseBeTrailEvents_FallsBackToEventJobWhenNoRaces()
+    {
+        const string payload = """
+            {
+              "body": {
+                "events": [
+                  {
+                    "id": 999,
+                    "title": "Solo Event - 2026",
+                    "alias": "2026",
+                    "date": 1776988800,
+                    "country": "BE",
+                    "trail": {
+                      "alias2": "solo-event",
+                      "website": "https://www.solo-event.be",
+                      "place": "Brussels",
+                      "country": "BE"
+                    }
+                  }
+                ]
+              }
+            }
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseBeTrailEvents(payload).ToArray();
+
+        var job = Assert.Single(jobs);
+        Assert.Equal("Solo Event - 2026", job.Name);
+        Assert.Equal("https://www.betrail.run/race/solo-event/2026", job.BetrailUrl!.AbsoluteUri);
+        Assert.Equal("https://www.solo-event.be/", job.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("BE", job.Country);
+        Assert.Equal("trail", job.RaceType);
+    }
+
+    [Fact]
+    public void ParseBeTrailEvents_IgnoresRankingExportsAsWebsiteUrl()
+    {
+        // trail.website is unavailable; only the ranking/PDF export is set — we must NOT pick it
+        // up as the race website (it's a results page, not the race site).
+        const string payload = """
+            {
+              "body": {
+                "events": [
+                  {
+                    "id": 1,
+                    "title": "X - 2026",
+                    "alias": "2026",
+                    "date": 1776988800,
+                    "country": "BE",
+                    "trail": {
+                      "alias2": "x",
+                      "website": "https://resultat.chrono-start.fr/race/4468/ranking?export=pdf",
+                      "country": "BE"
+                    },
+                    "races": [
+                      {
+                        "id": 2,
+                        "alias": "10km",
+                        "race_name": "Short",
+                        "distance": 10,
+                        "elevation": 100,
+                        "category": "trail",
+                        "race_type": "solo"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseBeTrailEvents(payload).ToArray();
+
+        var job = Assert.Single(jobs);
+        Assert.Null(job.WebsiteUrl);
+        Assert.Equal("https://www.betrail.run/race/x/2026", job.BetrailUrl!.AbsoluteUri);
+    }
+
     // ── BuildFeatureId (URL overload) ─────────────────────────────────────────
 
     [Theory]
@@ -980,8 +1136,19 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal("runsignup.com~Race~UT~ParkCity~TripleTrail",
             RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/Events/UT/ParkCity/TripleTrail")));
 
-        Assert.Equal("ultrasignup.com~register.aspx",
+        // UltraSignup: the ?did= query param uniquely identifies the event, and every
+        // .aspx tab (register / results / entrants) for the same did collapses to one key.
+        Assert.Equal("ultrasignup.com~register.aspx?did=104195",
             RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=104195")));
+        Assert.Equal("ultrasignup.com~register.aspx?did=119001",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=119001")));
+        Assert.Equal("ultrasignup.com~register.aspx?did=119001",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://ultrasignup.com/results_event.aspx?did=119001")));
+        Assert.Equal("ultrasignup.com~register.aspx?did=119001",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://ultrasignup.com/entrants_event.aspx?did=119001")));
+        // No `did` query — fall back to the raw first path segment.
+        Assert.Equal("ultrasignup.com~register.aspx",
+            RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx")));
 
         Assert.Equal("my.raceresult.com~376823",
             RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://my.raceresult.com/376823/info")));
@@ -994,6 +1161,33 @@ public class RaceScrapeDiscoveryTests
 
         Assert.Equal("facebook.com~profile.php?id=61552551957764",
             RaceOrganizerClient.DeriveOrganizerKey(new Uri("https://www.facebook.com/profile.php?id=61552551957764")));
+    }
+
+    [Theory]
+    // BeTrail: strip year/tab after the race slug.
+    [InlineData("https://www.betrail.run/race/dalmacija.utra.trail/2025/overview", "betrail.run~race~dalmacija.utra.trail")]
+    [InlineData("https://www.betrail.run/race/dalmacija.utra.trail", "betrail.run~race~dalmacija.utra.trail")]
+    [InlineData("https://www.betrail.run/race/epicurienne-trail/2025", "betrail.run~race~epicurienne-trail")]
+    [InlineData("https://www.betrail.run/en/race/epicurienne-trail/2025", "betrail.run~race~epicurienne-trail")]
+    // ITRA: strip year + id after the race name.
+    [InlineData("https://itra.run/Races/RaceDetails/Boo.Trail.Run.2025.Boo.Trail.Half.Marathon/2025/103052", "itra.run~Races~RaceDetails~Boo.Trail.Run.2025.Boo.Trail.Half.Marathon")]
+    [InlineData("https://itra.run/Races/RaceDetails/Some.Event", "itra.run~Races~RaceDetails~Some.Event")]
+    // Google Sites — classic /site/<name> flavour.
+    [InlineData("https://sites.google.com/site/gaxultra/the-gax-walk%C3%A6rle-noctum", "sites.google.com~site~gaxultra")]
+    [InlineData("https://sites.google.com/site/gaxultra", "sites.google.com~site~gaxultra")]
+    // Google Sites — workspace/custom-domain flavour.
+    [InlineData("https://sites.google.com/oni-p.org/oni-p/", "sites.google.com~oni-p.org")]
+    [InlineData("https://sites.google.com/oni-p.org", "sites.google.com~oni-p.org")]
+    // Google Sites — new /view/<name> flavour.
+    [InlineData("https://sites.google.com/view/fall-back-blast", "sites.google.com~view~fall-back-blast")]
+    [InlineData("https://sites.google.com/view/fall-back-blast/races", "sites.google.com~view~fall-back-blast")]
+    // Klikego: strip discipline + registration-id segments and any query string.
+    [InlineData("https://www.klikego.com/inscription/les-foulees-dacigne-acigne-au-feminin-2025/running-course-a-pied/1356384566470-11?tab=-1", "klikego.com~inscription~les-foulees-dacigne-acigne-au-feminin-2025")]
+    [InlineData("https://www.klikego.com/inscription/courses-nature-de-parigne-2025/course-a-pied-running/1395738014939-12", "klikego.com~inscription~courses-nature-de-parigne-2025")]
+    [InlineData("https://www.klikego.com/inscription/trail-des-croquants-2025/", "klikego.com~inscription~trail-des-croquants-2025")]
+    public void DeriveOrganizerKey_NewPlatformsAreNormalized(string url, string expected)
+    {
+        Assert.Equal(expected, RaceOrganizerClient.DeriveOrganizerKey(new Uri(url)));
     }
     // ── BuildFeatureId (name+distance overload) ───────────────────────────────
 
