@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using Shared.Services;
 using static Backend.RaceScrapeDiscovery;
 
 namespace Backend;
@@ -479,14 +480,7 @@ public static partial class ItraDiscoveryAgent
         return match.Success ? match.Groups[1].Value : string.Empty;
     }
 
-    private static string HtmlDecodeAndStripTags(string html)
-    {
-        if (string.IsNullOrWhiteSpace(html))
-            return string.Empty;
-
-        var decoded = WebUtility.HtmlDecode(html);
-        return Regex.Replace(decoded, "<[^>]+>", " ", RegexOptions.Singleline).Trim();
-    }
+    private static string HtmlDecodeAndStripTags(string html) => HtmlText.DecodeAndStripTags(html);
 
     private static Dictionary<string, string>? ExtractExternalIds(Uri url)
     {
