@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
+using Shared.Services;
 
 namespace Backend;
 
@@ -179,8 +180,7 @@ public static partial class DuvDiscoveryAgent
 
     private static string HtmlDecodeAndStripTags(string html)
     {
-        var decoded = WebUtility.HtmlDecode(html);
-        return Regex.Replace(decoded, "<[^>]+>", " ", RegexOptions.Singleline).Trim();
+        return HtmlText.DecodeAndStripTags(html);
     }
 
     public static (double lat, double lng)? ExtractStartPositionCoordinates(string html)
