@@ -29,12 +29,30 @@ public class DiscoverItraRaces(
     [Function(nameof(DiscoverItraRaces))]
     public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
     {
-        var jobs = await FetchJobsAsync(cancellationToken);
-        var keys = await discoveryService.DiscoverAndWriteAsync("itra", jobs, cancellationToken);
-        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+        await discoveryService.EnqueueDiscoveryMessageAsync(new RaceDiscoveryMessage("itra"), delay: null, cancellationToken);
     }
 
-    private async Task<IReadOnlyCollection<ScrapeJob>> FetchJobsAsync(CancellationToken cancellationToken)
+    public async Task<bool> ProcessPageAsync(int page, CancellationToken cancellationToken)
+    {
+        if (page < 1 || page > TotalPages)
+        {
+            logger.LogWarning("ITRA discovery page {Page} is outside valid range 1..{TotalPages}", page, TotalPages);
+            return false;
+        }
+
+        var country = CountryCodes[page - 1];
+        logger.LogInformation("ITRA: discovering country {Country} on page {Page}/{TotalPages}", country, page, TotalPages);
+
+        var jobs = await FetchJobsAsync(country, cancellationToken);
+        var keys = await discoveryService.DiscoverAndWriteAsync("itra", jobs, cancellationToken);
+        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+
+        return page < TotalPages;
+    }
+
+    private static int TotalPages => CountryCodes.Length;
+
+    private async Task<IReadOnlyCollection<ScrapeJob>> FetchJobsAsync(string country, CancellationToken cancellationToken)
     {
         try
         {
@@ -70,95 +88,58 @@ public class DiscoverItraRaces(
                 logger.LogWarning("ITRA: failed to extract antiforgery token from calendar page (html length={Length})", initialHtml.Length);
                 return [];
             }
-            logger.LogInformation("ITRA: got antiforgery token, starting country-by-country discovery");
+            logger.LogInformation("ITRA: got antiforgery token, starting discovery for country {Country}", country);
 
-            var allJobs = new List<ScrapeJob>();
-            var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var got429 = false;
+            List<KeyValuePair<string, string>> fields =
+            [
+                new("__RequestVerificationToken", token),
+                new("Input.Longitude", "0"),
+                new("Input.Latitude", "0"),
+                new("Input.NorthEastLat", "90"),
+                new("Input.NorthEastLng", "180"),
+                new("Input.SouthWestLat", "-90"),
+                new("Input.SouthWestLng", "-180"),
+                new("Input.MinDistance", ""),
+                new("Input.MaxDistance", ""),
+                new("Input.MinElevationGain", ""),
+                new("Input.MaxElevationGain", ""),
+                new("Input.MinElevationLoss", ""),
+                new("Input.MaxElevationLoss", ""),
+                new("Input.MinItraPts", "0"),
+                new("Input.MaxItraPts", "7"),
+                new("Input.ItraPtsValue", "0"),
+                new("Input.NationalLeagues", "false"),
+                new("Input.NationalLeague", "false"),
+                new("Input.DateValue", ""),
+                new("Input.DateStart", ""),
+                new("Input.DateEnd", ""),
+                new("Input.resultcount", "0"),
+                new("Input.RaceValue", ""),
+                new("Input.Country", country),
+                new("ZoomLevel", "2"),
+                new("type", ""),
+                new("countMap", "1"),
+            ];
 
-            await Parallel.ForEachAsync(CountryCodes,
-                new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = cancellationToken },
-                async (country, ct) =>
+            using var request = new HttpRequestMessage(HttpMethod.Post, ItraDiscoveryAgent.CalendarUrl)
             {
-                if (got429) return;
+                Content = new FormUrlEncodedContent(fields)
+            };
+            request.Headers.Referrer = ItraDiscoveryAgent.CalendarUrl;
 
-                List<KeyValuePair<string, string>> fields =
-                [
-                    new("__RequestVerificationToken", token),
-                    new("Input.Longitude", "0"),
-                    new("Input.Latitude", "0"),
-                    new("Input.NorthEastLat", "90"),
-                    new("Input.NorthEastLng", "180"),
-                    new("Input.SouthWestLat", "-90"),
-                    new("Input.SouthWestLng", "-180"),
-                    new("Input.MinDistance", ""),
-                    new("Input.MaxDistance", ""),
-                    new("Input.MinElevationGain", ""),
-                    new("Input.MaxElevationGain", ""),
-                    new("Input.MinElevationLoss", ""),
-                    new("Input.MaxElevationLoss", ""),
-                    new("Input.MinItraPts", "0"),
-                    new("Input.MaxItraPts", "7"),
-                    new("Input.ItraPtsValue", "0"),
-                    new("Input.NationalLeagues", "false"),
-                    new("Input.NationalLeague", "false"),
-                    new("Input.DateValue", ""),
-                    new("Input.DateStart", ""),
-                    new("Input.DateEnd", ""),
-                    new("Input.resultcount", "0"),
-                    new("Input.RaceValue", ""),
-                    new("Input.Country", country),
-                    new("ZoomLevel", "2"),
-                    new("type", ""),
-                    new("countMap", "1"),
-                ];
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                throw new HttpRequestException($"ITRA calendar returned 429 for country {country}", null, response.StatusCode);
 
-                try
-                {
-                    using var request = new HttpRequestMessage(HttpMethod.Post, ItraDiscoveryAgent.CalendarUrl)
-                    {
-                        Content = new FormUrlEncodedContent(fields)
-                    };
-                    request.Headers.Referrer = ItraDiscoveryAgent.CalendarUrl;
+            response.EnsureSuccessStatusCode();
 
-                    using var response = await client.SendAsync(request, ct);
-                    if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                    {
-                        logger.LogWarning("ITRA: received 429 for country {Country}, stopping discovery", country);
-                        got429 = true;
-                        return;
-                    }
-                    response.EnsureSuccessStatusCode();
+            var html = await response.Content.ReadAsStringAsync(cancellationToken);
+            var page = ItraDiscoveryAgent.ParseCalendarPage(html, ItraDiscoveryAgent.CalendarUrl);
 
-                    var html = await response.Content.ReadAsStringAsync(ct);
-                    var page = ItraDiscoveryAgent.ParseCalendarPage(html, ItraDiscoveryAgent.CalendarUrl);
+            var jobs = page.ToArray();
+            logger.LogInformation("ITRA: discovered {Count} races for country {Country}", jobs.Length, country);
 
-                    int newCount = 0;
-                    lock (seenUrls)
-                    {
-                        foreach (var job in page)
-                        {
-                            var key = job.WebsiteUrl?.AbsoluteUri ?? job.ItraEventPageUrl?.AbsoluteUri;
-                            if (key is null || seenUrls.Add(key))
-                            {
-                                allJobs.Add(job);
-                                newCount++;
-                            }
-                        }
-                    }
-
-                    if (page.Count > 0)
-                        logger.LogInformation("ITRA: {Country} → {Count} races ({New} new){Cap}", country, page.Count, newCount,
-                            page.Count >= 300 ? " *** MAY BE CAPPED ***" : "");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException || ex is TaskCanceledException { CancellationToken.IsCancellationRequested: false })
-                {
-                    logger.LogWarning(ex, "ITRA: failed to fetch country {Country}", country);
-                }
-            });
-
-            logger.LogInformation("ITRA: discovered {Count} races before enrichment", allJobs.Count);
-            var enrichedJobs = await ItraDiscoveryAgent.EnrichEventPageDetailsAsync(allJobs, client, cancellationToken,
+            var enrichedJobs = await ItraDiscoveryAgent.EnrichEventPageDetailsAsync(jobs, client, cancellationToken,
                 onProgress: (done, total) =>
                 {
                     if (done == -1)

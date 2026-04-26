@@ -36,8 +36,6 @@ public class DiscoverTraceDeTrailRaces(
     {
         var httpClient = httpClientFactory.CreateClient();
         var jobsByUrl = new Dictionary<string, ScrapeJob>(StringComparer.OrdinalIgnoreCase);
-        var knownTraceDeTrailIds = await organizerClient.FetchKnownTraceDeTrailIdsAsync(cancellationToken);
-        int skippedKnownEvents = 0;
         var date = MonthForPage(page);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, CalendarUrl)
@@ -59,23 +57,13 @@ public class DiscoverTraceDeTrailRaces(
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         foreach (var job in RaceScrapeDiscovery.ParseTraceDeTrailCalendarEvents(json))
         {
-            var eventId = job.ExternalIds?.TryGetValue("tracedetrailEventId", out var tId) == true ? tId : null;
-            var itraEventId = job.ExternalIds?.TryGetValue("itraEventId", out var iId) == true ? iId : null;
-
-            if ((!string.IsNullOrWhiteSpace(eventId) && knownTraceDeTrailIds.Contains(eventId!))
-                || (!string.IsNullOrWhiteSpace(itraEventId) && knownTraceDeTrailIds.Contains(itraEventId!)))
-            {
-                skippedKnownEvents++;
-                continue;
-            }
-
             var key = job.TraceDeTrailItraUrls?.FirstOrDefault()?.AbsoluteUri ?? job.TraceDeTrailEventUrl?.AbsoluteUri;
             if (key is not null)
                 jobsByUrl.TryAdd(key, job);
         }
 
-        logger.LogInformation("TraceDeTrail: discovered {Count} unique jobs, skipped {Skipped} already-known events for {Month}/{Year}, enriching with site URLs",
-            jobsByUrl.Count, skippedKnownEvents, date.Month, date.Year);
+        logger.LogInformation("TraceDeTrail: discovered {Count} unique jobs for {Month}/{Year}, enriching with site URLs",
+            jobsByUrl.Count, date.Month, date.Year);
 
         var enriched = new List<ScrapeJob>(jobsByUrl.Count);
         var stoppedEventEnrichment = false;
