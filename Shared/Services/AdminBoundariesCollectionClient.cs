@@ -47,6 +47,20 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         }
     }
 
+    public Task<IEnumerable<StoredFeatureSummary>> FindBoundarySummariesContainingAnyPoint(
+        IEnumerable<Coordinate> points,
+        int adminLevel,
+        CancellationToken cancellationToken = default)
+    {
+        var filter = "c.properties.adminLevel = @adminLevel";
+        var filterParameters = new Dictionary<string, object?>
+        {
+            ["@adminLevel"] = adminLevel.ToString()
+        };
+
+        return FindFeatureSummariesContainingAnyPoint(points, filter, filterParameters, cancellationToken);
+    }
+
     protected override async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, CancellationToken cancellationToken)
     {
         var adminLevel = _currentAdminLevel.Value ?? throw new InvalidOperationException("Admin level must be set before calling FetchMissingTile.");

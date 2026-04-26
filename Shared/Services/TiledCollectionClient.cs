@@ -229,6 +229,8 @@ public class TiledCollectionClient(
     // when the document geometry is a polygon/multi-polygon that contains it.
     private const string WithinPredicate =
         "ST_WITHIN({'type':'Point','coordinates':[@lng,@lat]}, c.geometry)";
+    private const int MaxPointsPerContainmentQuery = 25;
+    private const string StoredFeatureSummaryProjection = "c.id, c.featureId, c.kind, c.properties";
 
     // Cosmos SQL predicate that matches documents whose geometry is within @radius
     // metres of the GeoJSON point passed in via @lng/@lat.
@@ -302,6 +304,67 @@ public class TiledCollectionClient(
             pointerStoredIds, "VALUE c.id", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
 
         return matchIds.Concat(resolvedIds).Distinct(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Returns lightweight feature metadata for documents containing any of the supplied points.
+    /// Points are grouped by storage tile and queried in small batches so Cosmos can use the
+    /// partition key/tile pre-filter before evaluating the geospatial predicates.
+    /// </summary>
+    public Task<IEnumerable<StoredFeatureSummary>> FindFeatureSummariesContainingAnyPoint(
+        IEnumerable<Coordinate> points,
+        CancellationToken cancellationToken = default)
+        => FindFeatureSummariesContainingAnyPoint(points, null, null, cancellationToken);
+
+    public async Task<IEnumerable<StoredFeatureSummary>> FindFeatureSummariesContainingAnyPoint(
+        IEnumerable<Coordinate> points,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        CancellationToken cancellationToken = default)
+    {
+        var pointsByTile = points
+            .Select(point => new { Point = point, Tile = SlippyTileCalculator.WGS84ToTileIndex(point, _storeZoom) })
+            .DistinctBy(item => (item.Tile, item.Point.Lng, item.Point.Lat))
+            .GroupBy(item => item.Tile, item => item.Point)
+            .ToList();
+
+        if (pointsByTile.Count == 0)
+            return [];
+
+        var results = new List<StoredFeatureSummary>();
+        foreach (var tileGroup in pointsByTile)
+        {
+            var pointerStoredIds = (await GetPointerStoredIdsAtTile(
+                tileGroup.Key, additionalFilter, additionalParameters, cancellationToken)).ToList();
+
+            foreach (var pointBatch in tileGroup.Chunk(MaxPointsPerContainmentQuery))
+            {
+                var spatialPredicate = BuildWithinAnyPointPredicate(pointBatch);
+                var spatialParameters = WithinAnyPointParameters(pointBatch);
+
+                var matches = await QueryAtTileWithSpatialPredicate<StoredFeatureSummary>(
+                    tileGroup.Key,
+                    StoredFeatureSummaryProjection,
+                    spatialPredicate,
+                    spatialParameters,
+                    additionalFilter,
+                    additionalParameters,
+                    cancellationToken);
+                results.AddRange(matches);
+
+                var resolved = await ResolveStoredIdsWithSpatialPredicate<StoredFeatureSummary>(
+                    pointerStoredIds,
+                    StoredFeatureSummaryProjection,
+                    spatialPredicate,
+                    spatialParameters,
+                    additionalFilter,
+                    additionalParameters,
+                    cancellationToken);
+                results.AddRange(resolved);
+            }
+        }
+
+        return results.DistinctBy(summary => summary.Id, StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -407,6 +470,27 @@ public class TiledCollectionClient(
         ["@lat"] = point.Lat,
         ["@radius"] = radiusMeters,
     };
+
+    private static string BuildWithinAnyPointPredicate(IReadOnlyList<Coordinate> points)
+    {
+        if (points.Count == 1)
+            return "ST_WITHIN({'type':'Point','coordinates':[@lng0,@lat0]}, c.geometry)";
+
+        return "(" + string.Join(" OR ", points.Select((_, index) =>
+            $"ST_WITHIN({{'type':'Point','coordinates':[@lng{index},@lat{index}]}}, c.geometry)")) + ")";
+    }
+
+    private static Dictionary<string, object?> WithinAnyPointParameters(IReadOnlyList<Coordinate> points)
+    {
+        var parameters = new Dictionary<string, object?>(points.Count * 2);
+        for (var index = 0; index < points.Count; index++)
+        {
+            parameters[$"@lng{index}"] = points[index].Lng;
+            parameters[$"@lat{index}"] = points[index].Lat;
+        }
+
+        return parameters;
+    }
 
     private async Task<IEnumerable<T>> QueryAtTileWithSpatialPredicate<T>(
         (int x, int y) tile,

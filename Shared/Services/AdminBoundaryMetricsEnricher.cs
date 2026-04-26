@@ -46,14 +46,9 @@ public sealed class AdminBoundaryMetricsEnricher(
     {
         var ops = new List<PatchOperation>();
         var centroid = GeometryCentroidHelper.GetCentroid(boundary.Geometry);
-        var centroidTile = SlippyTileCalculator.WGS84ToTileIndex(centroid, CountryTileZoom);
 
-        var countries = await _adminBoundariesCollection.FetchByTiles(
-            [centroidTile], adminLevel: 2, zoom: CountryTileZoom, followPointers: true, cancellationToken: cancellationToken);
-
-        var country = countries.FirstOrDefault(c =>
-            !StoredFeature.IsPointerDocument(c)
-            && RouteFeatureMatcher.IsPointInGeometry(centroid, c.Geometry));
+        var country = (await _adminBoundariesCollection.FindBoundarySummariesContainingAnyPoint(
+            [centroid], adminLevel: 2, cancellationToken: cancellationToken)).FirstOrDefault();
 
         if (country != null)
         {

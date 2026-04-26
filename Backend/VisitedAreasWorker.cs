@@ -20,8 +20,14 @@ public class VisitedAreasWorker(
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     private const int AreaTileZoom = 8;
-    private const int RegionTileZoom = 6;
     private const int AdminLevelRegion = 4;
+
+    private sealed record VisitedAreaCandidate(
+        string AreaId,
+        string Name,
+        string AreaType,
+        string? Wikidata,
+        string? WikimediaCommons);
 
     [Function(nameof(VisitedAreasWorker))]
     public async Task Run(
@@ -62,37 +68,55 @@ public class VisitedAreasWorker(
             }
 
             var activityPoints = GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToList();
-            var visitedAreas = FindVisitedAreas(activityPoints, nearbyAreas).ToList();
+            var nearbyRegions = (await FetchVisitedRegionSummaries(activityPoints, cancellationToken)).ToList();
+            var visitedAreas = FindVisitedAreas(activityPoints, nearbyAreas, nearbyRegions).ToList();
 
             _logger.LogInformation("Activity {ActivityId} visits {AreaCount} areas", activityId, visitedAreas.Count);
 
-            var documents = new List<VisitedArea>();
+            if (visitedAreas.Count == 0)
+            {
+                await actions.CompleteMessageAsync(job);
+                return;
+            }
+
+            var partitionKey = new PartitionKey(activity.UserId);
+            var documentIds = visitedAreas
+                .Select(area => activity.UserId + "-" + area.AreaId)
+                .ToList();
+            var existingDocs = (await _visitedAreasCollection.GetByIdsAsync(documentIds, cancellationToken))
+                .ToDictionary(doc => doc.Id, StringComparer.Ordinal);
+
+            var toCreate = new List<VisitedArea>();
+            var toPatch = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
             foreach (var area in visitedAreas)
             {
-                var areaId = area.LogicalId;
-                var documentId = activity.UserId + "-" + areaId;
-                var partitionKey = new PartitionKey(activity.UserId);
-                var areaType = area.Kind == FeatureKinds.AdminBoundary
-                    ? "region"
-                    : (area.Properties.TryGetValue("areaType", out var existingAreaType) ? existingAreaType?.ToString() ?? "protected_area" : "protected_area");
-                var doc = await _visitedAreasCollection.GetByIdMaybe(documentId, partitionKey)
-                    ?? new VisitedArea
+                var documentId = activity.UserId + "-" + area.AreaId;
+                if (existingDocs.TryGetValue(documentId, out var existing))
+                {
+                    if (!existing.ActivityIds.Contains(activity.Id))
                     {
-                        Id = documentId,
-                        UserId = activity.UserId,
-                        AreaId = areaId,
-                        Name = area.Properties.TryGetValue("name", out var name) ? name?.ToString() ?? areaId : areaId,
-                        AreaType = areaType,
-                        Wikidata = area.Properties.TryGetValue("wikidata", out var wikidata) ? wikidata?.ToString() : null,
-                        WikimediaCommons = area.Properties.TryGetValue("wikimedia_commons", out var wmc) ? wmc?.ToString() : null,
-                        ActivityIds = []
-                    };
-                doc.ActivityIds.Add(activity.Id);
-                documents.Add(doc);
+                        toPatch.Add((documentId, [
+                            PatchOperation.Add("/activityIds/-", activity.Id)
+                        ]));
+                    }
+                    continue;
+                }
+
+                toCreate.Add(new VisitedArea
+                {
+                    Id = documentId,
+                    UserId = activity.UserId,
+                    AreaId = area.AreaId,
+                    Name = area.Name,
+                    AreaType = area.AreaType,
+                    Wikidata = area.Wikidata,
+                    WikimediaCommons = area.WikimediaCommons,
+                    ActivityIds = [activity.Id]
+                });
             }
 
             await actions.RenewMessageLockAsync(job);
-            await _visitedAreasCollection.BulkUpsert(documents);
+            await _visitedAreasCollection.ExecuteBatch(partitionKey, creates: toCreate, patches: toPatch, cancellationToken: cancellationToken);
             await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
@@ -103,14 +127,39 @@ public class VisitedAreasWorker(
         }
     }
 
-    private static IEnumerable<StoredFeature> FindVisitedAreas(List<Coordinate> activityPoints, IEnumerable<StoredFeature> areas)
+    private static IEnumerable<VisitedAreaCandidate> FindVisitedAreas(
+        List<Coordinate> activityPoints,
+        IEnumerable<StoredFeature> areas,
+        IEnumerable<StoredFeatureSummary> regions)
     {
         foreach (var area in areas)
         {
             if (ActivityVisitsArea(activityPoints, area.Geometry))
-                yield return area;
+            {
+                var areaId = area.LogicalId;
+                yield return new VisitedAreaCandidate(
+                    areaId,
+                    GetPropertyValue(area.Properties, "name") ?? areaId,
+                    GetPropertyValue(area.Properties, "areaType") ?? "protected_area",
+                    GetPropertyValue(area.Properties, "wikidata"),
+                    GetPropertyValue(area.Properties, "wikimedia_commons"));
+            }
+        }
+
+        foreach (var region in regions)
+        {
+            var regionId = region.LogicalId;
+            yield return new VisitedAreaCandidate(
+                regionId,
+                GetPropertyValue(region.Properties, "name") ?? regionId,
+                "region",
+                GetPropertyValue(region.Properties, "wikidata"),
+                GetPropertyValue(region.Properties, "wikimedia_commons"));
         }
     }
+
+    private static string? GetPropertyValue(IDictionary<string, dynamic> properties, string key)
+        => properties.TryGetValue(key, out var value) ? value?.ToString() : null;
 
     private static bool ActivityVisitsArea(List<Coordinate> activityPoints, Geometry geometry)
     {
@@ -154,7 +203,6 @@ public class VisitedAreasWorker(
     private async Task<IEnumerable<StoredFeature>> FetchNearbyAreas(IEnumerable<Activity> activities)
     {
         var areaTileIndices = new HashSet<(int x, int y)>();
-        var regionTileIndices = new HashSet<(int x, int y)>();
         foreach (var activity in activities)
         {
             var polyline = activity.SummaryPolyline ?? activity.Polyline;
@@ -164,16 +212,24 @@ public class VisitedAreasWorker(
             var points = GeoSpatialFunctions.DecodePolyline(polyline);
             foreach (var tile in SlippyTileCalculator.TileIndicesByLine(points, AreaTileZoom))
                 areaTileIndices.Add(tile);
-            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(points, RegionTileZoom))
-                regionTileIndices.Add(tile);
         }
 
-        var areasTask = _protectedAreasCollection.FetchByTiles(areaTileIndices, AreaTileZoom, followPointers: true);
-        var regionsTask = _adminBoundariesCollection.FetchByTiles(regionTileIndices, AdminLevelRegion, RegionTileZoom, followPointers: true);
-        var (areas, regions) = (await areasTask, await regionsTask);
+        var areas = (await _protectedAreasCollection.FetchByTiles(areaTileIndices, AreaTileZoom, followPointers: true)).ToList();
+        _logger.LogInformation("Found {Count} nearby protected areas", areas.Count);
+        return areas;
+    }
 
-        var allFeatures = areas.Concat(regions).ToList();
-        _logger.LogInformation("Found {Count} nearby areas and regions", allFeatures.Count);
-        return allFeatures;
+    private async Task<IEnumerable<StoredFeatureSummary>> FetchVisitedRegionSummaries(
+        List<Coordinate> activityPoints,
+        CancellationToken cancellationToken)
+    {
+        var sampledPoints = GetSampledIndices(activityPoints.Count)
+            .Select(index => activityPoints[index])
+            .ToList();
+
+        var regions = (await _adminBoundariesCollection.FindBoundarySummariesContainingAnyPoint(
+            sampledPoints, AdminLevelRegion, cancellationToken)).ToList();
+        _logger.LogInformation("Found {Count} visited admin regions via geospatial lookup", regions.Count);
+        return regions;
     }
 }
