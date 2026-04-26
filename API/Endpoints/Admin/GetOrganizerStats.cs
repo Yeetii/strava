@@ -59,6 +59,14 @@ public class GetOrganizerStats(
                 new QueryDefinition(
                     $"SELECT VALUE COUNT(1) FROM c WHERE IS_DEFINED(c.discovery[\"{agent}\"])")));
 
+        // ── Per discovery agent: missing-geometry discovery count ────────────
+        var agentMissingGeometryTasks = DiscoveryAgents.ToDictionary(
+            agent => agent,
+            agent => raceOrganizerClient.ExecuteQueryAsync<int>(
+                new QueryDefinition(
+                    $"SELECT VALUE COUNT(1) FROM c JOIN d IN c.discovery[\"{agent}\"] " +
+                    $"WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)")));
+
         // ── Per discovery agent: exclusive count (only this agent found it) ──
         var agentExclusiveTasks = DiscoveryAgents.ToDictionary(
             agent => agent,
@@ -101,6 +109,7 @@ public class GetOrganizerStats(
             withBothTask, noDiscoveryNoScraperTask, topDiscoveryOrganizersTask,
         };
         allTasks.AddRange(agentCountTasks.Values);
+        allTasks.AddRange(agentMissingGeometryTasks.Values);
         allTasks.AddRange(agentExclusiveTasks.Values);
         allTasks.AddRange(scraperCountTasks.Values);
         allTasks.AddRange(scraperWithRoutesTasks.Values);
@@ -130,6 +139,8 @@ public class GetOrganizerStats(
                 {
                     // Organisers this agent discovered (any overlap with other agents)
                     discoveries = agentCountTasks[agent].Result.FirstOrDefault(),
+                    // Discoveries for this agent missing lat/lon geometry.
+                    missingGeometry = agentMissingGeometryTasks[agent].Result.FirstOrDefault(),
                     // Organisers ONLY this agent found — no other agent has them
                     exclusive = agentExclusiveTasks[agent].Result.FirstOrDefault(),
                 }),
