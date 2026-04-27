@@ -341,6 +341,62 @@ public class RaceScrapeDiscoveryTests
     }
 
     [Fact]
+    public void ScrapeJob_ToSourceDiscovery_DeduplicatesAndPreservesSourceUrlOrder()
+    {
+        var job = new ScrapeJob(
+            UtmbUrl: new Uri("https://utmb.world/races/100k"),
+            TraceDeTrailItraUrls: new[]
+            {
+                new Uri("https://tracedetrail.fr/trace/getTraceItra/1"),
+                new Uri("https://tracedetrail.fr/trace/getTraceItra/1")
+            },
+            TraceDeTrailEventUrl: new Uri("https://tracedetrail.fr/en/event/x"),
+            ItraEventPageUrl: new Uri("https://itra.run/Races/RaceDetails/10"),
+            RunagainUrl: new Uri("https://runagain.com/find-event/x"),
+            WebsiteUrl: new Uri("https://example.com/"),
+            BetrailUrl: new Uri("https://www.betrail.run/race/x/2025"));
+
+        var discovery = job.ToSourceDiscovery();
+
+        Assert.Equal(new[]
+        {
+            "https://utmb.world/races/100k",
+            "https://tracedetrail.fr/trace/getTraceItra/1",
+            "https://tracedetrail.fr/en/event/x",
+            "https://itra.run/Races/RaceDetails/10",
+            "https://runagain.com/find-event/x",
+            "https://example.com/",
+            "https://www.betrail.run/race/x/2025"
+        }, discovery.SourceUrls);
+    }
+
+    [Fact]
+    public void DeriveEventKeyFromJob_FallsBackToNameAndDistanceWhenNoUrl()
+    {
+        var job = new ScrapeJob(Name: "Eco Trail Race", Distance: "50 km");
+
+        var result = RaceScrapeDiscovery.DeriveEventKeyFromJob(job);
+
+        Assert.NotNull(result);
+        Assert.Equal("eco-trail-race-50-km", result?.EventKey);
+        Assert.Equal("name://eco-trail-race-50-km", result?.CanonicalUrl);
+    }
+
+    [Fact]
+    public void DeriveEventKeyFromJob_ChoosesBestAvailableSourceUrl()
+    {
+        var job = new ScrapeJob(
+            WebsiteUrl: new Uri("https://example.com/event"),
+            UtmbUrl: new Uri("https://utmb.world/races/100k"));
+
+        var result = RaceScrapeDiscovery.DeriveEventKeyFromJob(job);
+
+        Assert.NotNull(result);
+        Assert.Equal("example.com~event", result?.EventKey);
+        Assert.Equal("https://example.com/event", result?.CanonicalUrl);
+    }
+
+    [Fact]
     public async Task EnrichEventPageDetailsAsync_ExpandsItraRaceButtonGroupLinks()
     {
         const string groupHtml = """
@@ -1110,6 +1166,60 @@ public class RaceScrapeDiscoveryTests
         var job = Assert.Single(jobs);
         Assert.Null(job.WebsiteUrl);
         Assert.Equal("https://www.betrail.run/race/x/2026", job.BetrailUrl!.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ParseRunagainSearchResults_ParsesArrayFieldsGpsAndExternalIds()
+    {
+        const string payload = """
+            {
+              "hits": [
+                {
+                  "post_title": "RunAgain Trail",
+                  "post_url": "trail-event",
+                  "country": "US",
+                  "place": "Boulder",
+                  "county": "Boulder County",
+                  "date": "2026-09-12",
+                  "gps": [40.014986, -105.270546],
+                  "length": [10, 21],
+                  "race_type": ["Trail"],
+                  "terrain_type": ["Asfalt"],
+                  "cover_image": "https://example.com/image.jpg",
+                  "race_guid": "runagain-123"
+                }
+              ]
+            }
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseRunagainSearchResults(payload).ToArray();
+
+        var job = Assert.Single(jobs);
+        Assert.Equal("https://runagain.com/find-event/trail-event", job.RunagainUrl!.AbsoluteUri);
+        Assert.Equal("RunAgain Trail", job.Name);
+        Assert.Equal("US", job.Country);
+        Assert.Equal("Boulder", job.Location);
+        Assert.Equal("Boulder County", job.County);
+        Assert.Equal("2026-09-12", job.Date);
+        Assert.Equal("10 km, 21 km", job.Distance);
+        Assert.Equal("trail, road", job.RaceType);
+        Assert.Equal("Trail", job.TypeLocal);
+        Assert.Equal(40.014986, job.Latitude);
+        Assert.Equal(-105.270546, job.Longitude);
+        Assert.Equal("https://example.com/image.jpg", job.ImageUrl);
+        Assert.Equal(new Dictionary<string, string> { ["runagain"] = "runagain-123" }, job.ExternalIds);
+    }
+
+    [Fact]
+    public void TryParseMarathonKeyword_ReturnsExpectedKilometers()
+    {
+        Assert.True(RaceScrapeDiscovery.TryParseMarathonKeyword("MARATHON", out var marathonKm));
+        Assert.Equal(42, marathonKm);
+
+        Assert.True(RaceScrapeDiscovery.TryParseMarathonKeyword("Half marathon", out var halfMarathonKm));
+        Assert.Equal(21, halfMarathonKm);
+
+        Assert.False(RaceScrapeDiscovery.TryParseMarathonKeyword("Not a race", out _));
     }
 
     // ── BuildFeatureId (URL overload) ─────────────────────────────────────────

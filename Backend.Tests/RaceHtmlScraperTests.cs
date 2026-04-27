@@ -290,6 +290,80 @@ public class RaceHtmlScraperTests
     }
 
     [Fact]
+    public void ExtractEventName_PicksJsonLdNameOverTitle()
+    {
+        const string html = """
+            <html>
+              <head>
+                <script type="application/ld+json">
+                  {"@context":"https://schema.org","@type":"Event","name":"Eco Trail Festival"}
+                </script>
+                <meta property="og:title" content="Website | Eco Trail Festival" />
+              </head>
+            </html>
+            """;
+
+        var name = RaceHtmlScraper.ExtractEventName(new Uri("https://ecotrail.example/"), html);
+
+        Assert.Equal("Eco Trail Festival", name);
+    }
+
+    [Fact]
+    public void ExtractStylesheetUrls_ResolvesRelativeAndAbsoluteUrls()
+    {
+        const string html = """
+            <link rel="stylesheet" href="/css/site.css" />
+            <link rel="stylesheet" href="https://cdn.example.com/styles.css" />
+            <link rel="stylesheet" href="javascript:void(0);" />
+            """;
+
+        var urls = RaceHtmlScraper.ExtractStylesheetUrls(html, new Uri("https://example.com/race"));
+
+        Assert.Contains(urls, u => u.AbsoluteUri == "https://example.com/css/site.css");
+        Assert.Contains(urls, u => u.AbsoluteUri == "https://cdn.example.com/styles.css");
+        Assert.DoesNotContain(urls, u => u.AbsoluteUri.StartsWith("javascript:"));
+    }
+
+    [Fact]
+    public void ExtractProminentImage_PrefersOgImageOverLogo()
+    {
+        const string html = """
+            <meta property="og:image" content="https://example.com/images/hero.jpg" />
+            <img src="/images/logo.svg" alt="Event logo" />
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/images/hero.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractLogo_FindsImageWithLogoAltText()
+    {
+        const string html = """
+            <img src="/assets/logo.png" alt="Race logo" />
+            <link rel="icon" href="/favicon.ico" />
+            """;
+
+        var logo = RaceHtmlScraper.ExtractLogo(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/assets/logo.png", logo?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractLogo_FallsBackToFaviconWhenNoLogoImagePresent()
+    {
+        const string html = """
+            <img src="/assets/banner.png" alt="Banner image" />
+            <link rel="icon" href="/favicon.ico" />
+            """;
+
+        var logo = RaceHtmlScraper.ExtractLogo(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/favicon.ico", logo?.AbsoluteUri);
+    }
+
+    [Fact]
     public void ExtractPrice_RecognisesEuroWordAsEur()
     {
         const string html = "<div>Startavgift: 35 Euro</div>";
