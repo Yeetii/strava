@@ -706,6 +706,8 @@ public class TiledCollectionClient(
             return documentList;
 
         var resolvedDocuments = (await GetByIdsAsync(pointedIds!, cancellationToken))
+            .GroupBy(document => document.Id, StringComparer.Ordinal)
+            .Select(group => group.First())
             .ToDictionary(document => document.Id, StringComparer.Ordinal);
 
         return documentList

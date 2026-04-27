@@ -104,6 +104,31 @@ public class TiledCollectionClientTests
         Assert.Empty(result);
     }
 
+    [Fact]
+    public async Task ResolvePointers_WhenResolvedDocumentsHaveDuplicateIds_DeduplicatesBeforeDictionaryLookup()
+    {
+        const string kind = FeatureKinds.Peak;
+        const string featureId = "duplicate-feature";
+        const string storedDocumentId = "peak:duplicate-feature";
+
+        var client = new DuplicateResolvePointersClient(null!, new LoggerFactory(), kind, storeZoom: 11);
+        var pointer = StoredFeature.CreatePointer(
+            kind,
+            featureId,
+            x: 1,
+            y: 1,
+            zoom: 11,
+            storedX: 1,
+            storedY: 1,
+            storedZoom: 11,
+            storedDocumentId);
+
+        var result = (await client.ResolvePointersPublic(new[] { pointer }, CancellationToken.None)).ToList();
+
+        Assert.Single(result);
+        Assert.Equal(storedDocumentId, result[0].Id);
+    }
+
     private sealed class NoFetcherTiledCollectionClient : TiledCollectionClient
     {
         public NoFetcherTiledCollectionClient(Container container, ILoggerFactory loggerFactory, string kind, int storeZoom)
@@ -113,5 +138,34 @@ public class TiledCollectionClientTests
 
         public Task<IEnumerable<StoredFeature>> FetchMissingTilePublic(int x, int y, int zoom, CancellationToken cancellationToken)
             => base.FetchMissingTile(x, y, zoom, cancellationToken);
+    }
+
+    private sealed class DuplicateResolvePointersClient : TiledCollectionClient
+    {
+        public DuplicateResolvePointersClient(Container container, ILoggerFactory loggerFactory, string kind, int storeZoom)
+            : base(container, loggerFactory, kind, (_, _, cancellationToken) => Task.FromResult(Enumerable.Empty<Feature>()), null, storeZoom)
+        {
+        }
+
+        public Task<IEnumerable<StoredFeature>> ResolvePointersPublic(IEnumerable<StoredFeature> documents, CancellationToken cancellationToken)
+            => base.ResolvePointers(documents, cancellationToken);
+
+        public override Task<IEnumerable<StoredFeature>> GetByIdsAsync(IEnumerable<string> ids, CancellationToken cancellationToken = default)
+        {
+            var id = ids.Single();
+            var duplicate = new StoredFeature
+            {
+                Id = id,
+                FeatureId = id,
+                Kind = FeatureKinds.Peak,
+                X = 0,
+                Y = 0,
+                Zoom = 11,
+                Geometry = new Point(new Position(0, 0)),
+                Properties = new Dictionary<string, dynamic>()
+            };
+
+            return Task.FromResult((IEnumerable<StoredFeature>)new[] { duplicate, duplicate });
+        }
     }
 }
