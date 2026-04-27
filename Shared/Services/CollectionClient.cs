@@ -81,7 +81,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         }
     }
 
-    public async Task<IEnumerable<T>> GetByIdsAsync(IEnumerable<string> ids, CancellationToken cancellationToken = default)
+    public virtual async Task<IEnumerable<T>> GetByIdsAsync(IEnumerable<string> ids, CancellationToken cancellationToken = default)
     {
         const int MaxIdsPerQuery = 256;
         var allDocuments = new List<T>();
@@ -107,7 +107,8 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             allDocuments.AddRange(queryResult);
         }
 
-        return allDocuments;
+        return allDocuments
+            .DistinctBy(document => document.Id, StringComparer.Ordinal);
     }
 
     public async Task<List<string>> GetAllIds(CancellationToken cancellationToken = default)
