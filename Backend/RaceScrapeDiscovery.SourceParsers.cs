@@ -312,6 +312,40 @@ public static partial class RaceScrapeDiscovery
         return jobs;
     }
 
+    public static IReadOnlyCollection<ScrapeJob> ParseLopplistanTrailPage(string html, Uri baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var jobs = new List<ScrapeJob>();
+        foreach (var block in ExtractHtmlElementsByClass(html, "div", "race"))
+        {
+            var name = ExtractElementText(block, "a", "race__link");
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var href = ExtractAttributeValue(block, "href");
+            var websiteUrl = ResolveUri(href, baseUrl);
+            if (websiteUrl is null)
+                continue;
+
+            var date = NormalizeDateToYyyyMmDd(ExtractAttributeValue(block, "datetime"));
+            var distance = ExtractElementText(block, "div", "race__distance");
+            var location = ExtractElementText(block, "div", "race__location");
+
+            jobs.Add(new ScrapeJob(
+                WebsiteUrl: websiteUrl,
+                Name: name,
+                Date: date,
+                Distance: string.IsNullOrWhiteSpace(distance) ? null : distance,
+                Country: "SE",
+                Location: string.IsNullOrWhiteSpace(location) ? null : location,
+                RaceType: "trail"));
+        }
+
+        return jobs;
+    }
+
     private static IReadOnlyCollection<string> ExtractHtmlElementsByClass(string html, string tagName, string className)
     {
         var results = new List<string>();
@@ -386,8 +420,12 @@ public static partial class RaceScrapeDiscovery
 
     private static string? ExtractAttributeValue(string html, string attributeName)
     {
-        var match = Regex.Match(html, $"{Regex.Escape(attributeName)}\\s*=\\s*['\"]([^'\"]+)['\"]", RegexOptions.IgnoreCase);
-        return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value.Trim()) : null;
+        var match = Regex.Match(html, $"{Regex.Escape(attributeName)}\\s*=\\s*(?:(['\"])(.*?)\\1|([^\\s>]+))", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (!match.Success)
+            return null;
+
+        var value = match.Groups[2].Success ? match.Groups[2].Value : match.Groups[3].Value;
+        return WebUtility.HtmlDecode(value.Trim());
     }
 
     private static string? ExtractElementText(string html, string elementName, string classContains)
@@ -415,6 +453,12 @@ public static partial class RaceScrapeDiscovery
     public static Uri? ExtractTrailrunningSwedenEventWebsiteUrl(string html, Uri baseUrl)
     {
         var href = ExtractAnchorHrefWithText(html, ["Hemsida"]);
+        return ResolveUri(href, baseUrl);
+    }
+
+    public static Uri? ExtractLopplistanEventWebsiteUrl(string html, Uri baseUrl)
+    {
+        var href = ExtractAnchorHrefWithText(html, ["Till loppet", "Till loppet!"]);
         return ResolveUri(href, baseUrl);
     }
 

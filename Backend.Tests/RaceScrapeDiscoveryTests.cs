@@ -190,6 +190,53 @@ public class RaceScrapeDiscoveryTests
     }
 
     [Fact]
+    public void ParseLopplistanTrailPage_ExtractsValidEvents()
+    {
+        const string html = """
+            <div class="race " style="border-left-color: #219653">
+              <div class="race__section">
+                <div class="race__date">
+                  <div class="race__date__content">
+                    <time datetime="2026-05-01">
+                      1 Maj
+                    </time>
+                  </div>
+                </div>
+                <div class="race__vertical">
+                  <div class="race__organization">
+                    <a class="race__link" href=/lopp/jarv-aventyr-ramsvik/>
+                      Järv Äventyr Ramsvik
+                    </a>
+                  </div>
+                  <div class="race__distance">
+                    10.0, 5.0 km
+                  </div>
+                  <div class="race__location">
+                    Ramsvik
+                  </div>
+                </div>
+              </div>
+              <div class="race__section">
+                <div class="race__activity" title=Trail>
+                  <span class="hidden-sm-down">Trail</span> 🌲
+                </div>
+              </div>
+            </div>
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseLopplistanTrailPage(html, new Uri("https://lopplistan.se/sverige/trail/"));
+
+        var job = Assert.Single(jobs);
+        Assert.Equal("Järv Äventyr Ramsvik", job.Name);
+        Assert.Equal("2026-05-01", job.Date);
+        Assert.Equal("10.0, 5.0 km", job.Distance);
+        Assert.Equal("Ramsvik", job.Location);
+        Assert.Equal("SE", job.Country);
+        Assert.Equal("trail", job.RaceType);
+        Assert.Equal("https://lopplistan.se/lopp/jarv-aventyr-ramsvik/", job.WebsiteUrl!.AbsoluteUri);
+    }
+
+    [Fact]
     public void ExtractTrailrunningSwedenEventWebsiteUrl_FindsHemsidaLink()
     {
         const string html = """
@@ -201,7 +248,19 @@ public class RaceScrapeDiscoveryTests
 
         var websiteUrl = RaceScrapeDiscovery.ExtractTrailrunningSwedenEventWebsiteUrl(html, new Uri("https://trailrunningsweden.se/events/pop-up-run-akulla-bokskogar-2/"));
 
-        Assert.Equal(new Uri("https://trailrunningsweden.se/lopargrupper/pop-up-runs/"), websiteUrl);
+        Assert.Equal("https://trailrunningsweden.se/lopargrupper/pop-up-runs/", websiteUrl!.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractLopplistanEventWebsiteUrl_FindsTillLoppetLink()
+    {
+        const string html = """
+            <a href="https://example.com" class="button">Till loppet!</a>
+            """;
+
+        var websiteUrl = RaceScrapeDiscovery.ExtractLopplistanEventWebsiteUrl(html, new Uri("https://lopplistan.se/lopp/bararydsloppet/"));
+
+        Assert.Equal("https://example.com/", websiteUrl!.AbsoluteUri);
     }
 
     [Fact]

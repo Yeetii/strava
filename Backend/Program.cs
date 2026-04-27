@@ -134,6 +134,7 @@ var host = new HostBuilder()
         services.AddSingleton<DiscoverTraceDeTrailRaces>();
         services.AddSingleton<DiscoverItraRaces>();
         services.AddSingleton<DiscoverTrailrunningSwedenRaces>();
+        services.AddSingleton<DiscoverLopplistanRaces>();
     })
     .Build();
 

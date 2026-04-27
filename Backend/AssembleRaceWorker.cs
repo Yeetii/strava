@@ -25,7 +25,7 @@ public partial class AssembleRaceWorker(
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     // Discovery source priority (highest → lowest).
-    internal static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan"];
+    internal static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "lopplistan", "loppkartan"];
 
     // Scraper key priority (highest → lowest).
     internal static readonly string[] ScraperPriority = ["utmb", "itra", "mistral", "bfs"];
