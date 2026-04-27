@@ -235,6 +235,237 @@ public static partial class RaceScrapeDiscovery
         return jobsByMarkerId.Values.ToList();
     }
 
+    public static IReadOnlyCollection<ScrapeJob> ParseTrailrunningSwedenCalendarPage(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var jobs = new List<ScrapeJob>();
+        var baseUrl = new Uri("https://trailrunningsweden.se");
+
+        foreach (var block in ExtractHtmlElementsByClass(html, "div", "eventon_list_event"))
+        {
+            if (block.IndexOf("no_events", StringComparison.OrdinalIgnoreCase) >= 0)
+                continue;
+
+            var name = ExtractElementText(block, "span", "evcal_event_title");
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var rawStartDate = ExtractMetaContent(block, "startDate")
+                ?? ExtractAttributeValue(block, "data-time");
+            var date = NormalizeDateToYyyyMmDd(rawStartDate) ?? ParseDateFromUnixTimeRange(rawStartDate);
+
+            var distance = ExtractElementText(block, "span", "evcal_event_subtitle");
+            var normalizedDistance = string.IsNullOrWhiteSpace(distance)
+                ? null
+                : ParseDistanceVerbose(distance) ?? NormalizeWhitespace(distance);
+
+            var eventUrl = ExtractItempropHref(block, "url", baseUrl)
+                ?? ResolveUri(ExtractAttributeValue(block, "data-location_url"), baseUrl);
+
+            var locationName = ExtractAttributeValue(block, "data-location_name");
+            var address = ExtractAttributeValue(block, "data-location_address");
+            var location = !string.IsNullOrWhiteSpace(locationName)
+                ? string.IsNullOrWhiteSpace(address) ? locationName : $"{locationName}, {address}"
+                : address;
+
+            if (!string.IsNullOrWhiteSpace(location))
+                location = NormalizeWhitespace(location);
+
+            var latLng = ExtractAttributeValue(block, "data-latlng");
+            double? latitude = null;
+            double? longitude = null;
+            if (!string.IsNullOrWhiteSpace(latLng))
+            {
+                var parts = latLng.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2
+                    && double.TryParse(parts[0], NumberStyles.Any, CultureInfo.InvariantCulture, out var lat)
+                    && double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var lng))
+                {
+                    latitude = lat;
+                    longitude = lng;
+                }
+            }
+
+            var eventId = ExtractAttributeValue(block, "data-event_id");
+            var externalIds = string.IsNullOrWhiteSpace(eventId)
+                ? null
+                : new Dictionary<string, string>(StringComparer.Ordinal) { ["trailrunningsweden"] = eventId };
+
+            var imageUrl = ExtractMetaContent(block, "image");
+
+            jobs.Add(new ScrapeJob(
+                WebsiteUrl: eventUrl,
+                Name: NormalizeWhitespace(name),
+                ExternalIds: externalIds,
+                Distance: normalizedDistance,
+                Country: "SE",
+                Location: location,
+                Date: date,
+                Latitude: latitude,
+                Longitude: longitude,
+                RaceType: "trail",
+                ImageUrl: string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl));
+        }
+
+        return jobs;
+    }
+
+    private static IReadOnlyCollection<string> ExtractHtmlElementsByClass(string html, string tagName, string className)
+    {
+        var results = new List<string>();
+        var pattern = $"<\\s*{tagName}\\b[^>]*\\bclass\\s*=\\s*['\"]([^'\"]*\\b{Regex.Escape(className)}\\b[^'\"]*)['\"][^>]*>";
+        foreach (Match match in Regex.Matches(html, pattern, RegexOptions.IgnoreCase))
+        {
+            if (TryExtractHtmlElement(html, match.Index, tagName, out var element))
+                results.Add(element);
+        }
+
+        return results;
+    }
+
+    private static bool TryExtractHtmlElement(string html, int startIndex, string tagName, out string element)
+    {
+        element = string.Empty;
+        var lowerHtml = html.ToLowerInvariant();
+        var lowerTag = tagName.ToLowerInvariant();
+        var openTag = "<" + lowerTag;
+        var closeTag = "</" + lowerTag;
+
+        var depth = 0;
+        var index = startIndex;
+        while (index < lowerHtml.Length)
+        {
+            var next = lowerHtml.IndexOf('<', index);
+            if (next == -1)
+                break;
+
+            if (IsOpeningTagAt(lowerHtml, next, lowerTag))
+            {
+                depth++;
+            }
+            else if (IsClosingTagAt(lowerHtml, next, lowerTag))
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    var closeEnd = html.IndexOf('>', next);
+                    if (closeEnd == -1)
+                        closeEnd = html.Length - 1;
+
+                    element = html.Substring(startIndex, closeEnd - startIndex + 1);
+                    return true;
+                }
+            }
+
+            index = next + 1;
+        }
+
+        return false;
+    }
+
+    private static bool IsOpeningTagAt(string html, int index, string tagName)
+    {
+        if (index + 1 >= html.Length || html[index + 1] == '/')
+            return false;
+
+        var span = html.AsSpan(index + 1);
+        if (!span.StartsWith(tagName, StringComparison.Ordinal))
+            return false;
+
+        var nextChar = span[tagName.Length];
+        return nextChar == ' ' || nextChar == '\t' || nextChar == '\r' || nextChar == '\n' || nextChar == '>';
+    }
+
+    private static bool IsClosingTagAt(string html, int index, string tagName)
+    {
+        var span = html.AsSpan(index + 1);
+        return span.StartsWith('/' + tagName, StringComparison.Ordinal);
+    }
+
+    private static string? ExtractAttributeValue(string html, string attributeName)
+    {
+        var match = Regex.Match(html, $"{Regex.Escape(attributeName)}\\s*=\\s*['\"]([^'\"]+)['\"]", RegexOptions.IgnoreCase);
+        return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value.Trim()) : null;
+    }
+
+    private static string? ExtractElementText(string html, string elementName, string classContains)
+    {
+        var pattern = $"<\\s*{elementName}[^>]*class\\s*=\\s*['\"][^'\"]*{Regex.Escape(classContains)}[^'\"]*['\"][^>]*>(.*?)</\\s*{elementName}\\s*>";
+        var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        return match.Success ? NormalizeWhitespace(WebUtility.HtmlDecode(Regex.Replace(match.Groups[1].Value, "<[^>]+>", string.Empty))) : null;
+    }
+
+    private static string? ExtractMetaContent(string html, string itemprop)
+    {
+        var match = Regex.Match(html, $"<meta[^>]*itemprop=['\"]{Regex.Escape(itemprop)}['\"][^>]*content=['\"]([^'\"]+)['\"][^>]*>", RegexOptions.IgnoreCase);
+        return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value.Trim()) : null;
+    }
+
+    private static Uri? ExtractItempropHref(string html, string itemprop, Uri baseUrl)
+    {
+        var match = Regex.Match(html, $"<a[^>]*itemprop=['\"]{Regex.Escape(itemprop)}['\"][^>]*href=['\"]([^'\"]+)['\"][^>]*>", RegexOptions.IgnoreCase);
+        if (!match.Success)
+            return null;
+
+        return ResolveUri(WebUtility.HtmlDecode(match.Groups[1].Value.Trim()), baseUrl);
+    }
+
+    public static Uri? ExtractTrailrunningSwedenEventWebsiteUrl(string html, Uri baseUrl)
+    {
+        var href = ExtractAnchorHrefWithText(html, ["Hemsida"]);
+        return ResolveUri(href, baseUrl);
+    }
+
+    private static string? ExtractAnchorHrefWithText(string html, IEnumerable<string> textFragments)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        var escapedFragments = string.Join("|", textFragments.Select(Regex.Escape));
+        var pattern = $"<a[^>]*href=['\"]([^'\"]+)['\"][^>]*>(?:(?!</a>).)*?(?:{escapedFragments})(?:(?!</a>).)*?</a>";
+        var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value.Trim()) : null;
+    }
+
+    private static string? ParseDateFromUnixTimeRange(string? unixRange)
+    {
+        if (string.IsNullOrWhiteSpace(unixRange))
+            return null;
+
+        var parts = unixRange.Split('-', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return null;
+
+        if (long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds))
+            return DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime.ToString("yyyy-MM-dd");
+
+        return null;
+    }
+
+    private static Uri? ResolveUri(string? value, Uri baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        if (Uri.TryCreate(value, UriKind.Absolute, out var absoluteUri) && (absoluteUri.Scheme == "http" || absoluteUri.Scheme == "https"))
+            return absoluteUri;
+
+        if (Uri.TryCreate(baseUrl, value, out var relativeUri))
+            return relativeUri;
+
+        return null;
+    }
+
+    private static string NormalizeWhitespace(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        return Regex.Replace(text, "\\s+", " ").Trim();
+    }
+
     public static IReadOnlyCollection<ScrapeJob> ParseDuvCalendarPage(string html, Uri baseUrl)
         => DuvDiscoveryAgent.ParseCalendarPage(html, baseUrl);
 

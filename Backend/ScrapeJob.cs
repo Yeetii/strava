@@ -42,6 +42,7 @@ public record ScrapeJob(
     bool? ItraNationalLeague = null,
     Uri? RunagainUrl = null,
     Uri? WebsiteUrl = null,         // generic race website (e.g. from Loppkartan)
+    Uri? TrailrunningSwedenEventUrl = null,
     Uri? BetrailUrl = null)
 {
     /// <summary>
@@ -100,6 +101,7 @@ public record ScrapeJob(
         Add(ItraEventPageUrl);
         Add(RunagainUrl);
         Add(WebsiteUrl);
+        Add(TrailrunningSwedenEventUrl);
         Add(BetrailUrl);
 
         return urls.Count > 0 ? urls : null;

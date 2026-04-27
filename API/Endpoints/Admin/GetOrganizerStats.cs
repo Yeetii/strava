@@ -13,13 +13,6 @@ public class GetOrganizerStats(
     RaceOrganizerClient raceOrganizerClient,
     IConfiguration configuration)
 {
-    private static readonly string[] DiscoveryAgents =
-    [
-        "utmb", "duv", "itra", "tracedetrail", "runagain", "loppkartan", "betrail", "manual", "manual-mistral"
-    ];
-
-    private static readonly string[] ScraperAgents = ["utmb", "itra", "bfs"];
-
     [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object))]
@@ -56,6 +49,7 @@ public class GetOrganizerStats(
                 "SUM(IIF(IS_DEFINED(c.discovery[\"betrail\"]), 1, 0)) AS BeTrail, " +
                 "SUM(IIF(IS_DEFINED(c.discovery[\"manual\"]), 1, 0)) AS Manual, " +
                 "SUM(IIF(IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS ManualMistral, " +
+                "SUM(IIF(IS_DEFINED(c.discovery[\"trailrunningsweden\"]), 1, 0)) AS TrailrunningSweden, " +
 
                 "SUM(IIF(IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS UtmbExclusive, " +
                 "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS DuvExclusive, " +
@@ -66,6 +60,7 @@ public class GetOrganizerStats(
                 "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS BeTrailExclusive, " +
                 "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS ManualExclusive, " +
                 "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS ManualMistralExclusive, " +
+                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]) AND IS_DEFINED(c.discovery[\"trailrunningsweden\"]), 1, 0)) AS TrailrunningSwedenExclusive, " +
 
                 "SUM(IIF(IS_DEFINED(c.discovery[\"utmb\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"utmb\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS UtmbMissingGeometry, " +
                 "SUM(IIF(IS_DEFINED(c.discovery[\"duv\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"duv\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS DuvMissingGeometry, " +
@@ -76,6 +71,7 @@ public class GetOrganizerStats(
                 "SUM(IIF(IS_DEFINED(c.discovery[\"betrail\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"betrail\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS BeTrailMissingGeometry, " +
                 "SUM(IIF(IS_DEFINED(c.discovery[\"manual\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"manual\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS ManualMissingGeometry, " +
                 "SUM(IIF(IS_DEFINED(c.discovery[\"manual-mistral\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"manual-mistral\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS ManualMistralMissingGeometry, " +
+                "SUM(IIF(IS_DEFINED(c.discovery[\"trailrunningsweden\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"trailrunningsweden\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS TrailrunningSwedenMissingGeometry, " +
 
                 "SUM(IIF(IS_DEFINED(c.scrapers[\"utmb\"]), 1, 0)) AS utmbTotal, " +
                 "SUM(IIF(IS_DEFINED(c.scrapers[\"itra\"]), 1, 0)) AS itraTotal, " +
@@ -95,7 +91,7 @@ public class GetOrganizerStats(
             0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0);
+            0, 0, 0, 0, 0, 0, 0, 0, 0);
         var totalExclusive =
             aggregateStats.UtmbExclusive +
             aggregateStats.DuvExclusive +
@@ -105,7 +101,8 @@ public class GetOrganizerStats(
             aggregateStats.LoppkartanExclusive +
             aggregateStats.BeTrailExclusive +
             aggregateStats.ManualExclusive +
-            aggregateStats.ManualMistralExclusive;
+            aggregateStats.ManualMistralExclusive +
+            aggregateStats.TrailrunningSwedenExclusive;
 
         var body = new
         {
@@ -130,6 +127,7 @@ public class GetOrganizerStats(
                 ["betrail"] = new { discoveries = aggregateStats.BeTrail, missingGeometry = aggregateStats.BeTrailMissingGeometry, exclusive = aggregateStats.BeTrailExclusive },
                 ["manual"] = new { discoveries = aggregateStats.Manual, missingGeometry = aggregateStats.ManualMissingGeometry, exclusive = aggregateStats.ManualExclusive },
                 ["manual-mistral"] = new { discoveries = aggregateStats.ManualMistral, missingGeometry = aggregateStats.ManualMistralMissingGeometry, exclusive = aggregateStats.ManualMistralExclusive },
+                ["trailrunningsweden"] = new { discoveries = aggregateStats.TrailrunningSweden, missingGeometry = aggregateStats.TrailrunningSwedenMissingGeometry, exclusive = aggregateStats.TrailrunningSwedenExclusive },
             },
             discoveryOverlap = new
             {
@@ -176,29 +174,33 @@ public class GetOrganizerStats(
         int BeTrail,
         int Manual,
         int ManualMistral,
-        int UtmbExclusive,
-        int DuvExclusive,
-        int ItraExclusive,
-        int TraceDeTrailExclusive,
-        int RunAgainExclusive,
-        int LoppkartanExclusive,
-        int BeTrailExclusive,
-        int ManualExclusive,
-        int ManualMistralExclusive,
-        int UtmbMissingGeometry,
-        int DuvMissingGeometry,
-        int ItraMissingGeometry,
-        int TraceDeTrailMissingGeometry,
-        int RunAgainMissingGeometry,
-        int LoppkartanMissingGeometry,
-        int BeTrailMissingGeometry,
-        int ManualMissingGeometry,
-        int ManualMistralMissingGeometry,
-        int UtmbTotal,
-        int ItraTotal,
-        int BfsTotal,
-        int UtmbWithRoutes,
-        int ItraWithRoutes,
-        int BfsWithRoutes);
+            int TrailrunningSweden,
+            int UtmbExclusive,
+            int DuvExclusive,
+            int ItraExclusive,
+            int TraceDeTrailExclusive,
+            int RunAgainExclusive,
+            int LoppkartanExclusive,
+            int BeTrailExclusive,
+            int ManualExclusive,
+            int ManualMistralExclusive,
+            int TrailrunningSwedenExclusive,
+            int UtmbMissingGeometry,
+            int DuvMissingGeometry,
+            int ItraMissingGeometry,
+            int TraceDeTrailMissingGeometry,
+            int RunAgainMissingGeometry,
+            int LoppkartanMissingGeometry,
+            int BeTrailMissingGeometry,
+            int ManualMissingGeometry,
+            int ManualMistralMissingGeometry,
+            int TrailrunningSwedenMissingGeometry,
+            int UtmbTotal,
+            int ItraTotal,
+            int BfsTotal,
+            int UtmbWithRoutes,
+            int ItraWithRoutes,
+            int BfsWithRoutes);
 
 }
+

@@ -1,0 +1,21 @@
+meta {
+  name: DiscoverTrailrunningSwedenRaces
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/DiscoverTrailrunningSwedenRaces
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": ""
+  }
+}

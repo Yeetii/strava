@@ -148,6 +148,63 @@ public class RaceScrapeDiscoveryTests
     }
 
     [Fact]
+    public void ParseTrailrunningSwedenCalendarPage_ExtractsEventsFromHtml()
+    {
+        const string html = """
+            <div id="event_48578_0" class="eventon_list_event evo_eventtop scheduled  event no_et event_48578_0" data-event_id="48578" data-ri="0r" data-time="1777629600-1777679400" data-colr="#192a4a" itemscope itemtype="http://schema.org/Event">
+                <div class="evo_event_schema" style="display:none">
+                    <a itemprop="url" href="https://trailrunningsweden.se/events/pop-up-run-akulla-bokskogar-2/"></a>
+                    <meta itemprop="image" content="https://imgix-trs.trailrunningsweden.se/wp-content/uploads/2022/06/Osbeck_bokskog_600x400.jpg" />
+                    <meta itemprop="startDate" content="2026-05-01T10:00+02:00" />
+                    <meta itemprop="endDate" content="2026-05-01T18:30+02:00" />
+                </div>
+                <a data-gmap_status="null" data-exlk="0" style="border-color: #192a4a;" id="evc_177762960048578" class="desc_trig featured_event 1 sin_val evcal_list_a" data-ux_val="3">
+                    <span class="evoet_c2 evoet_cx ">
+                        <span class="evoet_dayblock evcal_cblock " data-bgcolor="#192a4a" data-smon="maj" data-syr="2026" data-bub="">
+                            <span class="evo_start "><em class="date">01</em><em class="month">maj</em><em class="time">10:00</em></span>
+                        </span>
+                    </span>
+                    <span class="evoet_c3 evoet_cx evcal_desc">
+                        <span class="evoet_title evcal_desc2 evcal_event_title" itemprop="name">Pop up Run Åkulla bokskogar</span>
+                        <span class="event_location_attrs" data-location_address="Rolfstorp, Varberg" data-location_type="lonlat" data-location_name="Öströö Fårfarm" data-location_url="https://trailrunningsweden.se/event-location/ostroo-farfarm/" data-location_status="true" data-latlng="57.1463512,12.4558229"></span>
+                        <span class="evoet_subtitle evo_below_title"><span class="evcal_event_subtitle">15-17 km</span></span>
+                    </span>
+                </a>
+            </div>
+            """;
+
+        var jobs = RaceScrapeDiscovery.ParseTrailrunningSwedenCalendarPage(html);
+
+        var job = Assert.Single(jobs);
+        Assert.Equal("Pop up Run Åkulla bokskogar", job.Name);
+        Assert.Equal("2026-05-01", job.Date);
+        Assert.Equal("15-17 km", job.Distance);
+        Assert.Equal("SE", job.Country);
+        Assert.Equal("Öströö Fårfarm, Rolfstorp, Varberg", job.Location);
+        Assert.Equal(57.1463512, job.Latitude);
+        Assert.Equal(12.4558229, job.Longitude);
+        Assert.Equal("https://trailrunningsweden.se/events/pop-up-run-akulla-bokskogar-2/", job.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("trail", job.RaceType);
+        Assert.Equal("https://imgix-trs.trailrunningsweden.se/wp-content/uploads/2022/06/Osbeck_bokskog_600x400.jpg", job.ImageUrl);
+        Assert.Equal(new Dictionary<string, string> { ["trailrunningsweden"] = "48578" }, job.ExternalIds);
+    }
+
+    [Fact]
+    public void ExtractTrailrunningSwedenEventWebsiteUrl_FindsHemsidaLink()
+    {
+        const string html = """
+            <a class="evcal_evdata_row evo_clik_row " href="https://trailrunningsweden.se/lopargrupper/pop-up-runs/" target="_blank">
+                <span class="evcal_evdata_icons"><i class="fa fa-link"></i></span>
+                <h3 class="evo_h3">Hemsida</h3>
+            </a>
+            """;
+
+        var websiteUrl = RaceScrapeDiscovery.ExtractTrailrunningSwedenEventWebsiteUrl(html, new Uri("https://trailrunningsweden.se/events/pop-up-run-akulla-bokskogar-2/"));
+
+        Assert.Equal(new Uri("https://trailrunningsweden.se/lopargrupper/pop-up-runs/"), websiteUrl);
+    }
+
+    [Fact]
     public void ExtractItraRequestVerificationToken_ReturnsTokenFromHtml()
     {
         const string html = "<input name=\"__RequestVerificationToken\" type=\"hidden\" value=\"abc123\" />";
@@ -338,6 +395,22 @@ public class RaceScrapeDiscoveryTests
 
         Assert.True(discovery.ItraNationalLeague);
         Assert.Contains("https://itra.run/Races/RaceDetails/1234", discovery.SourceUrls!);
+    }
+
+    [Fact]
+    public void TrailrunningSwedenEventPage_IsIncludedInSourceUrls()
+    {
+        var job = new ScrapeJob(
+            WebsiteUrl: new Uri("https://trailrunningsweden.se/lopargrupper/pop-up-runs/"),
+            TrailrunningSwedenEventUrl: new Uri("https://trailrunningsweden.se/events/pop-up-run-akulla-bokskogar-2/"));
+
+        var discovery = job.ToSourceDiscovery();
+
+        Assert.Equal(new[]
+        {
+            "https://trailrunningsweden.se/lopargrupper/pop-up-runs/",
+            "https://trailrunningsweden.se/events/pop-up-run-akulla-bokskogar-2/"
+        }, discovery.SourceUrls);
     }
 
     [Fact]
