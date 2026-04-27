@@ -54,7 +54,9 @@ public static class RaceTypeNormalizer
         ["virtuelt"] = "virtual",
         ["halvmaraton"] = "", ["maraton"] = "", ["half marathon"] = "", ["marathon"] = "",
         ["rando"] = "", ["marchenordique"] = "", ["ultra"] = "", 
-        ["courseroute"] = "", ["bane"] = "", ["3mi"] = "", ["start"] = "",  ["to"] = "",
-        ["övrigt"] = "", ["other"] = "", ["annet"] = "", ["diverse"] = "", ["various"] = "",
+        ["courseroute"] = "", ["bane"] = "", ["3mi"] = "", ["start"] = "",  ["to"] = "", ["label"] = "",
+        ["övrigt"] = "", ["other"] = "", ["annet"] = "", ["diverse"] = "", ["various"] = "", ["(null)"] = "",
+        ["1"] = "", ["2"] = "", ["3"] = "", ["4"] = "", ["5"] = "", ["6"] = "", ["7"] = "", ["8"] = "", ["9"] = "",
+        ["nearly"] = "", ["criteria"] = ""
     };
 }

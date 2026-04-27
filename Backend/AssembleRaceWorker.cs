@@ -21,9 +21,11 @@ public partial class AssembleRaceWorker(
     RaceOrganizerClient organizerClient,
     RaceCollectionClient raceCollectionClient,
     ServiceBusClient serviceBusClient,
+    ILocationGeocodingService geocodingService,
     ILogger<AssembleRaceWorker> logger)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+    private readonly ILocationGeocodingService _geocodingService = geocodingService;
     // Discovery source priority (highest → lowest).
     internal static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "lopplistan", "loppkartan"];
 
@@ -56,7 +58,7 @@ public partial class AssembleRaceWorker(
 
         try
         {
-            var races = AssembleRaces(doc);
+            var races = await AssembleRacesAsync(doc, _geocodingService, cancellationToken);
             logger.LogInformation("Built {Count} race feature(s) for {Key}", races.Count, organizerKey);
 
             foreach (var race in races)
@@ -122,6 +124,12 @@ public partial class AssembleRaceWorker(
     /// assigned after sorting routes by distance (ascending).
     /// </summary>
     public static List<StoredFeature> AssembleRaces(RaceOrganizerDocument doc)
+        => AssembleRacesAsync(doc, null, CancellationToken.None).GetAwaiter().GetResult();
+
+    public static async Task<List<StoredFeature>> AssembleRacesAsync(
+        RaceOrganizerDocument doc,
+        ILocationGeocodingService? geocodingService,
+        CancellationToken cancellationToken)
     {
         var organizerKey = doc.Id;
 
@@ -137,19 +145,25 @@ public partial class AssembleRaceWorker(
         var dedupedRoutes = DeduplicateRoutesByDistance(allRoutes, flatDiscoveries);
 
         var results = new List<StoredFeature>();
+        var geocodedLocationCache = new Dictionary<string, (double lat, double lng)?>(StringComparer.OrdinalIgnoreCase);
 
         if (dedupedRoutes.Count == 0)
         {
-            // No scraper output — fall back to a single point per deduplicated discovery entry (if coords available).
+            // No scraper output — fall back to a single point per deduplicated discovery entry.
             int idx = 0;
             foreach (var (_, d) in flatDiscoveries)
             {
-                if (d.Latitude is null || d.Longitude is null)
+                var coords = d.Latitude is not null && d.Longitude is not null
+                    ? (d.Latitude.Value, d.Longitude.Value)
+                    : await ResolveFallbackCoordinatesAsync(d, null, geocodingService, geocodedLocationCache, cancellationToken);
+                if (coords is null)
                     continue;
+
+                var (lat, lng) = coords.Value;
                 var featureId = $"{organizerKey}-{idx++}";
                 var props = BuildProperties(mergedDiscovery, scraperKey: null, route: null,
                     scraperImageUrl: null, scraperLogoUrl: null, websiteUrl: doc.Url);
-                results.Add(BuildPointFeature(featureId, d.Longitude.Value, d.Latitude.Value, props));
+                results.Add(BuildPointFeature(featureId, lng, lat, props));
             }
             return results;
         }
@@ -206,37 +220,40 @@ public partial class AssembleRaceWorker(
                 }
             }
 
-            // Fall back to a point using discovery coordinates.
-            if (coordsDiscovery is not null)
+            var fallbackCoords = await ResolveFallbackCoordinatesAsync(
+                bestDiscovery, coordsDiscovery, geocodingService, geocodedLocationCache, cancellationToken);
+
+            if (fallbackCoords is (var lat, var lng))
             {
                 if (effectiveKm.HasValue && AssemblyAlreadyCoversRoughDistanceKm(effectiveKm.Value, results))
                     continue;
 
-                results.Add(BuildPointFeature(featureId,
-                    coordsDiscovery.Longitude!.Value, coordsDiscovery.Latitude!.Value, props));
+                results.Add(BuildPointFeature(featureId, lng, lat, props));
             }
             // Otherwise skip this route (no position can be determined).
         }
 
         // 7. Add point races for discovery distances not claimed by any scraper route.
-        if (coordsDiscovery is not null)
+        var unclaimed = GetUnclaimedDiscoveryDistances(flatDiscoveries, claimedKm);
+        foreach (var (distKm, distLabel) in unclaimed)
         {
-            var unclaimed = GetUnclaimedDiscoveryDistances(flatDiscoveries, claimedKm);
-            foreach (var (distKm, distLabel) in unclaimed)
-            {
-                if (distKm.HasValue && AssemblyAlreadyCoversRoughDistanceKm(distKm.Value, results))
-                    continue;
+            if (distKm.HasValue && AssemblyAlreadyCoversRoughDistanceKm(distKm.Value, results))
+                continue;
 
-                var featureId = $"{organizerKey}-{results.Count}";
-                var bestDisc = distKm.HasValue
-                    ? FindBestDiscoveryForRoute(distKm, flatDiscoveries, mergedDiscovery)
-                    : FindDiscoveryForLabel(distLabel, flatDiscoveries, mergedDiscovery);
-                var props = BuildProperties(bestDisc, scraperKey: null, route: null,
-                    scraperImageUrl, scraperLogoUrl, websiteUrl);
-                props[RaceScrapeDiscovery.PropDistance] = distLabel;
-                results.Add(BuildPointFeature(featureId,
-                    coordsDiscovery.Longitude!.Value, coordsDiscovery.Latitude!.Value, props));
-            }
+            var featureId = $"{organizerKey}-{results.Count}";
+            var bestDisc = distKm.HasValue
+                ? FindBestDiscoveryForRoute(distKm, flatDiscoveries, mergedDiscovery)
+                : FindDiscoveryForLabel(distLabel, flatDiscoveries, mergedDiscovery);
+            var props = BuildProperties(bestDisc, scraperKey: null, route: null,
+                scraperImageUrl, scraperLogoUrl, websiteUrl);
+            props[RaceScrapeDiscovery.PropDistance] = distLabel;
+
+            var fallbackCoords = await ResolveFallbackCoordinatesAsync(
+                bestDisc, coordsDiscovery, geocodingService, geocodedLocationCache, cancellationToken);
+            if (fallbackCoords is not (var lat, var lng))
+                continue;
+
+            results.Add(BuildPointFeature(featureId, lng, lat, props));
         }
 
         return results;
@@ -659,6 +676,31 @@ public partial class AssembleRaceWorker(
             Zoom = RaceCollectionClient.DefaultZoom,
             Properties = props,
         };
+    }
+
+    private static async Task<(double lat, double lng)?> ResolveFallbackCoordinatesAsync(
+        SourceDiscovery discovery,
+        SourceDiscovery? coordsDiscovery,
+        ILocationGeocodingService? geocodingService,
+        IDictionary<string, (double lat, double lng)?> geocodedLocationCache,
+        CancellationToken cancellationToken)
+    {
+        if (coordsDiscovery is not null)
+            return (coordsDiscovery.Latitude!.Value, coordsDiscovery.Longitude!.Value);
+
+        var location = !string.IsNullOrWhiteSpace(discovery.Location)
+            ? discovery.Location.Trim()
+            : null;
+        if (location is null || geocodingService is null)
+            return null;
+
+        var cacheKey = string.Concat(location, "|", discovery.Country?.ToUpperInvariant() ?? string.Empty);
+        if (geocodedLocationCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        var coords = await geocodingService.GeocodeAsync(location, discovery.Country, cancellationToken);
+        geocodedLocationCache[cacheKey] = coords;
+        return coords;
     }
 
     // ── Utility ────────────────────────────────────────────────────────────

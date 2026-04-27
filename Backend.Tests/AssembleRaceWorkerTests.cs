@@ -1,5 +1,6 @@
 using BAMCIS.GeoJSON;
 using Shared.Models;
+using Shared.Services;
 
 namespace Backend.Tests;
 
@@ -41,6 +42,42 @@ public class AssembleRaceWorkerTests
         Assert.Equal("Point", races[0].Geometry.Type.ToString());
         Assert.Equal("Merrell Göteborg Trailrun", races[0].Properties["name"].ToString());
         Assert.Equal("2026-09-05", races[0].Properties["date"].ToString());
+    }
+
+    [Fact]
+    public async Task AssembleRacesAsync_NoCoordsButLocation_GeocodesLocationToPoint()
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "geocode.se",
+            Url = "https://geocode.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:00:00Z",
+                        Name = "Geo Run",
+                        Date = "2026-09-05",
+                        Distance = "50 km",
+                        Country = "SE",
+                        Location = "Gothenburg, Sweden",
+                    }
+                ]
+            }
+        };
+
+        var geocodingService = new TestLocationGeocodingService();
+        geocodingService.Add("Gothenburg, Sweden|SE", (57.7089, 11.9746));
+
+        var races = await AssembleRaceWorker.AssembleRacesAsync(doc, geocodingService, CancellationToken.None);
+
+        Assert.Single(races);
+        Assert.Equal("Point", races[0].Geometry.Type.ToString());
+        var point = Assert.IsType<Point>(races[0].Geometry);
+        Assert.Equal(11.9746, point.Coordinates.Longitude);
+        Assert.Equal(57.7089, point.Coordinates.Latitude);
     }
 
     [Fact]
@@ -1396,4 +1433,19 @@ public class AssembleRaceWorkerTests
                 }
             }
         };
+
+    private sealed class TestLocationGeocodingService : ILocationGeocodingService
+    {
+        private readonly Dictionary<string, (double lat, double lng)?> _responses =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        public void Add(string cacheKey, (double lat, double lng) coords)
+            => _responses[cacheKey] = coords;
+
+        public Task<(double lat, double lng)?> GeocodeAsync(string location, string? country, CancellationToken cancellationToken)
+        {
+            var key = string.Concat(location.Trim(), "|", country?.ToUpperInvariant() ?? string.Empty);
+            return Task.FromResult(_responses.TryGetValue(key, out var coords) ? coords : null);
+        }
+    }
 }

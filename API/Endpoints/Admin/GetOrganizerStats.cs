@@ -1,4 +1,7 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
+using System.Text;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -13,6 +16,28 @@ public class GetOrganizerStats(
     RaceOrganizerClient raceOrganizerClient,
     IConfiguration configuration)
 {
+    private static readonly string[] DiscoverySources = new[]
+    {
+        "utmb",
+        "duv",
+        "itra",
+        "tracedetrail",
+        "runagain",
+        "lopplistan",
+        "loppkartan",
+        "betrail",
+        "manual",
+        "manual-mistral",
+        "trailrunningsweden",
+    };
+
+    private static readonly string[] ScraperSources = new[]
+    {
+        "utmb",
+        "itra",
+        "bfs",
+    };
+
     [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object))]
@@ -30,120 +55,57 @@ public class GetOrganizerStats(
             MaxBufferedItemCount = 1,
         };
 
-        var aggregateStatsTask = raceOrganizerClient.ExecuteQueryAsync<AggregateStats>(
-            new QueryDefinition(
-                "SELECT " +
-                "COUNT(1) AS total, " +
-                "SUM(IIF(IS_DEFINED(c.lastAssembledUtc), 1, 0)) AS assembled, " +
-                "SUM(IIF(IS_DEFINED(c.discovery), 1, 0)) AS withAnyDiscovery, " +
-                "SUM(IIF(IS_DEFINED(c.scrapers), 1, 0)) AS withAnyScraper, " +
-                "SUM(IIF(IS_DEFINED(c.discovery) AND IS_DEFINED(c.scrapers), 1, 0)) AS withBoth, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery) AND NOT IS_DEFINED(c.scrapers), 1, 0)) AS noDiscoveryNoScraper, " +
+        var aggregateStatsTask = raceOrganizerClient.ExecuteQueryAsync<Dictionary<string, int>>(
+            new QueryDefinition(BuildOrganizerStatsQuery()),
+            requestOptions: queryRequestOptions);
 
-                "SUM(IIF(IS_DEFINED(c.discovery[\"utmb\"]), 1, 0)) AS Utmb, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"duv\"]), 1, 0)) AS Duv, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"itra\"]), 1, 0)) AS Itra, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"tracedetrail\"]), 1, 0)) AS TraceDeTrail, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"runagain\"]), 1, 0)) AS RunAgain, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"lopplistan\"]), 1, 0)) AS Lopplistan, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"loppkartan\"]), 1, 0)) AS Loppkartan, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"betrail\"]), 1, 0)) AS BeTrail, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"manual\"]), 1, 0)) AS Manual, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS ManualMistral, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"trailrunningsweden\"]), 1, 0)) AS TrailrunningSweden, " +
+        await Task.WhenAll(aggregateStatsTask);
 
-                "SUM(IIF(IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS UtmbExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS DuvExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS ItraExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS TraceDeTrailExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS RunAgainExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND IS_DEFINED(c.discovery[\"lopplistan\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS LopplistanExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"lopplistan\"]) AND IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS LoppkartanExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"lopplistan\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS BeTrailExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS ManualExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND IS_DEFINED(c.discovery[\"manual-mistral\"]), 1, 0)) AS ManualMistralExclusive, " +
-                "SUM(IIF(NOT IS_DEFINED(c.discovery[\"utmb\"]) AND NOT IS_DEFINED(c.discovery[\"duv\"]) AND NOT IS_DEFINED(c.discovery[\"itra\"]) AND NOT IS_DEFINED(c.discovery[\"tracedetrail\"]) AND NOT IS_DEFINED(c.discovery[\"runagain\"]) AND NOT IS_DEFINED(c.discovery[\"loppkartan\"]) AND NOT IS_DEFINED(c.discovery[\"betrail\"]) AND NOT IS_DEFINED(c.discovery[\"manual\"]) AND NOT IS_DEFINED(c.discovery[\"manual-mistral\"]) AND IS_DEFINED(c.discovery[\"trailrunningsweden\"]), 1, 0)) AS TrailrunningSwedenExclusive, " +
+        var aggregateStats = aggregateStatsTask.Result.FirstOrDefault() ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int GetStat(string name) => aggregateStats.TryGetValue(name, out var value) ? value : 0;
 
-                "SUM(IIF(IS_DEFINED(c.discovery[\"utmb\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"utmb\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS UtmbMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"duv\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"duv\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS DuvMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"itra\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"itra\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS ItraMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"tracedetrail\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"tracedetrail\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS TraceDeTrailMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"runagain\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"runagain\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS RunAgainMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"lopplistan\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"lopplistan\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS LopplistanMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"loppkartan\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"loppkartan\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS LoppkartanMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"betrail\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"betrail\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS BeTrailMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"manual\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"manual\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS ManualMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"manual-mistral\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"manual-mistral\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS ManualMistralMissingGeometry, " +
-                "SUM(IIF(IS_DEFINED(c.discovery[\"trailrunningsweden\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"trailrunningsweden\"] WHERE NOT IS_DEFINED(d.latitude) OR NOT IS_DEFINED(d.longitude)), 1, 0)) AS TrailrunningSwedenMissingGeometry, " +
+        var discoveryAgents = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        var totalExclusive = 0;
 
-                "SUM(IIF(IS_DEFINED(c.scrapers[\"utmb\"]), 1, 0)) AS utmbTotal, " +
-                "SUM(IIF(IS_DEFINED(c.scrapers[\"itra\"]), 1, 0)) AS itraTotal, " +
-                "SUM(IIF(IS_DEFINED(c.scrapers[\"bfs\"]), 1, 0)) AS bfsTotal, " +
-                "SUM(IIF(IS_DEFINED(c.scrapers[\"utmb\"]) AND IS_DEFINED(c.scrapers[\"utmb\"].routes) AND ARRAY_LENGTH(c.scrapers[\"utmb\"].routes) > 0, 1, 0)) AS utmbWithRoutes, " +
-                "SUM(IIF(IS_DEFINED(c.scrapers[\"itra\"]) AND IS_DEFINED(c.scrapers[\"itra\"].routes) AND ARRAY_LENGTH(c.scrapers[\"itra\"].routes) > 0, 1, 0)) AS itraWithRoutes, " +
-                "SUM(IIF(IS_DEFINED(c.scrapers[\"bfs\"]) AND IS_DEFINED(c.scrapers[\"bfs\"].routes) AND ARRAY_LENGTH(c.scrapers[\"bfs\"].routes) > 0, 1, 0)) AS bfsWithRoutes " +
-                "FROM c"), requestOptions: queryRequestOptions);
+        foreach (var source in DiscoverySources)
+        {
+            var prefix = ToPascalCase(source);
+            var exclusive = GetStat(prefix + "Exclusive");
 
-        // ── Wait for everything ───────────────────────────────────────────────
-        await Task.WhenAll(
-            aggregateStatsTask);
+            discoveryAgents[source] = new
+            {
+                discoveries = GetStat(prefix),
+                missingGeometry = GetStat(prefix + "MissingGeometry"),
+                couldBeFilledFromLocation = GetStat(prefix + "CouldBeFilledFromLocation"),
+                exclusive,
+            };
 
-        // ── Derived totals ────────────────────────────────────────────────────
-        var aggregateStats = aggregateStatsTask.Result.FirstOrDefault() ?? new AggregateStats(
-            0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-        var totalExclusive =
-            aggregateStats.UtmbExclusive +
-            aggregateStats.DuvExclusive +
-            aggregateStats.ItraExclusive +
-            aggregateStats.TraceDeTrailExclusive +
-            aggregateStats.RunAgainExclusive +
-            aggregateStats.LopplistanExclusive +
-            aggregateStats.LoppkartanExclusive +
-            aggregateStats.BeTrailExclusive +
-            aggregateStats.ManualExclusive +
-            aggregateStats.ManualMistralExclusive +
-            aggregateStats.TrailrunningSwedenExclusive;
+            totalExclusive += exclusive;
+        }
 
         var body = new
         {
             overview = new
             {
-                aggregateStats.Total,
-                aggregateStats.Assembled,
-                neverAssembled = aggregateStats.Total - aggregateStats.Assembled,
-                withAnyDiscovery = aggregateStats.WithAnyDiscovery,
-                withAnyScraper = aggregateStats.WithAnyScraper,
-                withBothDiscoveryAndScraper = aggregateStats.WithBoth,
-                noDiscoveryNoScraper = aggregateStats.NoDiscoveryNoScraper,
+                total = GetStat("total"),
+                assembled = GetStat("assembled"),
+                neverAssembled = GetStat("total") - GetStat("assembled"),
+                withAnyDiscovery = GetStat("withAnyDiscovery"),
+                withAnyScraper = GetStat("withAnyScraper"),
+                withBothDiscoveryAndScraper = GetStat("withBoth"),
+                noDiscoveryNoScraper = GetStat("noDiscoveryNoScraper"),
             },
-            discoveryAgents = new Dictionary<string, object>
-            {
-                ["utmb"] = new { discoveries = aggregateStats.Utmb, missingGeometry = aggregateStats.UtmbMissingGeometry, exclusive = aggregateStats.UtmbExclusive },
-                ["duv"] = new { discoveries = aggregateStats.Duv, missingGeometry = aggregateStats.DuvMissingGeometry, exclusive = aggregateStats.DuvExclusive },
-                ["itra"] = new { discoveries = aggregateStats.Itra, missingGeometry = aggregateStats.ItraMissingGeometry, exclusive = aggregateStats.ItraExclusive },
-                ["tracedetrail"] = new { discoveries = aggregateStats.TraceDeTrail, missingGeometry = aggregateStats.TraceDeTrailMissingGeometry, exclusive = aggregateStats.TraceDeTrailExclusive },
-                ["runagain"] = new { discoveries = aggregateStats.RunAgain, missingGeometry = aggregateStats.RunAgainMissingGeometry, exclusive = aggregateStats.RunAgainExclusive },
-                ["lopplistan"] = new { discoveries = aggregateStats.Lopplistan, missingGeometry = aggregateStats.LopplistanMissingGeometry, exclusive = aggregateStats.LopplistanExclusive },
-                ["loppkartan"] = new { discoveries = aggregateStats.Loppkartan, missingGeometry = aggregateStats.LoppkartanMissingGeometry, exclusive = aggregateStats.LoppkartanExclusive },
-                ["betrail"] = new { discoveries = aggregateStats.BeTrail, missingGeometry = aggregateStats.BeTrailMissingGeometry, exclusive = aggregateStats.BeTrailExclusive },
-                ["manual"] = new { discoveries = aggregateStats.Manual, missingGeometry = aggregateStats.ManualMissingGeometry, exclusive = aggregateStats.ManualExclusive },
-                ["manual-mistral"] = new { discoveries = aggregateStats.ManualMistral, missingGeometry = aggregateStats.ManualMistralMissingGeometry, exclusive = aggregateStats.ManualMistralExclusive },
-                ["trailrunningsweden"] = new { discoveries = aggregateStats.TrailrunningSweden, missingGeometry = aggregateStats.TrailrunningSwedenMissingGeometry, exclusive = aggregateStats.TrailrunningSwedenExclusive },
-            },
+            discoveryAgents,
             discoveryOverlap = new
             {
                 discoveredByExactlyOneAgent = totalExclusive,
-                discoveredByMultipleAgents = aggregateStats.WithAnyDiscovery - totalExclusive,
+                discoveredByMultipleAgents = GetStat("withAnyDiscovery") - totalExclusive,
             },
             scrapers = new Dictionary<string, object>
             {
-                ["utmb"] = new { total = aggregateStats.UtmbTotal, withRoutes = aggregateStats.UtmbWithRoutes, withoutRoutes = aggregateStats.UtmbTotal - aggregateStats.UtmbWithRoutes },
-                ["itra"] = new { total = aggregateStats.ItraTotal, withRoutes = aggregateStats.ItraWithRoutes, withoutRoutes = aggregateStats.ItraTotal - aggregateStats.ItraWithRoutes },
-                ["bfs"] = new { total = aggregateStats.BfsTotal, withRoutes = aggregateStats.BfsWithRoutes, withoutRoutes = aggregateStats.BfsTotal - aggregateStats.BfsWithRoutes },
+                ["utmb"] = new { total = GetStat("utmbTotal"), withRoutes = GetStat("utmbWithRoutes"), withoutRoutes = GetStat("utmbTotal") - GetStat("utmbWithRoutes") },
+                ["itra"] = new { total = GetStat("itraTotal"), withRoutes = GetStat("itraWithRoutes"), withoutRoutes = GetStat("itraTotal") - GetStat("itraWithRoutes") },
+                ["bfs"] = new { total = GetStat("bfsTotal"), withRoutes = GetStat("bfsWithRoutes"), withoutRoutes = GetStat("bfsTotal") - GetStat("bfsWithRoutes") },
             },
             topByDiscoveries = Array.Empty<object>(),
         };
@@ -163,52 +125,68 @@ public class GetOrganizerStats(
             && providedKeys.FirstOrDefault() == adminKey;
     }
 
-    private record AggregateStats(
-        int Total,
-        int Assembled,
-        int WithAnyDiscovery,
-        int WithAnyScraper,
-        int WithBoth,
-        int NoDiscoveryNoScraper,
-        int Utmb,
-        int Duv,
-        int Itra,
-        int TraceDeTrail,
-        int RunAgain,
-        int Lopplistan,
-        int Loppkartan,
-        int BeTrail,
-        int Manual,
-        int ManualMistral,
-            int TrailrunningSweden,
-            int UtmbExclusive,
-            int DuvExclusive,
-            int ItraExclusive,
-            int TraceDeTrailExclusive,
-            int RunAgainExclusive,
-            int LopplistanExclusive,
-            int LoppkartanExclusive,
-            int BeTrailExclusive,
-            int ManualExclusive,
-            int ManualMistralExclusive,
-            int TrailrunningSwedenExclusive,
-            int UtmbMissingGeometry,
-            int DuvMissingGeometry,
-            int ItraMissingGeometry,
-            int TraceDeTrailMissingGeometry,
-            int RunAgainMissingGeometry,
-            int LopplistanMissingGeometry,
-            int LoppkartanMissingGeometry,
-            int BeTrailMissingGeometry,
-            int ManualMissingGeometry,
-            int ManualMistralMissingGeometry,
-            int TrailrunningSwedenMissingGeometry,
-            int UtmbTotal,
-            int ItraTotal,
-            int BfsTotal,
-            int UtmbWithRoutes,
-            int ItraWithRoutes,
-            int BfsWithRoutes);
+    private static string BuildOrganizerStatsQuery()
+    {
+        var lines = new List<string>
+        {
+            "SELECT",
+            "  COUNT(1) AS total,",
+            "  SUM(IIF(IS_DEFINED(c.lastAssembledUtc), 1, 0)) AS assembled,",
+            "  SUM(IIF(IS_DEFINED(c.discovery), 1, 0)) AS withAnyDiscovery,",
+            "  SUM(IIF(IS_DEFINED(c.scrapers), 1, 0)) AS withAnyScraper,",
+            "  SUM(IIF(IS_DEFINED(c.discovery) AND IS_DEFINED(c.scrapers), 1, 0)) AS withBoth,",
+            "  SUM(IIF(NOT IS_DEFINED(c.discovery) AND NOT IS_DEFINED(c.scrapers), 1, 0)) AS noDiscoveryNoScraper,",
+        };
 
+        foreach (var source in DiscoverySources)
+        {
+            lines.Add($"  SUM(IIF(IS_DEFINED(c.discovery[\"{source}\"]), 1, 0)) AS {ToPascalCase(source)},");
+        }
+
+        foreach (var source in DiscoverySources)
+        {
+            var exclusions = string.Join(" AND ", DiscoverySources.Where(other => other != source).Select(other => $"NOT IS_DEFINED(c.discovery[\"{other}\"])"));
+            lines.Add($"  SUM(IIF(IS_DEFINED(c.discovery[\"{source}\"]) AND {exclusions}, 1, 0)) AS {ToPascalCase(source)}Exclusive,");
+        }
+
+        foreach (var source in DiscoverySources)
+        {
+            var prefix = ToPascalCase(source);
+            lines.Add($"  SUM(IIF(IS_DEFINED(c.discovery[\"{source}\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"{source}\"] WHERE {MissingGeometryPredicate}), 1, 0)) AS {prefix}MissingGeometry,");
+            lines.Add($"  SUM(IIF(IS_DEFINED(c.discovery[\"{source}\"]) AND EXISTS(SELECT VALUE d FROM d IN c.discovery[\"{source}\"] WHERE {CouldBeFilledFromLocationPredicate}), 1, 0)) AS {prefix}CouldBeFilledFromLocation,");
+        }
+
+        foreach (var source in ScraperSources)
+        {
+            lines.Add($"  SUM(IIF(IS_DEFINED(c.scrapers[\"{source}\"]), 1, 0)) AS {source}Total,");
+        }
+
+        foreach (var source in ScraperSources)
+        {
+            lines.Add($"  SUM(IIF(IS_DEFINED(c.scrapers[\"{source}\"]) AND IS_DEFINED(c.scrapers[\"{source}\"].routes) AND ARRAY_LENGTH(c.scrapers[\"{source}\"].routes) > 0, 1, 0)) AS {source}WithRoutes,");
+        }
+
+        lines[^1] = lines[^1].TrimEnd(',');
+        lines.Add("FROM c");
+        return string.Join("\n", lines);
+    }
+
+    private static string ToPascalCase(string source)
+    {
+        var builder = new StringBuilder(source.Length);
+        foreach (var segment in source.Split('-', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment.Length == 0)
+                continue;
+
+            builder.Append(char.ToUpperInvariant(segment[0]));
+            if (segment.Length > 1)
+                builder.Append(segment.AsSpan(1));
+        }
+
+        return builder.ToString();
+    }
+
+    private static string MissingGeometryPredicate => "(NOT IS_DEFINED(d.latitude) OR IS_NULL(d.latitude) OR NOT IS_DEFINED(d.longitude) OR IS_NULL(d.longitude))";
+    private static string CouldBeFilledFromLocationPredicate => MissingGeometryPredicate + " AND IS_DEFINED(d.location) AND NOT IS_NULL(d.location) AND d.location <> ''";
 }
-
