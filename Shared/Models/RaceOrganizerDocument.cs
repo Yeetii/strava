@@ -23,6 +23,22 @@ public class RaceOrganizerDocument : IDocument
     public Dictionary<string, ScraperOutput>? Scrapers { get; set; }
 
     public string? LastAssembledUtc { get; set; }
+
+    /// <summary>Highest race slot index from the last successful assembly run. Avoids a fan-out query when expiring superseded slots.</summary>
+    public int? LastMaxSlotIndex { get; set; }
+
+    /// <summary>Per-slot content hashes from the last assembly. Key: slot key e.g. "nighttrailrun.se-0".</summary>
+    public Dictionary<string, RaceSlotHashes>? AssemblyHashes { get; set; }
+}
+
+/// <summary>
+/// Content hashes for one assembled race slot, stored on the organizer document to
+/// detect geometry and property changes across re-assembly runs.
+/// </summary>
+public class RaceSlotHashes
+{
+    public string? PropertiesHash { get; set; }
+    public string? GeometryHash { get; set; }
 }
 
 /// <summary>

@@ -1,4 +1,7 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using BAMCIS.GeoJSON;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
@@ -61,32 +64,67 @@ public partial class AssembleRaceWorker(
             var races = await AssembleRacesAsync(doc, _geocodingService, cancellationToken);
             logger.LogInformation("Built {Count} race feature(s) for {Key}", races.Count, organizerKey);
 
+            // Write each race to Cosmos, skipping or downgrading to a patch when content is unchanged.
+            var newHashes = new Dictionary<string, RaceSlotHashes>(races.Count, StringComparer.Ordinal);
+            int upserted = 0, patched = 0, skipped = 0;
+
             foreach (var race in races)
             {
-                await raceCollectionClient.UpsertDocument(race, cancellationToken);
-            }
+                var slotKey = race.FeatureId!;
+                var newHash = ComputeHashes(race);
+                newHashes[slotKey] = newHash;
 
-            logger.LogInformation("Upserted {UpsertedCount} race document(s) to Cosmos for {Key}", races.Count, organizerKey);
-
-            if (RaceCollectionClient.TryGetHighestRaceSlotIndex(organizerKey, races, out var maxSlot))
-            {
-                var patchOfDeathIds = await raceCollectionClient.MarkHigherRaceSlotsExpiredAsync(
-                    organizerKey, maxSlot, cancellationToken);
-                if (patchOfDeathIds.Count > 0)
+                if (doc.AssemblyHashes?.TryGetValue(slotKey, out var prevHash) == true)
                 {
-                    const int maxIdsInLog = 40;
-                    var idPreview = patchOfDeathIds.Count <= maxIdsInLog
-                        ? string.Join(", ", patchOfDeathIds)
-                        : string.Join(", ", patchOfDeathIds.Take(maxIdsInLog))
-                          + $" … (+{patchOfDeathIds.Count - maxIdsInLog} more)";
-                    logger.LogInformation(
-                        "Patch of death (ttl=1): patched {Count} superseded race document(s) for {Key} (slot index > {MaxSlot}). Ids: {Ids}",
-                        patchOfDeathIds.Count, organizerKey, maxSlot, idPreview);
+                    if (prevHash.GeometryHash == newHash.GeometryHash &&
+                        prevHash.PropertiesHash == newHash.PropertiesHash)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    if (prevHash.GeometryHash == newHash.GeometryHash)
+                    {
+                        // Geometry unchanged — patch only the properties path (~1–10 RU vs full upsert).
+                        await raceCollectionClient.PatchRacePropertiesAsync(race.Id, race.Properties, cancellationToken);
+                        patched++;
+                        continue;
+                    }
                 }
+
+                await raceCollectionClient.UpsertDocument(race, cancellationToken);
+                upserted++;
             }
 
-            // Record assembly timestamp on the organizer document.
-            await organizerClient.PatchLastAssembledAsync(organizerKey, cancellationToken);
+            logger.LogInformation(
+                "Assembly writes for {Key}: {Upserted} upserted, {Patched} props-patched, {Skipped} unchanged/skipped",
+                organizerKey, upserted, patched, skipped);
+
+            // Expire superseded slots. Fast path uses the stored previous max to avoid a fan-out query.
+            RaceCollectionClient.TryGetHighestRaceSlotIndex(organizerKey, races, out var maxSlot);
+            var patchOfDeathIds = maxSlot >= 0
+                ? await raceCollectionClient.MarkHigherRaceSlotsExpiredAsync(
+                    organizerKey, maxSlot, doc.LastMaxSlotIndex, cancellationToken)
+                : [];
+
+            if (patchOfDeathIds.Count > 0)
+            {
+                const int maxIdsInLog = 40;
+                var idPreview = patchOfDeathIds.Count <= maxIdsInLog
+                    ? string.Join(", ", patchOfDeathIds)
+                    : string.Join(", ", patchOfDeathIds.Take(maxIdsInLog))
+                      + $" … (+{patchOfDeathIds.Count - maxIdsInLog} more)";
+                logger.LogInformation(
+                    "Patch of death (ttl=1): patched {Count} superseded race document(s) for {Key} (slot index > {MaxSlot}). Ids: {Ids}",
+                    patchOfDeathIds.Count, organizerKey, maxSlot, idPreview);
+            }
+
+            // Record assembly metadata (timestamp, max slot, per-slot hashes) on the organizer document.
+            await organizerClient.PatchLastAssembledAsync(
+                organizerKey,
+                maxSlot >= 0 ? maxSlot : null,
+                newHashes,
+                cancellationToken);
             await TryCompleteAsync(actions, message, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -721,5 +759,41 @@ public partial class AssembleRaceWorker(
             }
         }
         return null;
+    }
+
+    // ── Content hashing ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Computes separate MD5 hashes for the properties and geometry of an assembled race.
+    /// Used to detect what actually changed between assembly runs so writes can be skipped or
+    /// downgraded to a cheap properties-only patch.
+    /// </summary>
+    internal static RaceSlotHashes ComputeHashes(StoredFeature race)
+        => new()
+        {
+            PropertiesHash = ComputeMd5(SerializeProperties(race.Properties)),
+            GeometryHash = ComputeMd5(SerializeGeometry(race.Geometry)),
+        };
+
+    private static string SerializeProperties(IDictionary<string, dynamic> props)
+    {
+        // Sort keys so the hash is order-independent.
+        var sorted = new SortedDictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (k, v) in props)
+            sorted[k] = (object?)v;
+        return JsonSerializer.Serialize(sorted);
+    }
+
+    private static string SerializeGeometry(Geometry geometry) => geometry switch
+    {
+        LineString ls => string.Join(";", ls.Coordinates.Select(p => FormattableString.Invariant($"{p.Longitude},{p.Latitude}"))),
+        Point pt => FormattableString.Invariant($"{pt.Coordinates.Longitude},{pt.Coordinates.Latitude}"),
+        _ => geometry.Type.ToString(),
+    };
+
+    private static string ComputeMd5(string input)
+    {
+        var hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }

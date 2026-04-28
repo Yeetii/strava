@@ -319,16 +319,25 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
     }
 
     /// <summary>
-    /// Patches the <c>lastAssembledUtc</c> field on an existing organizer document.
+    /// Patches assembly metadata on an existing organizer document:
+    /// <c>lastAssembledUtc</c>, <c>lastMaxSlotIndex</c>, and <c>assemblyHashes</c>.
     /// </summary>
     public async Task PatchLastAssembledAsync(
         string organizerKey,
+        int? maxSlotIndex,
+        Dictionary<string, RaceSlotHashes>? assemblyHashes,
         CancellationToken cancellationToken = default)
     {
         var pk = new PartitionKey(organizerKey);
+        var ops = new List<PatchOperation>
+        {
+            PatchOperation.Set("/lastAssembledUtc", DateTime.UtcNow.ToString("o")),
+        };
+        if (maxSlotIndex.HasValue)
+            ops.Add(PatchOperation.Set("/lastMaxSlotIndex", maxSlotIndex.Value));
+        if (assemblyHashes is not null)
+            ops.Add(PatchOperation.Set("/assemblyHashes", assemblyHashes));
         await _container.PatchItemAsync<RaceOrganizerDocument>(
-            organizerKey, pk,
-            [PatchOperation.Set("/lastAssembledUtc", DateTime.UtcNow.ToString("o"))],
-            cancellationToken: cancellationToken);
+            organizerKey, pk, ops, cancellationToken: cancellationToken);
     }
 }

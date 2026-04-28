@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
@@ -50,36 +51,55 @@ public class RaceCollectionClient(Container container, ILoggerFactory loggerFact
     }
 
     /// <summary>
-    /// Queries race document ids under <c>race:{organizerKey}-*</c> and sets <c>ttl = 1</c> on any
-    /// whose slot index is greater than <paramref name="highestSlotInUseInclusive"/> (Cosmos TTL in seconds).
+    /// Sets <c>ttl = 1</c> on race slots whose index is in the range
+    /// (<paramref name="highestSlotInUseInclusive"/>, <paramref name="previousMaxSlotInclusive"/>].
+    /// Uses cheap point-patches — one per superseded slot (~1 RU each).
+    /// When <paramref name="previousMaxSlotInclusive"/> is unknown or not greater than the current
+    /// max, nothing is done; superseded slots will be cleaned up on the next run once the
+    /// previous max has been recorded.
     /// Returns the document ids that were patched (empty if none).
     /// </summary>
     public async Task<IReadOnlyList<string>> MarkHigherRaceSlotsExpiredAsync(
         string organizerKey,
         int highestSlotInUseInclusive,
+        int? previousMaxSlotInclusive = null,
         CancellationToken cancellationToken = default)
     {
-        var idPrefix = $"{FeatureKinds.Race}:{organizerKey}-";
-        var query = new QueryDefinition(
-                "SELECT VALUE c.id FROM c WHERE STARTSWITH(c.id, @prefix) AND c.kind = @kind")
-            .WithParameter("@prefix", idPrefix)
-            .WithParameter("@kind", FeatureKinds.Race);
-
-        var ids = (await ExecuteQueryAsync<string>(query, cancellationToken: cancellationToken)).ToList();
-        var toExpire = new List<string>();
-        foreach (var id in ids)
-        {
-            if (!TryParseRaceDocumentSlotIndex(id, organizerKey, out var slot)) continue;
-            if (slot > highestSlotInUseInclusive)
-                toExpire.Add(id);
-        }
-
-        if (toExpire.Count == 0) return [];
+        if (!previousMaxSlotInclusive.HasValue || previousMaxSlotInclusive.Value <= highestSlotInUseInclusive)
+            return [];
 
         IReadOnlyList<PatchOperation> ttlPatch = [PatchOperation.Set("/ttl", 1)];
-        var patches = toExpire.Select(id => (id, new PartitionKey(id), ttlPatch)).ToList();
-        await PatchDocuments(patches, cancellationToken);
-        return toExpire;
+        var expired = new List<string>();
+        for (int slot = highestSlotInUseInclusive + 1; slot <= previousMaxSlotInclusive.Value; slot++)
+        {
+            var docId = $"{FeatureKinds.Race}:{organizerKey}-{slot}";
+            try
+            {
+                await PatchDocument(docId, new PartitionKey(docId), ttlPatch, cancellationToken);
+                expired.Add(docId);
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                // Slot was already expired or never created — nothing to do.
+            }
+        }
+        return expired;
+    }
+
+    /// <summary>
+    /// Patches only the <c>/properties</c> path on an existing race document.
+    /// Use this when geometry is unchanged but metadata (name, date, url, …) has been updated.
+    /// </summary>
+    public async Task PatchRacePropertiesAsync(
+        string id,
+        IDictionary<string, dynamic> properties,
+        CancellationToken cancellationToken = default)
+    {
+        await PatchDocument(
+            id,
+            new PartitionKey(id),
+            [PatchOperation.Set("/properties", properties)],
+            cancellationToken);
     }
 
     public async Task<(int Deleted, string Cutoff)> DeletePastRacesAsync(CancellationToken cancellationToken = default)
