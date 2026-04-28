@@ -128,8 +128,9 @@ public static partial class RaceHtmlScraper
     private static readonly string[] CourseKeywords = [
         "course", "parcours", "parcour",
         "route", "trace", "tracé", "trajet",
-        "map", "kart", "karta", "carte",
+        "map", "kart", "karta", "carte", "kaart",
         "bana", "banan", "lopp", "sträcka", "strecke",
+        "rute", "ronde",
         "gpx", "track", "itinerary", "itinéraire",
         "läs mer", "see more", "read more", "en savoir plus", "lire la suite",
         "info", "details", "programme",
@@ -141,6 +142,8 @@ public static partial class RaceHtmlScraper
         "resultat", "result", "startlist", "startlista", "cart", "varukorg", 
         "villkor", "terms", "kontakt", "contact",
         "blogg", "blog", "nyheter", "news", "tips",
+        "inscription", "inschrijven", "anmelden",
+        "uitslag", "ergebnis", "classement",
     ];
 
     // Keywords used to identify generic download links.

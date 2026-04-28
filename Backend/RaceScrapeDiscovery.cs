@@ -163,6 +163,10 @@ public static partial class RaceScrapeDiscovery
         ("juin", "june"), ("juillet", "july"), ("août", "august"), ("aout", "august"),
         ("septembre", "september"), ("octobre", "october"),
         ("novembre", "november"), ("décembre", "december"), ("decembre", "december"),
+        // Dutch
+        ("maart", "march"), ("mei", "may"), ("augustus", "august"),
+        // Danish
+        ("marts", "march")
     ];
 
     private static string ReplaceLocalizedMonths(string input)
@@ -182,7 +186,7 @@ public static partial class RaceScrapeDiscovery
     [GeneratedRegex(@"kl\.?\s*\d{1,2}[:.]\d{2}", RegexOptions.IgnoreCase)]
     private static partial Regex TimeSuffixRegex();
 
-    [GeneratedRegex(@"\b(?:måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|mandag|tirsdag|onsdag|torsdag|fredag|lordag|sondag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?:måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|mandag|tirsdag|onsdag|torsdag|fredag|lordag|sondag|lørdag|søndag|monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag|dienstag|mittwoch|donnerstag|samstag|sonntag|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag)\b", RegexOptions.IgnoreCase)]
     private static partial Regex WeekdayRegex();
 
     // Matches a leading time like "12:00, " or "12:00 - " before a date.

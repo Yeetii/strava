@@ -55,6 +55,22 @@ public static class RaceTypeNormalizer
         ["repeterende"] = "repeats",
         ["backyard ultra"] = "backyard",
         ["virtuelt"] = "virtual",
+        // Dutch
+        ["estafette"] = "relay", ["veldloop"] = "cross country", ["bergloop"] = "uphill",
+        ["hindernisloop"] = "obstacle course", ["wegloop"] = "road",
+        ["terræn"] = "cross country",
+        // German
+        ["berglauf"] = "uphill", ["geländelauf"] = "cross country", ["staffellauf"] = "relay",
+        ["stadtlauf"] = "road", ["hindernislauf"] = "obstacle course",
+        ["stundenlauf"] = "timed race", ["crosslauf"] = "cross country",
+        ["trailrun"] = "trail", ["halbmarathon"] = "",
+        ["volkslauf"] = "", ["volksmarsch"] = "",
+        // French additions
+        ["escaliers"] = "stairs", ["relais"] = "relay", ["montagne"] = "mountain",
+        ["semi-marathon"] = "", ["demi-marathon"] = "",
+        // Danish
+        ["stafet"] = "relay", ["bjergløb"] = "uphill", ["vejløb"] = "road",
+        // noise filters
         ["halvmaraton"] = "", ["maraton"] = "", ["half marathon"] = "", ["marathon"] = "",
         ["rando"] = "", ["marchenordique"] = "", ["ultra"] = "", 
         ["courseroute"] = "", ["bane"] = "", ["3mi"] = "", ["start"] = "",  ["to"] = "", ["label"] = "",

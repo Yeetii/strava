@@ -72,7 +72,12 @@ public static class RaceDistanceKm
 
         if (token.Equals("halvmarathon", StringComparison.OrdinalIgnoreCase) ||
             token.Equals("half marathon", StringComparison.OrdinalIgnoreCase) ||
-            token.Equals("half-marathon", StringComparison.OrdinalIgnoreCase))
+            token.Equals("half-marathon", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("semi-marathon", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("demi-marathon", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("halbmarathon", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("halve marathon", StringComparison.OrdinalIgnoreCase) ||
+            token.Equals("halvmaraton", StringComparison.OrdinalIgnoreCase))
         {
             km = 21.0;
             return true;
