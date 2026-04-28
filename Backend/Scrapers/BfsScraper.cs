@@ -22,7 +22,7 @@ internal sealed class BfsScraper(ILogger logger)
     {
         if (urls.Count == 0) return null;
 
-        var filtered = urls.Where(u => !IsBareSocialDomain(u)).ToList();
+        var filtered = urls.Where(u => !IsBareSocialDomain(u) && !IsBlockedDomain(u)).ToList();
         if (filtered.Count == 0) return null;
 
         return await ScrapeSiteAsync(filtered[0], filtered, httpClient, cancellationToken);
@@ -166,8 +166,8 @@ internal sealed class BfsScraper(ILogger logger)
             Distance: resolvedDistance,
             ElevationGain: elevation,
             GpxUrl: gpxUrl,
-            ImageUrl: img,
-            LogoUrl: logo,
+            ImageUrl: img is not null && IsBlockedDomain(img) ? null : img,
+            LogoUrl: logo is not null && IsBlockedDomain(logo) ? null : logo,
             Date: date,
             StartFee: startingFee,
             Currency: curr,
@@ -368,7 +368,8 @@ internal sealed class BfsScraper(ILogger logger)
                     foreach (var courseLink in RaceHtmlScraper.ExtractCourseLinksFromHtml(html, pageUrl))
                     {
                         if (!visitedPages.Contains(StripFragment(courseLink))
-                            && IsSameDomain(courseLink, startUrl))
+                            && IsSameDomain(courseLink, startUrl)
+                            && !IsBlockedDomain(courseLink))
                             nextLevel.Add((courseLink, true));
                     }
                 }
@@ -786,6 +787,33 @@ internal sealed class BfsScraper(ILogger logger)
             host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
 
         return NormalizeHost(candidate.Host).Equals(NormalizeHost(origin.Host), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Domains that should never be crawled or used as an image source.
+    /// These are race aggregator / discovery platforms whose content belongs to that platform,
+    /// not to the individual race. Each has its own dedicated scraper or discovery worker.
+    /// </summary>
+    private static readonly string[] BlockedDomains =
+    [
+        "lopplistan.se",
+        "loppkartan.se",
+        "trailrunningsweden.se",
+        "betrail.run",
+        "tracedetrail.fr",
+        "itra.run",
+        "d-u-v.org",
+        "skyrunning.com",
+        "utmb.world",
+    ];
+
+    private static bool IsBlockedDomain(Uri uri)
+    {
+        var host = uri.Host;
+        if (host.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) host = host[4..];
+        return BlockedDomains.Any(d =>
+            host.Equals(d, StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
