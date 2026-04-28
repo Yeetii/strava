@@ -1,0 +1,21 @@
+meta {
+  name: DiscoverSkyrunningRaces
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/DiscoverSkyrunningRaces
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": ""
+  }
+}

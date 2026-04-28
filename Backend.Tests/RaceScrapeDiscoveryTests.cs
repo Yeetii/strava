@@ -190,6 +190,86 @@ public class RaceScrapeDiscoveryTests
     }
 
     [Fact]
+    public void ParseSkyrunningCalendarPage_ExtractsEventsFromHtml()
+    {
+        const string html = """
+            <table class="race_list">
+              <tr class="ttitle">
+                <td></td><td></td><td>Name</td><td> Date </td><td>Country</td><td>Discipline</td>
+              </tr>
+              <tr>
+                <td><img decoding="async" src="https://www.skyrunning.com/wp-content/uploads/2026/01/Kambos.png" class="race_logo_list"></td>
+                <td><i aria-hidden="true" class="fas fa-flag-checkered"></i></td>
+                <td class="rnk_list_name"><a href="https://www.skyrunning.com/single-race/kambos-mountain-race-2026/">Kambos Mountain Race</a></td>
+                <td>25/01/26</td>
+                <td>Cyprus</td>
+                <td class="isf_uppcase">Sky</td>
+              </tr>
+            </table>
+            """;
+
+        var jobs = SkyrunningDiscoveryAgent.ParseCalendarPage(html, new Uri("https://www.skyrunning.com/calendar/"));
+
+        var job = Assert.Single(jobs);
+        Assert.Equal("Kambos Mountain Race", job.Name);
+        Assert.Equal("2026-01-25", job.Date);
+        Assert.Equal("Cyprus", job.Country);
+        Assert.Equal("Sky", job.RaceType);
+        Assert.Equal("https://www.skyrunning.com/single-race/kambos-mountain-race-2026/", job.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("https://www.skyrunning.com/wp-content/uploads/2026/01/Kambos.png", job.LogoUrl);
+    }
+
+    [Fact]
+    public void EnrichSkyrunningJobFromEventPageHtml_ExtractsPageDetails()
+    {
+        const string html = """
+            <ul class="elementor-icon-list-items">
+              <li class="elementor-icon-list-item"><span class="elementor-icon-list-text">15/08/2026</span></li>
+              <li class="elementor-icon-list-item"><span class="elementor-icon-list-text">Distance: 53 km</span></li>
+              <li class="elementor-icon-list-item"><span class="elementor-icon-list-text">Vertical climb: 3,900m+</span></li>
+              <li class="elementor-icon-list-item"><a href="http://www.skyruneryri.com" target="_blank"><span class="elementor-icon-list-text">www.skyruneryri.com</span></a></li>
+              <li class="elementor-icon-list-item"><span class="elementor-icon-list-text">SkyUltra</span></li>
+              <li class="elementor-icon-list-item"><span class="elementor-icon-list-text">United Kingdom</span></li>
+              <li class="elementor-icon-list-item"><span class="elementor-icon-list-text">Skyrunner® UK & Ireland Series</span></li>
+            </ul>
+            """;
+
+        var job = new ScrapeJob(
+            WebsiteUrl: new Uri("https://www.skyrunning.com/single-race/14-peaks-ultra-2026/"),
+            Name: "14 Peaks Ultra");
+
+        var enriched = SkyrunningDiscoveryAgent.EnrichJobFromEventPageHtml(job, html, job.WebsiteUrl!);
+
+        Assert.Equal("2026-08-15", enriched.Date);
+        Assert.Equal("53 km", enriched.Distance);
+        Assert.Equal(3900, enriched.ElevationGain);
+        Assert.Equal("GB", enriched.Country);
+        Assert.Equal("Skyrunner® UK & Ireland Series", enriched.Organizer);
+        Assert.Equal("http://www.skyruneryri.com/", enriched.WebsiteUrl!.AbsoluteUri);
+    }
+
+    [Fact]
+    public void EnrichSkyrunningJobFromEventPageHtml_ChoosesRealEventWebsiteOverDocsGoogleLinks()
+    {
+        const string html = """
+            <ul class="elementor-icon-list-items">
+              <li class="elementor-icon-list-item"><a href="https://docs.google.com/document/d/12345" target="_blank"><span class="elementor-icon-list-text">Race info</span></a></li>
+              <li class="elementor-icon-list-item"><a href="https://www.skyruneryri.com" target="_blank"><span class="elementor-icon-list-text">www.skyruneryri.com</span></a></li>
+              <li class="elementor-icon-list-item"><span class="elementor-icon-list-text">Distance: 53 km</span></li>
+              <li class="elementor-icon-list-item"><span class="elementor-icon-list-text">Vertical climb: 3,900m+</span></li>
+            </ul>
+            """;
+
+        var job = new ScrapeJob(
+            WebsiteUrl: new Uri("https://www.skyrunning.com/single-race/14-peaks-ultra-2026/"),
+            Name: "14 Peaks Ultra");
+
+        var enriched = SkyrunningDiscoveryAgent.EnrichJobFromEventPageHtml(job, html, job.WebsiteUrl!);
+
+        Assert.Equal("http://www.skyruneryri.com/", enriched.WebsiteUrl!.AbsoluteUri);
+    }
+
+    [Fact]
     public void ParseLopplistanTrailPage_ExtractsValidEvents()
     {
         const string html = """
@@ -897,8 +977,11 @@ public class RaceScrapeDiscoveryTests
     [InlineData("grus", "gravel")]
     [InlineData("stafett", "relay")]
     [InlineData("motbakke", "uphill")]
-    [InlineData("vertical", "uphill")]
+    [InlineData("vertical", "vertical")]
     [InlineData("vertikal", "uphill")]
+    [InlineData("sky", "skyrunning")]
+    [InlineData("skysnow", "skyrunning, snow")]
+    [InlineData("skyultra", "skyrunning")]
     [InlineData("trappeløp", "stairs")]
     [InlineData("trappor", "stairs")]
     [InlineData("hinderløp", "obstacle course")]
@@ -1423,6 +1506,8 @@ public class RaceScrapeDiscoveryTests
     // Google Sites — new /view/<name> flavour.
     [InlineData("https://sites.google.com/view/fall-back-blast", "sites.google.com~view~fall-back-blast")]
     [InlineData("https://sites.google.com/view/fall-back-blast/races", "sites.google.com~view~fall-back-blast")]
+    [InlineData("https://docs.google.com/document/d/12345/edit", "docs.google.com~document~d~12345")]
+    [InlineData("https://docs.google.com/spreadsheets/d/abcd1234/edit#gid=0", "docs.google.com~spreadsheets~d~abcd1234")]
     // Klikego: strip discipline + registration-id segments and any query string.
     [InlineData("https://www.klikego.com/inscription/les-foulees-dacigne-acigne-au-feminin-2025/running-course-a-pied/1356384566470-11?tab=-1", "klikego.com~inscription~les-foulees-dacigne-acigne-au-feminin-2025")]
     [InlineData("https://www.klikego.com/inscription/courses-nature-de-parigne-2025/course-a-pied-running/1395738014939-12", "klikego.com~inscription~courses-nature-de-parigne-2025")]

@@ -29,6 +29,7 @@ public class GetOrganizerStats(
         "manual",
         "manual-mistral",
         "trailrunningsweden",
+        "skyrunning",
     };
 
     private static readonly string[] ScraperSources = new[]

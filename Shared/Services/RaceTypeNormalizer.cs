@@ -11,7 +11,9 @@ public static class RaceTypeNormalizer
         var parts = raceType
             .Split(separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(p => p.ToLowerInvariant())
-            .Select(p => RaceTypeAliases.TryGetValue(p, out var mapped) ? mapped : p)
+            .SelectMany(p => RaceTypeAliases.TryGetValue(p, out var mapped)
+                ? mapped.Split(separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : [p])
             .Where(p => p.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -40,7 +42,8 @@ public static class RaceTypeNormalizer
         ["gress"] = "grass", ["gräs"] = "grass",
         ["snø"] = "snow", ["snö"] = "snow", ["snowshoe"] = "snow", ["trugeløp"] = "snow", ["snöskor"] = "snow",
         ["stafett"] = "relay",
-        ["motbakke"] = "uphill", ["vertical"] = "uphill", ["vertikal"] = "uphill",
+        ["motbakke"] = "uphill", ["vertikal"] = "vertical",
+        ["sky"] = "skyrunning", ["skysnow"] = "skyrunning, snow", ["skyultra"] = "skyrunning",
         ["trappeløp"] = "stairs", ["trappor"] = "stairs", ["trapper"] = "stairs",
         ["hinderløp"] = "obstacle course", ["ocr"] = "obstacle course",
         ["baneløp"] = "track", ["barneløp"] = "kids",

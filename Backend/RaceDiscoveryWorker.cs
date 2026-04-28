@@ -10,6 +10,7 @@ public class RaceDiscoveryWorker(
     DiscoverDuvRaces duvDiscovery,
     DiscoverTraceDeTrailRaces traceDeTrailDiscovery,
     DiscoverItraRaces itraDiscovery,
+    DiscoverSkyrunningRaces skyrunningDiscovery,
     RaceDiscoveryService discoveryService,
     ILogger<RaceDiscoveryWorker> logger)
 {
@@ -58,6 +59,7 @@ public class RaceDiscoveryWorker(
                 "duv" => await duvDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken),
                 "tracedetrail" => await traceDeTrailDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken),
                 "itra" => await itraDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken),
+                "skyrunning" => await skyrunningDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken),
                 _ => throw new NotSupportedException($"Unknown race discovery agent '{normalizedMessage.Agent}'.")
             };
 

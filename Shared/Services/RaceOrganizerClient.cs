@@ -26,6 +26,7 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         "betrail.run",
         "itra.run",
         "sites.google.com",
+        "docs.google.com",
         "runagain.com",
         "klikego.com",
         "mp.weixin.qq.com",
@@ -63,6 +64,8 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
                     path = NormalizeItraPath(path);
                 else if (host == "sites.google.com")
                     path = NormalizeSitesGooglePath(path);
+                else if (host == "docs.google.com")
+                    path = NormalizeDocsGooglePath(path);
                 else if (host == "klikego.com")
                     path = NormalizeKlikegoPath(path);
                 return $"{host}~{path.Replace('/', '~')}";
@@ -188,6 +191,19 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         // Workspace / custom-domain sites: the first segment is a domain (contains a dot)
         // and uniquely identifies the organizer on its own.
         return first;
+    }
+
+    private static string NormalizeDocsGooglePath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 3)
+            return path;
+
+        // Standard Google Docs/Sheets/Slides/Forms URLs: /<type>/d/<id>/...
+        if (segments.Length >= 3 && segments[1].Equals("d", StringComparison.OrdinalIgnoreCase))
+            return string.Join('/', segments.Take(3));
+
+        return path;
     }
 
     private static string NormalizeFacebookPath(string path, string query)
