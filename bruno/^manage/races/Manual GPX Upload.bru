@@ -1,0 +1,29 @@
+meta {
+  name: Manual GPX Upload
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/manage/races/gpx
+  body: json
+  auth: none
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}
+
+body:json {
+  {
+    "url": "https://www.example.com/race",
+    "name": "Example Race",
+    "gpxFiles": [
+      {
+        "content": "<base64-encoded GPX — run: base64 < file.gpx | pbcopy>",
+        "name": "50km",
+        "distance": "50 km"
+      }
+    ]
+  }
+}
