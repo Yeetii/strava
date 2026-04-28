@@ -211,7 +211,7 @@ public static partial class RaceScrapeDiscovery
             var website = FindStringValue(marker, ["website"]);
             Uri? websiteUri = null;
             if (!string.IsNullOrWhiteSpace(website) &&
-                Uri.TryCreate(website, UriKind.Absolute, out var parsed) &&
+                Uri.TryCreate(RepairDoubledScheme(website), UriKind.Absolute, out var parsed) &&
                 parsed.Scheme is "http" or "https")
                 websiteUri = parsed;
 
@@ -492,6 +492,8 @@ public static partial class RaceScrapeDiscovery
     {
         if (string.IsNullOrWhiteSpace(value))
             return null;
+
+        value = RepairDoubledScheme(value);
 
         if (Uri.TryCreate(value, UriKind.Absolute, out var absoluteUri) && (absoluteUri.Scheme == "http" || absoluteUri.Scheme == "https"))
             return absoluteUri;

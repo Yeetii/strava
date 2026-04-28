@@ -31,9 +31,11 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         "klikego.com",
         "anmalmig.nu",
         "bit.ly",
+        "tinyurl.com",
         "mp.weixin.qq.com",
         "fr.milesrepublic.com",
-        "forms.gle"
+        "forms.gle",
+        "linktr.ee"
     };
     /// <summary>
     /// Derives a Cosmos-safe organizer key from a URL. For regular domains returns just the host

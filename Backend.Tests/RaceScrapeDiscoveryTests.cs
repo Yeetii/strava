@@ -1533,4 +1533,37 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal(expected, RaceScrapeDiscovery.BuildFeatureId(name, distance));
     }
 
+    [Theory]
+    // Colon-absent form: "https://http//..."
+    [InlineData(
+        "https://http//www.brzavla.org.ar/index.php/travesia-de-los-cerros-2020/inscripcion-individuales-2020.html",
+        "http://www.brzavla.org.ar/index.php/travesia-de-los-cerros-2020/inscripcion-individuales-2020.html")]
+    // Colon-present form: "https://http://..."
+    [InlineData(
+        "https://http://www.example.com/path",
+        "http://www.example.com/path")]
+    // Outer scheme is http, inner is https
+    [InlineData(
+        "http://https://www.example.com/path",
+        "https://www.example.com/path")]
+    // Outer http, inner http, colon-absent
+    [InlineData(
+        "http://http//www.example.com/",
+        "http://www.example.com/")]
+    // Junk embedded between outer scheme and inner scheme
+    [InlineData(
+        "https://ultrasignuphttp//www.trailracingovertexas.com/possums-revenge.com/register.aspx?did=62643",
+        "http://www.trailracingovertexas.com/possums-revenge.com/register.aspx?did=62643")]
+    // Already valid — must be returned unchanged
+    [InlineData(
+        "https://www.example.com/path",
+        "https://www.example.com/path")]
+    [InlineData(
+        "http://example.com/",
+        "http://example.com/")]
+    public void RepairDoubledScheme_FixesOrPassesThrough(string input, string expected)
+    {
+        Assert.Equal(expected, RaceScrapeDiscovery.RepairDoubledScheme(input));
+    }
+
 }

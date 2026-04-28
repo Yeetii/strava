@@ -242,7 +242,7 @@ public static partial class RaceScrapeDiscovery
     private static Uri? NormalizeExternalBeTrailWebsite(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
-        if (!Uri.TryCreate(raw.Trim(), UriKind.Absolute, out var uri)) return null;
+        if (!Uri.TryCreate(RepairDoubledScheme(raw.Trim()), UriKind.Absolute, out var uri)) return null;
         if (uri.Scheme is not ("http" or "https")) return null;
 
         // Reject result/ranking exports that are not the actual event website.

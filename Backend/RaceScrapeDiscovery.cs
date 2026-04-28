@@ -443,6 +443,26 @@ public static partial class RaceScrapeDiscovery
         return IgnoredHosts.Contains(host);
     }
 
+    /// <summary>
+    /// Repairs doubled scheme prefixes produced by bad source data,
+    /// e.g. "https://http//www.example.com/" → "http://www.example.com/".
+    /// Handles both the colon-present form ("https://http://...") and the
+    /// colon-absent form ("https://http//..."), and embedded-scheme forms like
+    /// "https://ultrasignuphttp//www.example.com/" → "http://www.example.com/".
+    /// </summary>
+    internal static string RepairDoubledScheme(string url)
+    {
+        var m = DoubledSchemeRegex().Match(url);
+        if (!m.Success) return url;
+        return m.Groups[1].Value + "://" + url[(m.Index + m.Length)..];
+    }
+
+    // Matches an outer scheme followed by any non-slash characters and then an embedded http/https scheme.
+    // e.g. "https://http://", "https://http//", "https://ultrasignuphttp//".
+    // Group 1 captures the inner scheme name ("http" or "https").
+    [GeneratedRegex(@"^https?://[^/]*(https?)(://|//)", RegexOptions.IgnoreCase)]
+    private static partial Regex DoubledSchemeRegex();
+
     // Matches one or more characters that are not Unicode letters, digits, or hyphens.
     // Used to sanitise names/distances into URL slug form.
     [GeneratedRegex(@"[^\p{L}\p{N}]+")]
