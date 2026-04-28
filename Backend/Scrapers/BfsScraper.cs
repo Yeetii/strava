@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Shared.Models;
 using Shared.Services;
 
 namespace Backend.Scrapers;
@@ -7,6 +8,7 @@ namespace Backend.Scrapers;
 // Depth 3 / max 30 pages.
 internal sealed class BfsScraper(ILogger logger)
 {
+    private readonly RaceDayMapScraper _raceDayMap = new(logger);
     private const int MaxDepth = 3;
     private const int MaxPages = 30;
 
@@ -33,134 +35,152 @@ internal sealed class BfsScraper(ILogger logger)
         CancellationToken cancellationToken)
     {
         var bfsResult = await FindGpxRoutesAsync(httpClient, startUrl, scrapeUrls, cancellationToken);
-        var (imageUrl, logoUrl, startPageDate, _, startFee, currency, _, _, _) =
+        var (imageUrl, logoUrl, startPageDate, startPageElevation, startFee, currency, startPageRaceType, _, _) =
             ExtractCoursePageMetadata(bfsResult.StartPageHtml ?? string.Empty, startUrl, bfsResult.CssContent);
         var extractedName = RaceHtmlScraper.ExtractEventName(startUrl, bfsResult.StartPageHtml,
             [.. bfsResult.CoursePages.Select(cp => (cp.Url, cp.Html))]);
 
-        if (bfsResult.Routes.Count == 0)
+        // If any RaceDayMap embeds were found, scrape them and return the result directly
+        // (taking precedence over BFS-discovered routes for embedded map pages).
+        if (bfsResult.RaceDayMapSlugs.Count > 0)
         {
-            // No GPX found — return course pages as coordinate-less routes if available.
-            if (bfsResult.CoursePages.Count > 0)
+            var rdmRoutes = new List<ScrapedRoute>();
+            foreach (var slug in bfsResult.RaceDayMapSlugs)
             {
-                var fallbackDate = startPageDate;
+                var slugRoutes = await _raceDayMap.ScrapeSlugAsync(slug, startUrl, httpClient, cancellationToken);
+                if (slugRoutes is not null)
+                    rdmRoutes.AddRange(slugRoutes);
+            }
 
-                // Only keep course pages from the same domain as the startUrl
-                var sameDomainCoursePages = bfsResult.CoursePages
-                    .Where(cp => IsSameDomain(cp.Url, startUrl))
-                    .ToList();
-
-                // Deduplicate by rounded distance: prefer URL-distance pages over content-only ones,
-                // then prefer entries with more metadata.
-                var dedupedCoursePages = sameDomainCoursePages
-                    .GroupBy(cp =>
-                    {
-                        if (cp.Distance is null) return 0;
-                        var numMatch = System.Text.RegularExpressions.Regex.Match(cp.Distance, @"[\d.]+");
-                        return numMatch.Success && double.TryParse(numMatch.Value,
-                            System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out var km)
-                            ? (int)Math.Round(km) : 0;
-                    })
-                    .SelectMany(g => g.Key == 0
-                        ? g.AsEnumerable() // can't dedup without a distance
-                        : [g.OrderBy(cp => cp.IsContentOnly ? 1 : 0).First()])
-                    .OrderBy(cp => cp.IsContentOnly ? 1 : 0)
-                    .ToList();
-
-                var courses = dedupedCoursePages.Select(cp =>
+            if (rdmRoutes.Count > 0)
+            {
+                var enriched = rdmRoutes.Select(r => r with
                 {
-                    var (ImageUrl, LogoUrl, Date, ElevationGain, StartFee, Currency, RaceType, Name, _) = ExtractCoursePageMetadata(cp.Html, cp.Url, null, bfsResult.StartPageHtml);
-                    var name = Name ?? "Unnamed";
-                    var distanceStr = cp.Distance;
-                    return new ScrapedRoute(
-                        Coordinates: [],
-                        SourceUrl: cp.Url,
-                        Name: name,
-                        Distance: distanceStr,
-                        ElevationGain: ElevationGain,
-                        ImageUrl: ImageUrl,
-                        LogoUrl: LogoUrl,
-                        Date: Date,
-                        StartFee: StartFee,
-                        Currency: Currency,
-                        RaceType: RaceType);
+                    Date = r.Date ?? startPageDate,
+                    ElevationGain = r.ElevationGain ?? startPageElevation,
+                    ImageUrl = r.ImageUrl ?? imageUrl,
+                    LogoUrl = r.LogoUrl ?? logoUrl,
+                    StartFee = r.StartFee ?? startFee,
+                    Currency = r.Currency ?? currency,
+                    RaceType = r.RaceType ?? startPageRaceType,
                 }).ToList();
-
-                return new RaceScraperResult(courses, ImageUrl: imageUrl, LogoUrl: logoUrl,
-                    ExtractedName: extractedName, ExtractedDate: startPageDate,
+                var rdmDate = enriched[0].Date;
+                return new RaceScraperResult(enriched, ImageUrl: imageUrl, LogoUrl: logoUrl,
+                    ExtractedName: extractedName, ExtractedDate: rdmDate,
                     StartFee: startFee, Currency: currency);
             }
-
-            return new RaceScraperResult([], ImageUrl: imageUrl, LogoUrl: logoUrl,
-                ExtractedName: extractedName, ExtractedDate: startPageDate,
-                StartFee: startFee, Currency: currency);
         }
 
+        // Build the candidate source list. GPX routes take priority; fall back to coordinate-less
+        // course pages when no GPX was found. Both go through the same BuildRoute helper so
+        // metadata extraction is identical — GPX routes just supply more accurate distance/name.
+        List<ScrapedRoute> routes;
 
-        // For GPX routes, extract name and distance from the course page HTML if possible
-        var routeDistancesKm = bfsResult.Routes.Select(r => GpxParser.CalculateDistanceKm(r.Route.Coordinates)).ToList();
-        var routes = new List<ScrapedRoute>(bfsResult.Routes.Count);
-        for (int i = 0; i < bfsResult.Routes.Count; i++)
+        if (bfsResult.Routes.Count > 0)
         {
-            var (parsedRoute, gpxUrl, sourcePageUrl, sourceHtml) = bfsResult.Routes[i];
-            if (!IsSameDomain(sourcePageUrl, startUrl))
-                continue;
+            routes = [.. bfsResult.Routes
+                .Where(r => IsSameDomain(r.SourcePageUrl, startUrl))
+                .Select(r => BuildRoute(r.SourcePageUrl, r.SourceHtml ?? string.Empty,
+                    bfsResult.StartPageHtml, r.Route.Coordinates,
+                    GpxParser.CalculateDistanceKm(r.Route.Coordinates), r.GpxUrl, startUrl))];
 
-            var (img, logo, date, elevationGain, startingFee, curr, raceType, routeName, distanceStr) = ExtractCoursePageMetadata(sourceHtml ?? string.Empty, sourcePageUrl, null, bfsResult.StartPageHtml);
-            var name = routeName ?? "Unnamed";
-            // Distance is always derived from the GPX track; snap to the HTML label if it matches
-            // within tolerance, otherwise format the computed value directly.
-            var gpxDistanceKm = routeDistancesKm[i];
-            var resolvedDistance = RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxDistanceKm, distanceStr, 0.10)
-                ?? RaceScrapeDiscovery.FormatDistanceKm(gpxDistanceKm);
-            routes.Add(new ScrapedRoute(
-                Coordinates: parsedRoute.Coordinates,
-                SourceUrl: sourcePageUrl,
-                Name: name,
-                Distance: resolvedDistance,
-                ElevationGain: elevationGain,
-                GpxUrl: gpxUrl,
-                ImageUrl: img,
-                LogoUrl: logo,
-                Date: date,
-                StartFee: startingFee,
-                Currency: curr,
-                GpxSource: GpxSourceResolver.Resolve(gpxUrl, startUrl),
-                RaceType: raceType));
-        }
-
-        // Deduplicate: if two routes share the same name and have GPX distances within 10% of each
-        // other, keep only the first occurrence.
-        var seen = new List<(string Name, double DistanceKm)>();
-        var dedupedRoutes = new List<ScrapedRoute>(routes.Count);
-        foreach (var r in routes)
-        {
-            var name = (r.Name ?? "").Trim();
-            var numMatch = System.Text.RegularExpressions.Regex.Match(r.Distance ?? "", @"[\d.]+");
-            var km = numMatch.Success && double.TryParse(numMatch.Value,
-                System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0.0;
-            if (km > 0 && seen.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
-                    && RaceDistanceKm.WithinRelativeOfReference(km, s.DistanceKm, 0.10)))
+            // Deduplicate: if two routes share the same name and GPX distances within 10%, keep the first.
+            var seen = new List<(string Name, double DistanceKm)>();
+            var deduped = new List<ScrapedRoute>(routes.Count);
+            foreach (var r in routes)
             {
-                logger.LogDebug("BFS: deduplicating route '{Name}' ({Km:0.#} km) — already seen", name, km);
-                continue;
+                var name = (r.Name ?? "").Trim();
+                var numMatch = System.Text.RegularExpressions.Regex.Match(r.Distance ?? "", @"[\d.]+");
+                var km = numMatch.Success && double.TryParse(numMatch.Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0.0;
+                if (km > 0 && seen.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
+                        && RaceDistanceKm.WithinRelativeOfReference(km, s.DistanceKm, 0.10)))
+                {
+                    logger.LogDebug("BFS: deduplicating route '{Name}' ({Km:0.#} km) — already seen", name, km);
+                    continue;
+                }
+                seen.Add((name, km));
+                deduped.Add(r);
             }
-            seen.Add((name, km));
-            dedupedRoutes.Add(r);
+            routes = deduped;
+        }
+        else
+        {
+            // No GPX — fall back to coordinate-less course pages.
+            // Deduplicate by rounded distance before building routes.
+            var sameDomain = bfsResult.CoursePages
+                .Where(cp => IsSameDomain(cp.Url, startUrl))
+                .ToList();
+
+            var dedupedPages = sameDomain
+                .GroupBy(cp =>
+                {
+                    if (cp.Distance is null) return 0;
+                    var numMatch = System.Text.RegularExpressions.Regex.Match(cp.Distance, @"[\d.]+");
+                    return numMatch.Success && double.TryParse(numMatch.Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var km)
+                        ? (int)Math.Round(km) : 0;
+                })
+                .SelectMany(g => g.Key == 0
+                    ? g.AsEnumerable()
+                    : [g.OrderBy(cp => cp.IsContentOnly ? 1 : 0).First()])
+                .OrderBy(cp => cp.IsContentOnly ? 1 : 0)
+                .ToList();
+
+            routes = [.. dedupedPages.Select(cp => BuildRoute(cp.Url, cp.Html, bfsResult.StartPageHtml, [], null, null, startUrl))];
         }
 
-        return new RaceScraperResult(dedupedRoutes, ImageUrl: imageUrl, LogoUrl: logoUrl,
-            ExtractedName: extractedName, ExtractedDate: dedupedRoutes[0].Date,
+        var extractedDate = routes.Count > 0 && bfsResult.Routes.Count > 0
+            ? routes[0].Date
+            : startPageDate;
+
+        return new RaceScraperResult(routes, ImageUrl: imageUrl, LogoUrl: logoUrl,
+            ExtractedName: extractedName, ExtractedDate: extractedDate,
             StartFee: startFee, Currency: currency);
+    }
+
+    private static ScrapedRoute BuildRoute(
+        Uri sourcePageUrl,
+        string sourcePageHtml,
+        string? startPageHtml,
+        IReadOnlyList<Coordinate> coordinates,
+        double? gpxDistanceKm,
+        Uri? gpxUrl,
+        Uri startUrl)
+    {
+        var (img, logo, date, elevation, startingFee, curr, raceType, htmlName, htmlDistance) =
+            ExtractCoursePageMetadata(sourcePageHtml, sourcePageUrl, null, startPageHtml);
+        var name = htmlName ?? "Unnamed";
+        // When a GPX distance is available, snap to the HTML label within tolerance; otherwise
+        // fall back to the HTML-extracted distance string.
+        var resolvedDistance = gpxDistanceKm.HasValue
+            ? (RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxDistanceKm.Value, htmlDistance, 0.10)
+               ?? RaceScrapeDiscovery.FormatDistanceKm(gpxDistanceKm.Value))
+            : htmlDistance;
+        return new ScrapedRoute(
+            Coordinates: coordinates,
+            SourceUrl: sourcePageUrl,
+            Name: name,
+            Distance: resolvedDistance,
+            ElevationGain: elevation,
+            GpxUrl: gpxUrl,
+            ImageUrl: img,
+            LogoUrl: logo,
+            Date: date,
+            StartFee: startingFee,
+            Currency: curr,
+            GpxSource: gpxUrl is not null ? GpxSourceResolver.Resolve(gpxUrl, startUrl) : null,
+            RaceType: raceType);
     }
 
     private record BfsResult(
         IReadOnlyList<(ParsedGpxRoute Route, Uri GpxUrl, Uri SourcePageUrl, string? SourceHtml)> Routes,
         string? StartPageHtml,
         IReadOnlyList<CoursePage> CoursePages,
-        string? CssContent);
+        string? CssContent,
+        IReadOnlyList<string> RaceDayMapSlugs);
 
     private record CoursePage(Uri Url, string Html, string? Distance, bool IsContentOnly = false);
 
@@ -239,6 +259,8 @@ internal sealed class BfsScraper(ILogger logger)
         // Dropbox shared folders — downloaded as zip after BFS; GPX entries stored for inline fetch.
         var dropboxFolderProbes = new Dictionary<string, (string Html, Uri PageUrl)>(StringComparer.OrdinalIgnoreCase);
         var inlineGpxByUrl = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // RaceDayMap slugs found in iframe embeds on any visited page.
+        var raceDayMapSlugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string? startPageHtml = null;
 
         // Process one depth level at a time, fetching all pages in the level concurrently.
@@ -282,6 +304,10 @@ internal sealed class BfsScraper(ILogger logger)
                 if (DropboxShareParser.IsDropboxSharedFolder(pageUrl))
                     dropboxFolderProbes.TryAdd(pageUrl.AbsoluteUri, (html, pageUrl));
 
+                // Collect any RaceDayMap embed slugs found on this page.
+                foreach (var slug in RaceDayMapScraper.ExtractSlugs(html))
+                    raceDayMapSlugs.Add(slug);
+
                 var pageGpxLinks = RaceHtmlScraper.ExtractGpxLinksFromHtml(html, pageUrl);
                 foreach (var gpxLink in pageGpxLinks)
                 {
@@ -324,6 +350,17 @@ internal sealed class BfsScraper(ILogger logger)
                         gpxUrlToPage.TryAdd(driveFileDlUrl.AbsoluteUri, (html, pageUrl));
                     else if (DropboxShareParser.IsDropboxSharedFolder(dlLink))
                         dropboxFolderProbes.TryAdd(dlLink.AbsoluteUri, (html, pageUrl));
+                }
+
+                // Links whose text looks like a distance ("25 km") may point to GPX files
+                // with no .gpx extension. Probe same-domain ones directly; treat cross-domain
+                // ones as external probes (capped by Take(5) later).
+                foreach (var kmLink in RaceHtmlScraper.ExtractKmDistanceCandidateLinksFromHtml(html, pageUrl))
+                {
+                    if (IsSameDomain(kmLink, startUrl))
+                        gpxUrlToPage.TryAdd(kmLink.AbsoluteUri, (html, pageUrl));
+                    else
+                        externalGpxProbes.TryAdd(kmLink.AbsoluteUri, (html, pageUrl));
                 }
 
                 if (depth < MaxDepth)
@@ -423,7 +460,7 @@ internal sealed class BfsScraper(ILogger logger)
         }
 
         if (gpxUrlToPage.Count == 0)
-            return new BfsResult([], startPageHtml, coursePages, cssContent);
+            return new BfsResult([], startPageHtml, coursePages, cssContent, [.. raceDayMapSlugs]);
 
         // Fetch all GPX URLs concurrently.
         var gpxTasks = gpxUrlToPage.Keys.Select(url =>
@@ -474,7 +511,7 @@ internal sealed class BfsScraper(ILogger logger)
 
         logger.LogInformation("BFS: {Url} — visited {Pages} pages, {GpxFound} GPX parsed, {Routes} routes",
             startUrl, visitedPages.Count, parsedCount, routes.Count);
-        return new BfsResult(routes, startPageHtml, coursePages, cssContent);
+        return new BfsResult(routes, startPageHtml, coursePages, cssContent, [.. raceDayMapSlugs]);
     }
 
     private static CoursePage? DetectCoursePage(Uri pageUrl, string html, int depth)

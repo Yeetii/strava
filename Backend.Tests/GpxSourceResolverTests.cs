@@ -14,6 +14,7 @@ public class GpxSourceResolverTests
     [InlineData("https://mmctrail.no/files/route.gpx", GpxSourceKind.InternalGpx)]
     [InlineData("https://www.mmctrail.no/files/route.gpx", GpxSourceKind.InternalGpx)]
     [InlineData("https://tracedetrail.fr/gpx/foo.gpx", GpxSourceKind.ExternalGpx)]
+    [InlineData("https://app.racedaymap.com/vgl-trail-2025/abc123/gpx/10km.gpx", GpxSourceKind.RaceDayMap)]
     public void Resolve_classifies_by_host_and_path(string gpx, string expected)
     {
         var u = new Uri(gpx);

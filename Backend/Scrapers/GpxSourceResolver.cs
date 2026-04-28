@@ -9,6 +9,7 @@ public static class GpxSourceKind
     public const string Utmb = "utmb";
     public const string InternalGpx = "internal_gpx";
     public const string ExternalGpx = "external_gpx";
+    public const string RaceDayMap = "racedaymap";
 }
 
 /// <summary>Classifies where GPX bytes came from (cloud share vs same site vs other host).</summary>
@@ -30,6 +31,9 @@ public static class GpxSourceResolver
 
         if (IsGoogleDriveRelatedHost(gpxUrl))
             return GpxSourceKind.GoogleDrive;
+
+        if (gpxUrl.Host.Equals("app.racedaymap.com", StringComparison.OrdinalIgnoreCase))
+            return GpxSourceKind.RaceDayMap;
 
         if (IsSameRegistrableDomain(gpxUrl, crawlOrigin))
             return GpxSourceKind.InternalGpx;

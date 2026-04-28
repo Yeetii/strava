@@ -345,6 +345,33 @@ public static partial class RaceHtmlScraper
         uri.Host.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase)
         && uri.AbsolutePath.StartsWith("/drive/folders/", StringComparison.OrdinalIgnoreCase);
 
+    // Extracts links whose visible anchor text contains a km distance (e.g. "25 km", "10km",
+    // "5.5 km"). Such links may point to GPX files that have no ".gpx" extension and no
+    // "gpx" keyword in the URL or text, like https://example.com/dokument/<uuid>.
+    public static IReadOnlyCollection<Uri> ExtractKmDistanceCandidateLinksFromHtml(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<Uri>();
+
+        foreach (Match match in AnchorRegex().Matches(html))
+        {
+            var href = match.Groups["href"].Value;
+            if (href.StartsWith('#')) continue;
+            var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
+
+            if (!KmDistanceRegex().IsMatch(text)) continue;
+            if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
+            if (uri.Scheme is not ("http" or "https")) continue;
+            if (seen.Add(uri.AbsoluteUri))
+                results.Add(uri);
+        }
+
+        return results;
+    }
+
     // Extracts download links based on well-known download keywords in the visible link text.
     // Keywords: "Ladda ner", "Hämta", "Download" (case-insensitive partial match).
     public static IReadOnlyCollection<Uri> ExtractDownloadLinksFromHtml(string html, Uri pageUrl)
@@ -449,6 +476,10 @@ public static partial class RaceHtmlScraper
     // Matches an <a> element capturing href attribute and inner text content.
     [GeneratedRegex(@"<a\b[^>]*\bhref\s*=\s*[""'](?<href>[^""']+)[""'][^>]*>(?<text>.*?)</a>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex AnchorRegex();
+
+    // Matches a km distance in anchor text, e.g. "25 km", "10km", "5.5 km", "42,2 km".
+    [GeneratedRegex(@"\b\d+(?:[.,]\d+)?\s*km\b", RegexOptions.IgnoreCase)]
+    private static partial Regex KmDistanceRegex();
 
     [GeneratedRegex(@"<tr[^>]*>\s*<td[^>]*><b>\s*Web page:\s*</b>\s*</td>\s*<td[^>]*>(.*?)</td>\s*</tr>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex DuvWebPageRowRegex();

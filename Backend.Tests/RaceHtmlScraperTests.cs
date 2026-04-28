@@ -129,6 +129,49 @@ public class RaceHtmlScraperTests
         Assert.Contains(links, u => u.Host.Contains("dropbox", StringComparison.OrdinalIgnoreCase));
     }
 
+    // ── ExtractKmDistanceCandidateLinksFromHtml ───────────────────────────────
+
+    [Fact]
+    public void ExtractKmDistanceCandidateLinks_FindsLinksWithKmDistanceText()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/dokument/a4251e71-5044-4dc4-a28e-3446705ef019">25 km</a>
+                <a href="/dokument/b2345">10km</a>
+                <a href="/dokument/c3456">Halvmarathon 21,1 km</a>
+                <a href="/about">About us</a>
+                <a href="/results">Race results 2024</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceHtmlScraper.ExtractKmDistanceCandidateLinksFromHtml(html, new Uri("https://www.ifkskovde.net/sida/91918/billingen-trail"));
+
+        Assert.Contains(links, u => u.AbsoluteUri.Contains("a4251e71"));
+        Assert.Contains(links, u => u.AbsoluteUri.Contains("b2345"));
+        Assert.Contains(links, u => u.AbsoluteUri.Contains("c3456"));
+        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("about"));
+        Assert.DoesNotContain(links, u => u.AbsoluteUri.Contains("results"));
+    }
+
+    [Fact]
+    public void ExtractKmDistanceCandidateLinks_DeduplicatesLinks()
+    {
+        const string html = """
+            <html>
+              <body>
+                <a href="/dokument/abc">25 km</a>
+                <a href="/dokument/abc">25 km route</a>
+              </body>
+            </html>
+            """;
+
+        var links = RaceHtmlScraper.ExtractKmDistanceCandidateLinksFromHtml(html, new Uri("https://example.com/"));
+
+        Assert.Single(links);
+    }
+
     // ── ExtractDownloadLinksFromHtml ──────────────────────────────────────────
 
     [Fact]
