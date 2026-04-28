@@ -28,30 +28,28 @@ var host = new HostBuilder()
             options.Converters.Add(new FeatureIdJsonConverter());
         });
 
-        services.AddSingleton(new SocketsHttpHandler());
+        var socketsHttpHandler = new SocketsHttpHandler();
+        services.AddSingleton(socketsHttpHandler);
         services.AddHttpClient();
 
-        services.AddSingleton(serviceProvider =>
+        var configuredConnectionMode = configuration.GetValue<string>("CosmosConnectionMode");
+        var connectionMode = Enum.TryParse<ConnectionMode>(configuredConnectionMode, ignoreCase: true, out var parsedConnectionMode)
+            ? parsedConnectionMode
+            : ConnectionMode.Direct;
+        CosmosClientOptions apiCosmosClientOptions = new()
         {
-            SocketsHttpHandler socketsHttpHandler = serviceProvider.GetRequiredService<SocketsHttpHandler>();
-            var configuredConnectionMode = configuration.GetValue<string>("CosmosConnectionMode");
-            var connectionMode = Enum.TryParse<ConnectionMode>(configuredConnectionMode, ignoreCase: true, out var parsedConnectionMode)
-                ? parsedConnectionMode
-                : ConnectionMode.Direct;
-
-            CosmosClientOptions cosmosClientOptions = new()
-            {
-                HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
-                SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
-                ConnectionMode = connectionMode,
-                AllowBulkExecution = true,
-                MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(1),
-                MaxRetryAttemptsOnRateLimitedRequests = 5
-            };
-
-            string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
-            return new CosmosClient(cosmosDbConnectionString, cosmosClientOptions);
-        });
+            HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
+            SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
+            ConnectionMode = connectionMode,
+            AllowBulkExecution = true,
+            MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(1),
+            MaxRetryAttemptsOnRateLimitedRequests = 5
+        };
+        string apiCosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
+        // Register as instance so the DI container does not own or dispose it during host shutdown.
+        // Using a factory (AddSingleton(factory)) would cause the container to call Dispose() when
+        // the host recycles, failing any in-flight Cosmos operations with ObjectDisposedException.
+        services.AddSingleton(new CosmosClient(apiCosmosDbConnectionString, apiCosmosClientOptions));
 
 
         new CollectionClientBuilder(services)

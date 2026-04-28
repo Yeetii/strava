@@ -27,7 +27,8 @@ var host = new HostBuilder()
             options.Converters.Add(new GeometrySystemTextJsonConverter());
             options.Converters.Add(new FeatureIdJsonConverter());
         });
-        services.AddSingleton(new SocketsHttpHandler());
+        var socketsHttpHandler = new SocketsHttpHandler();
+        services.AddSingleton(socketsHttpHandler);
         services.AddHttpClient(
             "apiClient",
             client =>
@@ -65,20 +66,18 @@ var host = new HostBuilder()
                 client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
                 client.Timeout = TimeSpan.FromSeconds(10);
             });
-        services.AddSingleton(serviceProvider =>
+        string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
+        CosmosClientOptions cosmosClientOptions = new()
         {
-            SocketsHttpHandler socketsHttpHandler = serviceProvider.GetRequiredService<SocketsHttpHandler>();
-            CosmosClientOptions cosmosClientOptions = new()
-            {
-                HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
-                SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
-                AllowBulkExecution = true,
-                MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(3)
-            };
-
-            string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
-            return new CosmosClient(cosmosDbConnectionString, cosmosClientOptions);
-        });
+            HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
+            SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
+            AllowBulkExecution = true,
+            MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(3)
+        };
+        // Register as instance so the DI container does not own or dispose it during host shutdown.
+        // Using a factory (AddSingleton(factory)) would cause the container to call Dispose() when
+        // the host recycles, failing any in-flight Cosmos operations with ObjectDisposedException.
+        services.AddSingleton(new CosmosClient(cosmosDbConnectionString, cosmosClientOptions));
 
         services.AddSingleton(serviceProvider =>
         {
