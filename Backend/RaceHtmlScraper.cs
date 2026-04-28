@@ -516,16 +516,19 @@ public static partial class RaceHtmlScraper
     private const string MonthPattern =
         @"jan(?:uary|vier|uar|uari)?|feb(?:ruary|rier|ruar|ruari)?|mar(?:ch|s|z|ts)?|märz"
         + @"|apr(?:il)?|ma[iyj]|jun[ei]?|juin|jul[iy]?|juillet|aug(?:ust|usti)?|août"
-        + @"|sep(?:tembre?)?|o[ck]t(?:ob(?:er|re))?|nov(?:emb(?:er|re))?|de[csz](?:emb(?:er|re))?|décembre";
+        + @"|sep(?:t(?:emb(?:er|re?))?)?|o[ck]t(?:ob(?:er|re))?|nov(?:emb(?:er|re))?|de[csz](?:emb(?:er|re))?|décembre";
 
     // Visible date patterns, multilingual:
     //   "14 September 2025", "14. september 2025", "lørdag den 24. mai 2025",
-    //   "September 14, 2025", "14/09/2025", "14.09.2025", "2025-09-14".
+    //   "September 14, 2025", "14/09/2025", "14.09.2025", "2025-09-14",
+    //   "Friday September 11th", "12:00, Friday September 11th" (yearless).
     [GeneratedRegex(
         @"\b\d{1,2}\.?\s+(?:" + MonthPattern + @")\s+\d{4}\b"               // 14 September 2025 / 14. mai 2025
         + @"|\b(?:" + MonthPattern + @")\s+\d{1,2},?\s+\d{4}\b"             // September 14, 2025
         + @"|\b\d{1,2}[/\.]\d{1,2}[/\.]\d{4}\b"                            // 14/09/2025 or 14.09.2025
-        + @"|\b\d{4}-\d{2}-\d{2}\b",                                        // 2025-09-14
+        + @"|\b\d{4}-\d{2}-\d{2}\b"                                         // 2025-09-14
+        + @"|\d{1,2}:\d{2}\s*,\s*(?:[A-Za-z]+\s+)?(?:" + MonthPattern + @")\s+\d{1,2}(?:st|nd|rd|th)?\b"  // 12:00, Friday September 11th
+        + @"|\b(?:[A-Za-z]+\s+)?(?:" + MonthPattern + @")\s+\d{1,2}(?:st|nd|rd|th)\b",                    // Friday September 11th / September 11th
         RegexOptions.IgnoreCase)]
     private static partial Regex VisibleDateRegex();
     [GeneratedRegex(@"\b\d{1,2}\.?\s+(?:[A-Za-z]+\s+\d{4})\b|\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}[/\.]\d{1,2}[/\.]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b", RegexOptions.IgnoreCase)]

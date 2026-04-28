@@ -109,11 +109,16 @@ internal sealed class BfsScraper(ILogger logger)
 
             var (img, logo, date, elevationGain, startingFee, curr, raceType, routeName, distanceStr) = ExtractCoursePageMetadata(sourceHtml ?? string.Empty, sourcePageUrl, null, bfsResult.StartPageHtml);
             var name = routeName ?? "Unnamed";
+            // Distance is always derived from the GPX track; snap to the HTML label if it matches
+            // within tolerance, otherwise format the computed value directly.
+            var gpxDistanceKm = routeDistancesKm[i];
+            var resolvedDistance = RaceScrapeDiscovery.MatchDistanceKmToVerbose(gpxDistanceKm, distanceStr, 0.10)
+                ?? RaceScrapeDiscovery.FormatDistanceKm(gpxDistanceKm);
             routes.Add(new ScrapedRoute(
                 Coordinates: parsedRoute.Coordinates,
                 SourceUrl: sourcePageUrl,
                 Name: name,
-                Distance: distanceStr,
+                Distance: resolvedDistance,
                 ElevationGain: elevationGain,
                 GpxUrl: gpxUrl,
                 ImageUrl: img,
@@ -125,8 +130,29 @@ internal sealed class BfsScraper(ILogger logger)
                 RaceType: raceType));
         }
 
-        return new RaceScraperResult(routes, ImageUrl: imageUrl, LogoUrl: logoUrl,
-            ExtractedName: extractedName, ExtractedDate: routes[0].Date,
+        // Deduplicate: if two routes share the same name and have GPX distances within 10% of each
+        // other, keep only the first occurrence.
+        var seen = new List<(string Name, double DistanceKm)>();
+        var dedupedRoutes = new List<ScrapedRoute>(routes.Count);
+        foreach (var r in routes)
+        {
+            var name = (r.Name ?? "").Trim();
+            var numMatch = System.Text.RegularExpressions.Regex.Match(r.Distance ?? "", @"[\d.]+");
+            var km = numMatch.Success && double.TryParse(numMatch.Value,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0.0;
+            if (km > 0 && seen.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
+                    && RaceDistanceKm.WithinRelativeOfReference(km, s.DistanceKm, 0.10)))
+            {
+                logger.LogDebug("BFS: deduplicating route '{Name}' ({Km:0.#} km) — already seen", name, km);
+                continue;
+            }
+            seen.Add((name, km));
+            dedupedRoutes.Add(r);
+        }
+
+        return new RaceScraperResult(dedupedRoutes, ImageUrl: imageUrl, LogoUrl: logoUrl,
+            ExtractedName: extractedName, ExtractedDate: dedupedRoutes[0].Date,
             StartFee: startFee, Currency: currency);
     }
 
@@ -263,6 +289,11 @@ internal sealed class BfsScraper(ILogger logger)
                     {
                         driveFolderProbes.TryAdd(gpxLink.AbsoluteUri, (html, pageUrl));
                     }
+                    else if (TryGetGoogleDriveFileDownloadUrl(gpxLink, out var driveFileDownloadUrl))
+                    {
+                        // Direct Drive file link (e.g. /file/d/{ID}/view) — convert to download URL.
+                        gpxUrlToPage.TryAdd(driveFileDownloadUrl.AbsoluteUri, (html, pageUrl));
+                    }
                     else if (DropboxShareParser.IsDropboxSharedFolder(gpxLink))
                     {
                         dropboxFolderProbes.TryAdd(gpxLink.AbsoluteUri, (html, pageUrl));
@@ -284,11 +315,13 @@ internal sealed class BfsScraper(ILogger logger)
                 if (detectedPage is not null)
                     coursePages.Add(detectedPage);
 
-                // Pick up Google Drive folder links from download-text anchors on the page.
+                // Pick up Google Drive folder/file links from download-text anchors on the page.
                 foreach (var dlLink in RaceHtmlScraper.ExtractDownloadLinksFromHtml(html, pageUrl))
                 {
                     if (IsGoogleDriveFolder(dlLink))
                         driveFolderProbes.TryAdd(dlLink.AbsoluteUri, (html, pageUrl));
+                    else if (TryGetGoogleDriveFileDownloadUrl(dlLink, out var driveFileDlUrl))
+                        gpxUrlToPage.TryAdd(driveFileDlUrl.AbsoluteUri, (html, pageUrl));
                     else if (DropboxShareParser.IsDropboxSharedFolder(dlLink))
                         dropboxFolderProbes.TryAdd(dlLink.AbsoluteUri, (html, pageUrl));
                 }
@@ -422,6 +455,21 @@ internal sealed class BfsScraper(ILogger logger)
                 var (html, sourcePageUrl) = gpxUrlToPage[gpxUrl.AbsoluteUri];
                 return (route, gpxUrl, SourcePageUrl: sourcePageUrl, (string?)html);
             })
+            // Deduplicate by filename: if two URLs resolve to the same file name (case-insensitive),
+            // keep only the first. Uses the last non-empty path segment, or the Drive file ID for uc URLs.
+            .GroupBy(r =>
+            {
+                var uri = r.gpxUrl;
+                if (uri.Host.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase)
+                    && uri.AbsolutePath == "/uc")
+                {
+                    var id = System.Web.HttpUtility.ParseQueryString(uri.Query)["id"];
+                    return (id ?? uri.AbsoluteUri).ToLowerInvariant();
+                }
+                var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                return (segments.LastOrDefault() ?? uri.AbsoluteUri).ToLowerInvariant();
+            })
+            .Select(g => g.First())
             .ToList();
 
         logger.LogInformation("BFS: {Url} — visited {Pages} pages, {GpxFound} GPX parsed, {Routes} routes",
@@ -669,6 +717,24 @@ internal sealed class BfsScraper(ILogger logger)
             @"<title[^>]*>([^<]+?)\s*[–\-—]\s*Google\s+Drive\s*</title>",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         return m.Success ? System.Net.WebUtility.HtmlDecode(m.Groups[1].Value.Trim()) : string.Empty;
+    }
+
+    /// <summary>
+    /// Checks whether <paramref name="uri"/> is a Google Drive file view link (e.g. /file/d/{ID}/view)
+    /// and, if so, outputs the corresponding direct download URL.
+    /// </summary>
+    private static bool TryGetGoogleDriveFileDownloadUrl(Uri uri, out Uri downloadUrl)
+    {
+        downloadUrl = null!;
+        if (!uri.Host.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var m = System.Text.RegularExpressions.Regex.Match(
+            uri.AbsolutePath,
+            @"^/file/d/([0-9A-Za-z_-]+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return false;
+        downloadUrl = new Uri($"https://drive.google.com/uc?export=download&confirm=t&id={m.Groups[1].Value}");
+        return true;
     }
 
     /// <summary>Checks whether a URL points to a Google Drive folder.</summary>

@@ -290,6 +290,35 @@ public class RaceHtmlScraperTests
     }
 
     [Fact]
+    public void ExtractDate_ParsesTimePrefixedWeekdayOrdinalDate()
+    {
+        // Format: "12:00, Friday September 11th" — no year, weekday prefix, ordinal suffix.
+        // The year is inferred as the nearest upcoming September 11.
+        const string html = """
+            <div>12:00, Friday September 11th</div>
+            """;
+
+        var date = RaceHtmlScraper.ExtractDate(html);
+
+        Assert.NotNull(date);
+        Assert.Matches(@"^\d{4}-09-11$", date);
+    }
+
+    [Fact]
+    public void ExtractDate_ParsesWeekdayOrdinalDateWithoutTime()
+    {
+        // Format: "Saturday October 4th" — no time prefix, no year.
+        const string html = """
+            <div>Saturday October 4th</div>
+            """;
+
+        var date = RaceHtmlScraper.ExtractDate(html);
+
+        Assert.NotNull(date);
+        Assert.Matches(@"^\d{4}-10-04$", date);
+    }
+
+    [Fact]
     public void ExtractEventName_PicksJsonLdNameOverTitle()
     {
         const string html = """

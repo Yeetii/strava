@@ -49,14 +49,17 @@ public static partial class RaceScrapeDiscovery
         if (trimmed.Length == 8 && trimmed.All(char.IsDigit))
             return $"{trimmed[..4]}-{trimmed[4..6]}-{trimmed[6..8]}";
 
+        // Strip a leading time like "12:00, " that may precede the date.
+        trimmed = LeadingTimeRegex().Replace(trimmed, "").Trim();
+
         // Strip ordinal suffixes (1st, 2nd, 3rd, 4th, etc.) before parsing
         var cleaned = OrdinalSuffixRegex().Replace(trimmed, "$1");
 
         // Replace non-English month names with English equivalents for InvariantCulture parsing.
         cleaned = ReplaceLocalizedMonths(cleaned);
-        // Strip Swedish time markers like "kl. 10:00" that appear after dates.
+        // Strip Swedish/English time markers like "kl. 10:00" that appear after dates.
         cleaned = TimeSuffixRegex().Replace(cleaned, "");
-        // Remove Swedish weekday prefixes like "söndag" or "lördag".
+        // Remove weekday prefixes (Swedish, Norwegian, English).
         cleaned = WeekdayRegex().Replace(cleaned, "");
         // Strip "den " prefix and trailing period after day number (e.g. "den 24. mai" → "24 may").
         cleaned = DenPrefixRegex().Replace(cleaned, "");
@@ -84,6 +87,21 @@ public static partial class RaceScrapeDiscovery
         if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture,
             DateTimeStyles.None, out var dt))
             return dt.ToString("yyyy-MM-dd");
+
+        // Yearless formats like "September 11" or "11 September" — infer nearest upcoming year.
+        cleaned = cleaned.Trim().Trim(',').Trim();
+        foreach (var fmt in new[] { "MMMM d", "d MMMM", "MMM d", "d MMM" })
+        {
+            if (DateOnly.TryParseExact(cleaned, fmt, CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var yearless))
+            {
+                var today = DateOnly.FromDateTime(DateTime.UtcNow);
+                var candidate = new DateOnly(today.Year, yearless.Month, yearless.Day);
+                if (candidate < today)
+                    candidate = candidate.AddYears(1);
+                return candidate.ToString("yyyy-MM-dd");
+            }
+        }
 
         return null;
     }
@@ -158,8 +176,12 @@ public static partial class RaceScrapeDiscovery
     [GeneratedRegex(@"kl\.?\s*\d{1,2}[:.]\d{2}", RegexOptions.IgnoreCase)]
     private static partial Regex TimeSuffixRegex();
 
-    [GeneratedRegex(@"\b(?:måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|mandag|tirsdag|onsdag|torsdag|fredag|lordag|sondag)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?:måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|mandag|tirsdag|onsdag|torsdag|fredag|lordag|sondag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", RegexOptions.IgnoreCase)]
     private static partial Regex WeekdayRegex();
+
+    // Matches a leading time like "12:00, " or "12:00 - " before a date.
+    [GeneratedRegex(@"^\d{1,2}:\d{2}\s*[,\-–]?\s*", RegexOptions.None)]
+    private static partial Regex LeadingTimeRegex();
 
     private static readonly Regex PlainDateRegex = new(
         @"\b\d{1,2}\.?\s+(?:[A-Za-z]+\s+\d{4})\b|\b[A-Za-z]+\s+\d{1,2},?\s+\d{4}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{4}\b|\b\d{4}-\d{2}-\d{2}\b",
@@ -178,7 +200,7 @@ public static partial class RaceScrapeDiscovery
     // Matches a computed GPX distance (km) to the closest entry in a verbose distance string
     // (e.g. "34.2 km, 12.9 km, Marathon") within a 25% relative tolerance. Returns the formatted match
     // (e.g. "34.2 km" or "42 km") or null when no distance list was provided or no close match is found.
-    public static string? MatchDistanceKmToVerbose(double distanceKm, string? distanceVerbose)
+    public static string? MatchDistanceKmToVerbose(double distanceKm, string? distanceVerbose, double tolerance = 0.25)
     {
         if (string.IsNullOrWhiteSpace(distanceVerbose) || distanceKm <= 0)
             return null;
@@ -208,7 +230,7 @@ public static partial class RaceScrapeDiscovery
         if (bestToken is null || bestMatchedKm is null)
             return null;
 
-        return RaceDistanceKm.WithinRelativeOfReference(distanceKm, bestMatchedKm.Value, 0.25)
+        return RaceDistanceKm.WithinRelativeOfReference(distanceKm, bestMatchedKm.Value, tolerance)
             ? bestToken
             : null;
     }
