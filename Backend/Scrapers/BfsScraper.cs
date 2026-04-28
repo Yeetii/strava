@@ -339,15 +339,12 @@ internal sealed class BfsScraper(ILogger logger)
 
         logger.LogDebug("BFS: external probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
 
-        // Probe Google Drive folder links: fetch the folder page, extract file IDs from data-id attributes,
-        // and construct download URLs. Attributed to the internal page that linked to the folder.
+        // Probe Google Drive folder links: recursively crawl subfolders (skipping ignored names)
+        // and collect download URLs. Attributed to the internal page that linked to the folder.
         foreach (var (folderUrl, (sourceHtml, sourcePageUrl)) in driveFolderProbes.Take(5))
         {
             logger.LogDebug("BFS: probing Google Drive folder {Url}", folderUrl);
-            var folderHtml = await TryFetchStringAsync(httpClient, new Uri(folderUrl), cancellationToken);
-            if (folderHtml is null) continue;
-
-            var downloadUrls = ExtractGoogleDriveDownloadUrls(folderHtml);
+            var downloadUrls = await CrawlGoogleDriveFolderAsync(httpClient, new Uri(folderUrl), cancellationToken);
             logger.LogDebug("BFS: Drive folder yielded {Count} download URLs", downloadUrls.Count);
             foreach (var dlUrl in downloadUrls)
                 gpxUrlToPage.TryAdd(dlUrl.AbsoluteUri, (sourceHtml, sourcePageUrl));
@@ -402,7 +399,20 @@ internal sealed class BfsScraper(ILogger logger)
         var parsedCount = gpxResults.Count(r => r.HasValue);
         var failedCount = gpxUrlToPage.Count - parsedCount;
         if (failedCount > 0)
-            logger.LogError("BFS: {Failed}/{Total} GPX URLs were fetched but could not be parsed", failedCount, gpxUrlToPage.Count);
+        {
+            // Only count URLs that looked explicitly like GPX (path ends in .gpx) as genuine failures.
+            // Other URLs (e.g. Drive probe downloads that turned out to be non-GPX files) are
+            // expected misses and should not produce error-level noise.
+            var gpxKeys = gpxUrlToPage.Keys.ToList();
+            var genuineFailureCount = gpxKeys
+                .Where((url, i) => !gpxResults[i].HasValue
+                    && new Uri(url).AbsolutePath.EndsWith(".gpx", StringComparison.OrdinalIgnoreCase))
+                .Count();
+            if (genuineFailureCount > 0)
+                logger.LogError("BFS: {Failed}/{Total} .gpx URLs were fetched but could not be parsed", genuineFailureCount, gpxUrlToPage.Count);
+            else
+                logger.LogDebug("BFS: {Failed}/{Total} fetched URLs yielded no GPX (non-GPX files skipped)", failedCount, gpxUrlToPage.Count);
+        }
 
         var routes = gpxResults
             .Where(r => r.HasValue)
@@ -414,8 +424,8 @@ internal sealed class BfsScraper(ILogger logger)
             })
             .ToList();
 
-        logger.LogInformation("BFS: {Url} — visited {Pages} pages, {GpxFound} GPX found, {Parsed} parsed, {Routes} routes",
-            startUrl, visitedPages.Count, gpxUrlToPage.Count, parsedCount, routes.Count);
+        logger.LogInformation("BFS: {Url} — visited {Pages} pages, {GpxFound} GPX parsed, {Routes} routes",
+            startUrl, visitedPages.Count, parsedCount, routes.Count);
         return new BfsResult(routes, startPageHtml, coursePages, cssContent);
     }
 
@@ -560,28 +570,111 @@ internal sealed class BfsScraper(ILogger logger)
         return bytes;
     }
 
+    private static readonly string[] IgnoredDriveItemNames = ["stage", "stages", "segment"];
+
+    private static bool IsDriveItemIgnored(string name) =>
+        IgnoredDriveItemNames.Any(ignored => name.Contains(ignored, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Recursively crawls a Google Drive folder and its subfolders (up to depth 3),
+    /// skipping subfolders whose names match <see cref="IgnoredDriveItemNames"/>.
+    /// Returns direct-download URLs for all files found.
+    /// <para>
+    /// Each <c>data-id</c> found in the folder HTML is probed by fetching it as a
+    /// <c>/drive/folders/ID</c> URL. If the response is a Drive folder listing page
+    /// (contains further <c>data-id</c> attributes), the item is treated as a subfolder
+    /// and recursed into. Otherwise it is treated as a file and a download URL is emitted.
+    /// This avoids the need to parse Drive's embedded JSON to distinguish files from folders.
+    /// </para>
+    /// </summary>
+    private async Task<List<Uri>> CrawlGoogleDriveFolderAsync(
+        HttpClient httpClient,
+        Uri folderUrl,
+        CancellationToken cancellationToken,
+        HashSet<string>? visited = null,
+        int depth = 0,
+        string? preloadedHtml = null)
+    {
+        const int MaxDriveDepth = 3;
+        visited ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (depth > MaxDriveDepth || !visited.Add(folderUrl.AbsoluteUri))
+            return [];
+
+        logger.LogDebug("BFS: crawling Drive folder depth={Depth} {Url}", depth, folderUrl);
+        var folderHtml = preloadedHtml ?? await TryFetchStringAsync(httpClient, folderUrl, cancellationToken);
+        if (folderHtml is null) return [];
+
+        // Collect unique item IDs from this folder page, skipping ones already visited as folders.
+        var dataIds = System.Text.RegularExpressions.Regex.Matches(
+                folderHtml, @"data-id=""(?<id>[0-9A-Za-z_-]{20,})""")
+            .Select(m => m.Groups["id"].Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(id => !visited.Contains($"https://drive.google.com/drive/folders/{id}"))
+            .ToList();
+
+        logger.LogDebug("BFS: Drive folder has {Count} unique item IDs to probe", dataIds.Count);
+
+        // Probe each item concurrently: try fetching as a folder page to detect subfolders.
+        var probeTasks = dataIds.Select(async itemId =>
+        {
+            var candidateUri = new Uri($"https://drive.google.com/drive/folders/{itemId}");
+            var html = await TryFetchStringAsync(httpClient, candidateUri, cancellationToken);
+            return (ItemId: itemId, Html: html);
+        });
+        var probed = await Task.WhenAll(probeTasks);
+
+        var results = new List<Uri>();
+        foreach (var (itemId, itemHtml) in probed)
+        {
+            if (itemHtml is not null && IsDriveFolderHtml(itemHtml))
+            {
+                // It's a subfolder — get its name from the page title and maybe recurse.
+                var subfolderUri = new Uri($"https://drive.google.com/drive/folders/{itemId}");
+                var name = ExtractDriveFolderName(itemHtml);
+                if (IsDriveItemIgnored(name))
+                {
+                    logger.LogDebug("BFS: skipping Drive subfolder '{Name}'", name);
+                    continue;
+                }
+                logger.LogDebug("BFS: recursing into Drive subfolder '{Name}'", name);
+                var sub = await CrawlGoogleDriveFolderAsync(
+                    httpClient, subfolderUri, cancellationToken, visited, depth + 1, itemHtml);
+                results.AddRange(sub);
+            }
+            else
+            {
+                // It's a file — emit a download URL using the classic uc endpoint (usercontent returns 500).
+                results.Add(new Uri($"https://drive.google.com/uc?export=download&confirm=t&id={itemId}"));
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Returns true when the HTML looks like a Google Drive folder listing page
+    /// (i.e. contains item <c>data-id</c> attributes).
+    /// </summary>
+    private static bool IsDriveFolderHtml(string html) =>
+        System.Text.RegularExpressions.Regex.IsMatch(html, @"data-id=""[0-9A-Za-z_-]{20,}""");
+
+    /// <summary>
+    /// Extracts the folder name from a Drive folder page title
+    /// ("FolderName – Google Drive" → "FolderName").
+    /// </summary>
+    private static string ExtractDriveFolderName(string html)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(
+            html,
+            @"<title[^>]*>([^<]+?)\s*[–\-—]\s*Google\s+Drive\s*</title>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return m.Success ? System.Net.WebUtility.HtmlDecode(m.Groups[1].Value.Trim()) : string.Empty;
+    }
+
     /// <summary>Checks whether a URL points to a Google Drive folder.</summary>
     private static bool IsGoogleDriveFolder(Uri uri) =>
         uri.Host.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase)
         && uri.AbsolutePath.StartsWith("/drive/folders/", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Extracts download URLs from a Google Drive folder page HTML.
-    /// Looks for data-id attributes containing file IDs and constructs direct download URLs.
-    /// </summary>
-    private static List<Uri> ExtractGoogleDriveDownloadUrls(string folderHtml)
-    {
-        var results = new List<Uri>();
-        // data-id="FILE_ID" — each file in the folder listing has one.
-        foreach (System.Text.RegularExpressions.Match m in
-            System.Text.RegularExpressions.Regex.Matches(folderHtml, @"data-id=""(?<id>[0-9A-Za-z_-]{20,})"""))
-        {
-            var fileId = m.Groups["id"].Value;
-            var downloadUrl = new Uri($"https://drive.google.com/uc?export=download&id={fileId}");
-            results.Add(downloadUrl);
-        }
-        return results.DistinctBy(u => u.AbsoluteUri).ToList();
-    }
 
     /// <summary>Checks that both URIs share the same registrable domain (ignoring www prefix).</summary>
     private static bool IsSameDomain(Uri candidate, Uri origin)
