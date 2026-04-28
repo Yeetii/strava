@@ -29,8 +29,11 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         "docs.google.com",
         "runagain.com",
         "klikego.com",
+        "anmalmig.nu",
+        "bit.ly",
         "mp.weixin.qq.com",
-        "fr.milesrepublic.com"
+        "fr.milesrepublic.com",
+        "forms.gle"
     };
     /// <summary>
     /// Derives a Cosmos-safe organizer key from a URL. For regular domains returns just the host
@@ -54,7 +57,7 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
                     path = NormalizeRunSignupPath(path);
                 else if (host == "ultrasignup.com")
                     path = NormalizeUltraSignupPath(path, url.Query);
-                else if (host == "my.raceresult.com" || host == "welcu.com")
+                else if (host == "my.raceresult.com" || host == "welcu.com" || host == "bit.ly")
                     path = NormalizeFirstPathSegment(path);
                 else if (host == "raceroster.com")
                     path = NormalizeRaceRosterPath(path);
@@ -68,6 +71,8 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
                     path = NormalizeDocsGooglePath(path);
                 else if (host == "klikego.com")
                     path = NormalizeKlikegoPath(path);
+                else if (host == "anmalmig.nu")
+                    path = NormalizeAnmalmigPath(path);
                 return $"{host}~{path.Replace('/', '~')}";
             }
         }
@@ -126,6 +131,18 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
             return path;
 
         return string.Join('/', segments.Take(4));
+    }
+
+    // Anmalmig registration pages: /anmalan/<slug-id>[/<anything>]
+    // → keep only anmalan/<slug-id>.
+    private static string NormalizeAnmalmigPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var idx = Array.FindIndex(segments, s => s.Equals("anmalan", StringComparison.OrdinalIgnoreCase));
+        if (idx < 0 || idx + 1 >= segments.Length)
+            return path;
+
+        return $"anmalan/{segments[idx + 1]}";
     }
 
     // Klikego registration pages: /inscription/<event-slug>/<discipline>/<registration-id>?<params>

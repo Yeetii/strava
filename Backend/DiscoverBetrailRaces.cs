@@ -20,8 +20,7 @@ public class DiscoverBetrailRaces(
     public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
     {
         var jobs = await FetchJobsAsync(cancellationToken);
-        var keys = await discoveryService.DiscoverAndWriteAsync("betrail", jobs, cancellationToken);
-        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+        await discoveryService.DiscoverAndWriteAsync("betrail", jobs, cancellationToken);
     }
 
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchJobsAsync(CancellationToken cancellationToken)

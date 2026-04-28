@@ -20,8 +20,7 @@ public class DiscoverRunagainRaces(
     {
         var httpClient = httpClientFactory.CreateClient();
         var jobs = await FetchJobsAsync(httpClient, cancellationToken);
-        var keys = await discoveryService.DiscoverAndWriteAsync("runagain", jobs, cancellationToken);
-        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+        await discoveryService.DiscoverAndWriteAsync("runagain", jobs, cancellationToken);
     }
 
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchJobsAsync(HttpClient httpClient, CancellationToken cancellationToken)

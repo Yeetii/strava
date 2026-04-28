@@ -18,8 +18,7 @@ public class DiscoverDuvRaces(
     public async Task<bool> ProcessPageAsync(int page, CancellationToken cancellationToken)
     {
         var result = await FetchPageJobsAsync(page, cancellationToken);
-        var keys = await discoveryService.DiscoverAndWriteAsync("duv", result.Jobs, cancellationToken);
-        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+        await discoveryService.DiscoverAndWriteAsync("duv", result.Jobs, cancellationToken);
 
         return result.HasNextPage;
     }

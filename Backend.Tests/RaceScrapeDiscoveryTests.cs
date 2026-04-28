@@ -1512,6 +1512,12 @@ public class RaceScrapeDiscoveryTests
     [InlineData("https://www.klikego.com/inscription/les-foulees-dacigne-acigne-au-feminin-2025/running-course-a-pied/1356384566470-11?tab=-1", "klikego.com~inscription~les-foulees-dacigne-acigne-au-feminin-2025")]
     [InlineData("https://www.klikego.com/inscription/courses-nature-de-parigne-2025/course-a-pied-running/1395738014939-12", "klikego.com~inscription~courses-nature-de-parigne-2025")]
     [InlineData("https://www.klikego.com/inscription/trail-des-croquants-2025/", "klikego.com~inscription~trail-des-croquants-2025")]
+    // Anmalmig: keep only anmalan/<slug-id>, strip any trailing segments.
+    [InlineData("https://anmalmig.nu/anmalan/e02a69a7-4798-4d0a-99a6-78df6430b765/", "anmalmig.nu~anmalan~e02a69a7-4798-4d0a-99a6-78df6430b765")]
+    [InlineData("https://anmalmig.nu/anmalan/e02a69a7-4798-4d0a-99a6-78df6430b765", "anmalmig.nu~anmalan~e02a69a7-4798-4d0a-99a6-78df6430b765")]
+    [InlineData("https://anmalmig.nu/anmalan/e02a69a7-4798-4d0a-99a6-78df6430b765/extra/path", "anmalmig.nu~anmalan~e02a69a7-4798-4d0a-99a6-78df6430b765")]
+    // bit.ly: short URL — keep only the short code.
+    [InlineData("https://bit.ly/abc123", "bit.ly~abc123")]
     public void DeriveOrganizerKey_NewPlatformsAreNormalized(string url, string expected)
     {
         Assert.Equal(expected, RaceOrganizerClient.DeriveOrganizerKey(new Uri(url)));

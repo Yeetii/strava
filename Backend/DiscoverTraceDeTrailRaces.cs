@@ -1,6 +1,5 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
-using Shared.Services;
 using System.Globalization;
 using System.Net;
 
@@ -9,7 +8,6 @@ namespace Backend;
 public class DiscoverTraceDeTrailRaces(
     IHttpClientFactory httpClientFactory,
     RaceDiscoveryService discoveryService,
-    RaceOrganizerClient organizerClient,
     ILogger<DiscoverTraceDeTrailRaces> logger)
 {
     private static readonly Uri CalendarUrl = new("https://tracedetrail.fr/event/getEventsCalendar/all/all/all");
@@ -26,8 +24,7 @@ public class DiscoverTraceDeTrailRaces(
     public async Task<bool> ProcessPageAsync(int page, CancellationToken cancellationToken)
     {
         var jobs = await FetchPageJobsAsync(page, cancellationToken);
-        var keys = await discoveryService.DiscoverAndWriteAsync("tracedetrail", jobs, cancellationToken);
-        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+        await discoveryService.DiscoverAndWriteAsync("tracedetrail", jobs, cancellationToken);
 
         return page < TotalPages;
     }

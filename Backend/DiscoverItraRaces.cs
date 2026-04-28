@@ -44,8 +44,7 @@ public class DiscoverItraRaces(
         logger.LogInformation("ITRA: discovering country {Country} on page {Page}/{TotalPages}", country, page, TotalPages);
 
         var jobs = await FetchJobsAsync(country, cancellationToken);
-        var keys = await discoveryService.DiscoverAndWriteAsync("itra", jobs, cancellationToken);
-        await discoveryService.EnqueueScrapeMessagesAsync(keys, cancellationToken);
+        await discoveryService.DiscoverAndWriteAsync("itra", jobs, cancellationToken);
 
         return page < TotalPages;
     }

@@ -9,6 +9,12 @@ public static partial class RaceScrapeDiscovery
 {
     private static readonly char[] DistanceListSeparators = [',', ';'];
 
+    // Hosts whose discovered events should be silently ignored (test/placeholder domains).
+    private static readonly HashSet<string> IgnoredHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "test.com"
+    };
+
     public const string LastScrapedUtcProperty = "lastScrapedUtc";
 
     // Shared Cosmos property name constants — use these in all race upsert workers.
@@ -416,6 +422,8 @@ public static partial class RaceScrapeDiscovery
             ?? job.TraceDeTrailEventUrl
             ?? job.RunagainUrl
             ?? job.BetrailUrl;
+        if (bestUrl is not null && IsIgnoredHost(bestUrl))
+            return null;
         if (bestUrl is not null)
             return (RaceOrganizerClient.DeriveOrganizerKey(bestUrl), bestUrl.AbsoluteUri);
 
@@ -425,6 +433,14 @@ public static partial class RaceScrapeDiscovery
             return (fallbackKey, $"name://{fallbackKey}");
 
         return null;
+    }
+
+    private static bool IsIgnoredHost(Uri url)
+    {
+        var host = url.Host;
+        if (host.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
+            host = host[4..];
+        return IgnoredHosts.Contains(host);
     }
 
     // Matches one or more characters that are not Unicode letters, digits, or hyphens.

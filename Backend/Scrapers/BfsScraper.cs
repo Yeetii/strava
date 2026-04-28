@@ -589,6 +589,7 @@ internal sealed class BfsScraper(ILogger logger)
     }
 
     private const int MaxResponseBytes = 2 * 1024 * 1024; // 2 MB
+    private const int MaxGpxResponseBytes = 10 * 1024 * 1024; // 10 MB — GPX files can be large
 
     private async Task<string?> TryFetchStringAsync(
         HttpClient httpClient,
@@ -622,12 +623,17 @@ internal sealed class BfsScraper(ILogger logger)
                 || contentType.Equals("application/zip", StringComparison.OrdinalIgnoreCase))
                 return null;
 
+            // GPX files (by content-type or .gpx URL path) can be larger than the general HTML limit.
+            var isGpx = contentType.Contains("gpx", StringComparison.OrdinalIgnoreCase)
+                || url.AbsolutePath.EndsWith(".gpx", StringComparison.OrdinalIgnoreCase);
+            var sizeLimit = isGpx ? MaxGpxResponseBytes : MaxResponseBytes;
+
             // Reject if Content-Length exceeds limit.
-            if (response.Content.Headers.ContentLength > MaxResponseBytes)
+            if (response.Content.Headers.ContentLength > sizeLimit)
                 return null;
 
             var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token);
-            if (bytes.Length > MaxResponseBytes) return null;
+            if (bytes.Length > sizeLimit) return null;
             var text = System.Text.Encoding.UTF8.GetString(bytes);
             // Strip UTF-8 BOM — XmlReader chokes on it when reading from a StringReader.
             if (text.Length > 0 && text[0] == '\uFEFF')
