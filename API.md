@@ -514,3 +514,21 @@ Queue a manual scrape job using the Mistral Studio Agent API. The worker writes 
 **Errors**
 - `400` — Invalid request payload or URL
 - `401` — Missing or invalid admin key
+
+---
+
+## Assemble Race Jobs
+
+### `POST /manage/races/assemble`
+
+🔒 Admin only
+
+Queue assemble jobs for all stored race organizers. Each organizer key is enqueued on the `assembleRace` Service Bus queue so the backend can produce final race documents.
+
+**Response** `200 OK` `application/json`
+```ts
+number   // count of jobs queued
+```
+
+**Errors**
+- `401` — Missing or invalid admin key
