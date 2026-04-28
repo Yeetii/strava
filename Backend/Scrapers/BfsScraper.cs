@@ -10,40 +10,11 @@ internal sealed class BfsScraper(ILogger logger)
     private const int MaxDepth = 3;
     private const int MaxPages = 30;
 
-    /// <summary>Checks that both URIs share the same registrable domain (ignoring www prefix).</summary>
-    private static bool IsSameDomain(Uri candidate, Uri origin)
-    {
-        static string NormalizeHost(string host) =>
-            host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
-
-        return NormalizeHost(candidate.Host).Equals(NormalizeHost(origin.Host), StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Social/platform domains where a bare URL (no slug) is useless to BFS-crawl.
-    /// URLs with a meaningful path (e.g. facebook.com/events/123) are still allowed.
-    /// </summary>
-    private static readonly string[] SocialDomains =
-        ["facebook.com", "fb.me", "fb.com", "youtube.com", "youtu.be",
-         "instagram.com", "twitter.com", "x.com", "tiktok.com", "linkedin.com"];
-
-    private static bool IsBareSocialDomain(Uri uri)
-    {
-        var host = uri.Host.ToLowerInvariant();
-        if (host.StartsWith("www.")) host = host[4..];
-        if (!SocialDomains.Any(d => host.Equals(d, StringComparison.OrdinalIgnoreCase)))
-            return false;
-        var path = uri.AbsolutePath.TrimEnd('/');
-        return string.IsNullOrEmpty(path);
-    }
-
     /// <summary>
     /// BFS-scrapes each URL in <paramref name="urls"/> and merges the results.
     /// </summary>
     public async Task<RaceScraperResult?> ScrapeAsync(
         IReadOnlyList<Uri> urls,
-        string? eventName,
-        string? distance,
         HttpClient httpClient,
         CancellationToken cancellationToken)
     {
@@ -52,64 +23,36 @@ internal sealed class BfsScraper(ILogger logger)
         var filtered = urls.Where(u => !IsBareSocialDomain(u)).ToList();
         if (filtered.Count == 0) return null;
 
-        var allRoutes = new List<ScrapedRoute>();
-        Uri? imageUrl = null, logoUrl = null, websiteUrl = null;
-        string? extractedName = null, extractedDate = null, startFee = null, currency = null;
-
-        foreach (var url in filtered)
-        {
-            var result = await ScrapeOneUrlAsync(url, eventName, distance, httpClient, cancellationToken);
-            if (result is null) continue;
-
-            allRoutes.AddRange(result.Routes);
-            imageUrl ??= result.ImageUrl;
-            logoUrl ??= result.LogoUrl;
-            websiteUrl ??= result.WebsiteUrl;
-            extractedName ??= result.ExtractedName;
-            extractedDate ??= result.ExtractedDate;
-            startFee ??= result.StartFee;
-            currency ??= result.Currency;
-        }
-
-        if (imageUrl is null && allRoutes.Count == 0 && extractedName is null)
-            return null;
-
-        // Deduplicate across all starting URLs by GPX URL so each GPX is used only once.
-        var uniqueRoutes = new List<ScrapedRoute>();
-        var seenGpxUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var route in allRoutes)
-        {
-            var gpxUrl = route.GpxUrl?.AbsoluteUri;
-            if (gpxUrl is null || seenGpxUrls.Add(gpxUrl))
-                uniqueRoutes.Add(route);
-        }
-
-        return new RaceScraperResult(uniqueRoutes,
-            WebsiteUrl: websiteUrl, ImageUrl: imageUrl, LogoUrl: logoUrl,
-            ExtractedName: extractedName, ExtractedDate: extractedDate,
-            StartFee: startFee, Currency: currency);
+        return await ScrapeSiteAsync(filtered[0], filtered, httpClient, cancellationToken);
     }
 
-    private async Task<RaceScraperResult?> ScrapeOneUrlAsync(
+    private async Task<RaceScraperResult?> ScrapeSiteAsync(
         Uri startUrl,
-        string? fallbackName,
-        string? distance,
+        IReadOnlyList<Uri> scrapeUrls,
         HttpClient httpClient,
         CancellationToken cancellationToken)
     {
-        var bfsResult = await FindGpxRoutesAsync(httpClient, startUrl, cancellationToken);
-        var eventName = bfsResult.ExtractedName ?? fallbackName ?? "Unnamed";
+        var bfsResult = await FindGpxRoutesAsync(httpClient, startUrl, scrapeUrls, cancellationToken);
+        var (imageUrl, logoUrl, startPageDate, _, startFee, currency, _, _, _) =
+            ExtractCoursePageMetadata(bfsResult.StartPageHtml ?? string.Empty, startUrl, bfsResult.CssContent);
+        var extractedName = RaceHtmlScraper.ExtractEventName(startUrl, bfsResult.StartPageHtml,
+            [.. bfsResult.CoursePages.Select(cp => (cp.Url, cp.Html))]);
 
         if (bfsResult.Routes.Count == 0)
         {
             // No GPX found — return course pages as coordinate-less routes if available.
             if (bfsResult.CoursePages.Count > 0)
             {
-                var fallbackDate = bfsResult.StartPageDate;
+                var fallbackDate = startPageDate;
+
+                // Only keep course pages from the same domain as the startUrl
+                var sameDomainCoursePages = bfsResult.CoursePages
+                    .Where(cp => IsSameDomain(cp.Url, startUrl))
+                    .ToList();
 
                 // Deduplicate by rounded distance: prefer URL-distance pages over content-only ones,
                 // then prefer entries with more metadata.
-                var dedupedCoursePages = bfsResult.CoursePages
+                var dedupedCoursePages = sameDomainCoursePages
                     .GroupBy(cp =>
                     {
                         if (cp.Distance is null) return 0;
@@ -121,123 +64,123 @@ internal sealed class BfsScraper(ILogger logger)
                     })
                     .SelectMany(g => g.Key == 0
                         ? g.AsEnumerable() // can't dedup without a distance
-                        : new[] { g.OrderBy(cp => cp.IsContentOnly ? 1 : 0).First() })
+                        : [g.OrderBy(cp => cp.IsContentOnly ? 1 : 0).First()])
                     .OrderBy(cp => cp.IsContentOnly ? 1 : 0)
                     .ToList();
 
                 var courses = dedupedCoursePages.Select(cp =>
                 {
-                    var pageMeta = ExtractCoursePageMetadata(cp.Html, cp.Url, null);
-                    var pageDate = pageMeta.Date ?? fallbackDate;
-                    var pageElevation = pageMeta.ElevationGain ?? bfsResult.StartPageElevation;
-                    var name = cp.Distance is not null
-                        ? $"{eventName} {cp.Distance}"
-                        : eventName;
+                    var (ImageUrl, LogoUrl, Date, ElevationGain, StartFee, Currency, RaceType, Name, _) = ExtractCoursePageMetadata(cp.Html, cp.Url, null, bfsResult.StartPageHtml);
+                    var name = Name ?? "Unnamed";
+                    var distanceStr = cp.Distance;
                     return new ScrapedRoute(
                         Coordinates: [],
                         SourceUrl: cp.Url,
                         Name: name,
-                        Distance: cp.Distance,
-                        ElevationGain: pageElevation,
-                        ImageUrl: pageMeta.ImageUrl ?? bfsResult.ImageUrl,
-                        LogoUrl: bfsResult.LogoUrl,
-                        Date: pageDate,
-                        StartFee: pageMeta.StartFee ?? bfsResult.StartFee,
-                        Currency: pageMeta.Currency ?? bfsResult.Currency);
+                        Distance: distanceStr,
+                        ElevationGain: ElevationGain,
+                        ImageUrl: ImageUrl,
+                        LogoUrl: LogoUrl,
+                        Date: Date,
+                        StartFee: StartFee,
+                        Currency: Currency,
+                        RaceType: RaceType);
                 }).ToList();
 
-                return new RaceScraperResult(courses, ImageUrl: bfsResult.ImageUrl, LogoUrl: bfsResult.LogoUrl,
-                    ExtractedName: bfsResult.ExtractedName, ExtractedDate: bfsResult.StartPageDate,
-                    StartFee: bfsResult.StartFee, Currency: bfsResult.Currency);
+                return new RaceScraperResult(courses, ImageUrl: imageUrl, LogoUrl: logoUrl,
+                    ExtractedName: extractedName, ExtractedDate: startPageDate,
+                    StartFee: startFee, Currency: currency);
             }
 
-            return new RaceScraperResult([], ImageUrl: bfsResult.ImageUrl, LogoUrl: bfsResult.LogoUrl,
-                ExtractedName: bfsResult.ExtractedName, ExtractedDate: bfsResult.StartPageDate,
-                StartFee: bfsResult.StartFee, Currency: bfsResult.Currency);
+            return new RaceScraperResult([], ImageUrl: imageUrl, LogoUrl: logoUrl,
+                ExtractedName: extractedName, ExtractedDate: startPageDate,
+                StartFee: startFee, Currency: currency);
         }
 
-        var baseName = eventName;
-        var routeDistancesKm = bfsResult.Routes.Select(r => GpxParser.CalculateDistanceKm(r.Route.Coordinates)).ToList();
-        var distanceAssignments = RaceScrapeDiscovery.AssignDistancesToRoutes(routeDistancesKm, distance);
 
+        // For GPX routes, extract name and distance from the course page HTML if possible
+        var routeDistancesKm = bfsResult.Routes.Select(r => GpxParser.CalculateDistanceKm(r.Route.Coordinates)).ToList();
         var routes = new List<ScrapedRoute>(bfsResult.Routes.Count);
         for (int i = 0; i < bfsResult.Routes.Count; i++)
         {
-            var (parsedRoute, gpxUrl, sourcePageUrl, routeDate, routeElevation, routeImage, routeStartFee, routeCurrency) = bfsResult.Routes[i];
-            var gpxDistanceKm = routeDistancesKm[i];
-            var assignedDistances = distanceAssignments[i];
+            var (parsedRoute, gpxUrl, sourcePageUrl, sourceHtml) = bfsResult.Routes[i];
+            if (!IsSameDomain(sourcePageUrl, startUrl))
+                continue;
 
-            string? routeName = null;
-            if (bfsResult.Routes.Count > 1)
-            {
-                var primaryDistance = assignedDistances.Count > 0
-                    ? assignedDistances[0]
-                    : RaceScrapeDiscovery.FormatDistanceKm(gpxDistanceKm);
-                routeName = $"{baseName} {primaryDistance}";
-            }
-            else if (!string.IsNullOrWhiteSpace(parsedRoute.Name))
-            {
-                routeName = parsedRoute.Name;
-            }
-
-            var routeDistance = assignedDistances.Count > 0
-                ? string.Join(", ", assignedDistances)
-                : gpxDistanceKm > 0 ? RaceScrapeDiscovery.FormatDistanceKm(gpxDistanceKm) : null;
-
-            // Use the date from the page where this specific GPX was found, falling back to start page.
-            var date = routeDate ?? bfsResult.StartPageDate;
-
-            // For single-route events, fall back to start page elevation when the GPX
-            // source page didn't have its own value (all info may be on the landing page).
-            var elevation = routeElevation ?? (bfsResult.Routes.Count == 1 ? bfsResult.StartPageElevation : null);
-
+            var (img, logo, date, elevationGain, startingFee, curr, raceType, routeName, distanceStr) = ExtractCoursePageMetadata(sourceHtml ?? string.Empty, sourcePageUrl, null, bfsResult.StartPageHtml);
+            var name = routeName ?? "Unnamed";
             routes.Add(new ScrapedRoute(
                 Coordinates: parsedRoute.Coordinates,
                 SourceUrl: sourcePageUrl,
-                Name: routeName,
-                Distance: routeDistance,
-                ElevationGain: elevation,
+                Name: name,
+                Distance: distanceStr,
+                ElevationGain: elevationGain,
                 GpxUrl: gpxUrl,
-                ImageUrl: routeImage ?? bfsResult.ImageUrl,
-                LogoUrl: bfsResult.LogoUrl,
+                ImageUrl: img,
+                LogoUrl: logo,
                 Date: date,
-                StartFee: routeStartFee ?? bfsResult.StartFee,
-                Currency: routeCurrency ?? bfsResult.Currency,
-                GpxSource: GpxSourceResolver.Resolve(gpxUrl, startUrl)));
+                StartFee: startingFee,
+                Currency: curr,
+                GpxSource: GpxSourceResolver.Resolve(gpxUrl, startUrl),
+                RaceType: raceType));
         }
 
-        var scrapedDate = bfsResult.Routes.Select(r => r.Date).FirstOrDefault(d => d is not null) ?? bfsResult.StartPageDate;
-        return new RaceScraperResult(routes, ImageUrl: bfsResult.ImageUrl, LogoUrl: bfsResult.LogoUrl,
-            ExtractedName: bfsResult.ExtractedName, ExtractedDate: scrapedDate,
-            StartFee: bfsResult.StartFee, Currency: bfsResult.Currency);
+        return new RaceScraperResult(routes, ImageUrl: imageUrl, LogoUrl: logoUrl,
+            ExtractedName: extractedName, ExtractedDate: routes[0].Date,
+            StartFee: startFee, Currency: currency);
     }
 
     private record BfsResult(
-        IReadOnlyList<(ParsedGpxRoute Route, Uri GpxUrl, Uri SourcePageUrl, string? Date, double? ElevationGain, Uri? ImageUrl, string? StartFee, string? Currency)> Routes,
-        Uri? ImageUrl,
-        Uri? LogoUrl,
-        string? StartPageDate,
-        // Course pages found by URL pattern (distance in path) — used when no GPX found.
+        IReadOnlyList<(ParsedGpxRoute Route, Uri GpxUrl, Uri SourcePageUrl, string? SourceHtml)> Routes,
+        string? StartPageHtml,
         IReadOnlyList<CoursePage> CoursePages,
-        // Event name extracted from headings/title/meta across pages.
-        string? ExtractedName,
-        string? StartFee = null,
-        string? Currency = null,
-        double? StartPageElevation = null);
+        string? CssContent);
 
     private record CoursePage(Uri Url, string Html, string? Distance, bool IsContentOnly = false);
 
-    private static (Uri? ImageUrl, string? Date, double? ElevationGain, string? StartFee, string? Currency) ExtractCoursePageMetadata(
+    private static (Uri? ImageUrl, Uri? LogoUrl, string? Date, double? ElevationGain, string? StartFee, string? Currency, string? RaceType, string? Name, string? Distance) ExtractCoursePageMetadata(
         string html,
         Uri pageUrl,
-        string? cssContent)
+        string? cssContent,
+        string? startPageHtml = null)
     {
         var combined = cssContent is not null ? html + "\n" + cssContent : html;
         var imageUrl = RaceHtmlScraper.ExtractProminentImage(combined, pageUrl);
+        var logoUrl = RaceHtmlScraper.ExtractLogo(html, pageUrl);
         var date = RaceHtmlScraper.ExtractDate(html);
         var elevation = RaceHtmlScraper.ExtractElevationGain(html);
         var price = RaceHtmlScraper.ExtractPrice(html, pageUrl);
-        return (imageUrl, date, elevation, price?.Amount, price?.Currency);
+
+        // Use start page HTML as fallback source and for name-segment filtering.
+        var startPageName = startPageHtml is not null ? RaceHtmlScraper.ExtractNameCandidate(startPageHtml) : null;
+        if (startPageHtml is not null)
+        {
+            imageUrl ??= RaceHtmlScraper.ExtractProminentImage(startPageHtml, pageUrl);
+            logoUrl ??= RaceHtmlScraper.ExtractLogo(startPageHtml, pageUrl);
+            date ??= RaceHtmlScraper.ExtractDate(startPageHtml);
+            elevation ??= RaceHtmlScraper.ExtractElevationGain(startPageHtml);
+            price ??= RaceHtmlScraper.ExtractPrice(startPageHtml, pageUrl);
+        }
+
+        var name = RaceHtmlScraper.ExtractName(html, pageUrl, startPageName);
+        var distance = RaceHtmlScraper.ExtractDistanceFromUrl(pageUrl) ??
+                       RaceHtmlScraper.ExtractDistancesFromContent(html).FirstOrDefault();
+
+        var urlPath = pageUrl.AbsolutePath;
+        var raceType = ExtractRaceType(urlPath, name);
+
+        return (imageUrl, logoUrl, date, elevation, price?.Amount, price?.Currency, raceType, name, distance);
+    }
+
+    private static readonly string[] KnownRaceTypes = ["trail", "road", "vertical", "triathlon", "backyard", "swimrun", "duathlon"];
+
+    private static string? ExtractRaceType(string urlPath, string? name)
+    {
+        var matched = KnownRaceTypes.Where(t =>
+            urlPath.Contains(t, StringComparison.OrdinalIgnoreCase)
+            || (name is not null && name.Contains(t, StringComparison.OrdinalIgnoreCase)));
+        var result = string.Join(", ", matched);
+        return result.Length > 0 ? result : null;
     }
 
     /// <summary>Strip the fragment (#…) so URLs differing only by anchor are treated as the same page.</summary>
@@ -252,6 +195,7 @@ internal sealed class BfsScraper(ILogger logger)
     private async Task<BfsResult> FindGpxRoutesAsync(
         HttpClient httpClient,
         Uri startUrl,
+        IReadOnlyList<Uri> scrapeUrls,
         CancellationToken cancellationToken)
     {
         var visitedPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -261,7 +205,6 @@ internal sealed class BfsScraper(ILogger logger)
         var pagesWithGpx = new List<(Uri PageUri, string Html)>();
         // Track pages reached via course links that have a distance in their URL.
         var coursePages = new List<CoursePage>();
-        var coursePageUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // Track external "GPX"-labelled links to probe after the BFS loop.
         // Maps external URL → (source page HTML, source page URL) so findings are attributed to the internal page.
         var externalGpxProbes = new Dictionary<string, (string Html, Uri PageUrl)>(StringComparer.OrdinalIgnoreCase);
@@ -273,7 +216,7 @@ internal sealed class BfsScraper(ILogger logger)
         string? startPageHtml = null;
 
         // Process one depth level at a time, fetching all pages in the level concurrently.
-        var currentLevel = new List<(Uri Url, bool IsCourseLink)> { (startUrl, false) };
+        var currentLevel = scrapeUrls.Select(u => (Url: u, IsCourseLink: false)).ToList();
 
         for (int depth = 0; depth <= MaxDepth && currentLevel.Count > 0; depth++)
         {
@@ -314,8 +257,6 @@ internal sealed class BfsScraper(ILogger logger)
                     dropboxFolderProbes.TryAdd(pageUrl.AbsoluteUri, (html, pageUrl));
 
                 var pageGpxLinks = RaceHtmlScraper.ExtractGpxLinksFromHtml(html, pageUrl);
-                if (pageGpxLinks.Count > 0)
-                    pagesWithGpx.Add((pageUrl, html));
                 foreach (var gpxLink in pageGpxLinks)
                 {
                     if (IsGoogleDriveFolder(gpxLink))
@@ -338,41 +279,10 @@ internal sealed class BfsScraper(ILogger logger)
                     }
                 }
 
-                // Track as course page if URL contains a distance pattern (e.g. "/80-km"),
-                // Track as course page if URL contains a distance pattern (e.g. "/80-km"),
-                // OR if a sub-page's visible content mentions km distances AND has a date.
-                // Content-distance extraction skips the start page (depth 0) — it lists all
-                // distances but isn't a single-race page. For sub-pages, use the max distance
-                // found so navigation/context references to smaller distances are ignored.
-                if (!coursePageUrls.Contains(StripFragment(pageUrl)))
-                {
-                    var urlDistance = RaceHtmlScraper.ExtractDistanceFromUrl(pageUrl);
-                    if (urlDistance is not null)
-                    {
-                        coursePageUrls.Add(StripFragment(pageUrl));
-                        coursePages.Add(new CoursePage(pageUrl, html, urlDistance));
-                    }
-                    else if (depth > 0)
-                    {
-                        var contentDistances = RaceHtmlScraper.ExtractDistancesFromContent(html);
-                        if (contentDistances.Count > 0 && RaceHtmlScraper.ExtractDate(html) is not null)
-                        {
-                            coursePageUrls.Add(StripFragment(pageUrl));
-                            // Use the largest distance — sub-pages typically describe one race
-                            // and smaller km mentions are navigation or context references.
-                            var maxDist = contentDistances
-                                .OrderByDescending(d =>
-                                {
-                                    var m = System.Text.RegularExpressions.Regex.Match(d, @"[\d.]+");
-                                    return m.Success && double.TryParse(m.Value,
-                                        System.Globalization.NumberStyles.Float,
-                                        System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
-                                })
-                                .First();
-                            coursePages.Add(new CoursePage(pageUrl, html, maxDist, IsContentOnly: true));
-                        }
-                    }
-                }
+                // Use helper to detect and add course pages
+                var detectedPage = DetectCoursePage(pageUrl, html, depth);
+                if (detectedPage is not null)
+                    coursePages.Add(detectedPage);
 
                 // Pick up Google Drive folder links from download-text anchors on the page.
                 foreach (var dlLink in RaceHtmlScraper.ExtractDownloadLinksFromHtml(html, pageUrl))
@@ -482,52 +392,8 @@ internal sealed class BfsScraper(ILogger logger)
             }
         }
 
-        logger.LogDebug("BFS: extracting metadata from {GpxPages} gpx pages, {CoursePages} course pages",
-            pagesWithGpx.Count, coursePages.Count);
-
-        // Extract image: prefer the start page (landing page) first, then fall back to
-        // course pages and GPX pages only when the start page has no image.
-        // Append fetched CSS to each HTML so background-image URLs in stylesheets are discovered.
-        Uri? imageUrl = null;
-        if (startPageHtml is not null)
-        {
-            var combined = cssContent is not null ? startPageHtml + "\n" + cssContent : startPageHtml;
-            imageUrl = RaceHtmlScraper.ExtractProminentImage(combined, startUrl);
-        }
-        if (imageUrl is null)
-        {
-            foreach (var cp in coursePages)
-            {
-                var combined = cssContent is not null ? cp.Html + "\n" + cssContent : cp.Html;
-                imageUrl = RaceHtmlScraper.ExtractProminentImage(combined, cp.Url);
-                if (imageUrl is not null) break;
-            }
-        }
-        if (imageUrl is null)
-        {
-            foreach (var (pageUri, html) in pagesWithGpx)
-            {
-                var combined = cssContent is not null ? html + "\n" + cssContent : html;
-                imageUrl = RaceHtmlScraper.ExtractProminentImage(combined, pageUri);
-                if (imageUrl is not null) break;
-            }
-        }
-
-        // Extract logo from the start page.
-        var logoUrl = startPageHtml is not null ? RaceHtmlScraper.ExtractLogo(startPageHtml, startUrl) : null;
-        var startPageDate = startPageHtml is not null ? RaceHtmlScraper.ExtractDate(startPageHtml) : null;
-
-        // Extract event name from headings/title/meta across start page and course pages.
-        var courseHtmls = coursePages.Select(cp => (cp.Url, cp.Html)).ToList();
-        var extractedName = RaceHtmlScraper.ExtractEventName(startUrl, startPageHtml, courseHtmls);
-
-        var startPageElevation = startPageHtml is not null ? RaceHtmlScraper.ExtractElevationGain(startPageHtml) : null;
-        var price = startPageHtml is not null ? RaceHtmlScraper.ExtractPrice(startPageHtml, startUrl) : null;
-        var startFee = price?.Amount;
-        var currency = price?.Currency;
-
         if (gpxUrlToPage.Count == 0)
-            return new BfsResult([], imageUrl, logoUrl, startPageDate, coursePages, extractedName, startFee, currency, startPageElevation);
+            return new BfsResult([], startPageHtml, coursePages, cssContent);
 
         // Fetch all GPX URLs concurrently.
         var gpxTasks = gpxUrlToPage.Keys.Select(url =>
@@ -544,20 +410,40 @@ internal sealed class BfsScraper(ILogger logger)
             {
                 var (route, gpxUrl) = r!.Value;
                 var (html, sourcePageUrl) = gpxUrlToPage[gpxUrl.AbsoluteUri];
-                var (ImageUrl, Date, ElevationGain, StartFee, Currency) = 
-                    ExtractCoursePageMetadata(html, sourcePageUrl, cssContent);
-                return (route, gpxUrl, SourcePageUrl: sourcePageUrl,
-                     Date,
-                     ElevationGain,
-                     ImageUrl,
-                     StartFee,
-                     Currency);
+                return (route, gpxUrl, SourcePageUrl: sourcePageUrl, (string?)html);
             })
             .ToList();
 
-        logger.LogInformation("BFS: {Url} — visited {Pages} pages, {GpxFound} GPX found, {Parsed} parsed, {Routes} routes, name={Name}, date={Date}",
-            startUrl, visitedPages.Count, gpxUrlToPage.Count, parsedCount, routes.Count, extractedName, startPageDate);
-        return new BfsResult(routes, imageUrl, logoUrl, startPageDate, coursePages, extractedName, startFee, currency, startPageElevation);
+        logger.LogInformation("BFS: {Url} — visited {Pages} pages, {GpxFound} GPX found, {Parsed} parsed, {Routes} routes",
+            startUrl, visitedPages.Count, gpxUrlToPage.Count, parsedCount, routes.Count);
+        return new BfsResult(routes, startPageHtml, coursePages, cssContent);
+    }
+
+    private static CoursePage? DetectCoursePage(Uri pageUrl, string html, int depth)
+    {
+        var urlDistance = RaceHtmlScraper.ExtractDistanceFromUrl(pageUrl);
+        if (urlDistance is not null)
+            return new CoursePage(pageUrl, html, urlDistance);
+
+        if (depth > 0)
+        {
+            var contentDistances = RaceHtmlScraper.ExtractDistancesFromContent(html);
+            if (contentDistances.Count > 0 && RaceHtmlScraper.ExtractDate(html) is not null)
+            {
+                var maxDist = contentDistances
+                    .OrderByDescending(d =>
+                    {
+                        var m = System.Text.RegularExpressions.Regex.Match(d, "[\\d.]+");
+                        return m.Success && double.TryParse(m.Value,
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
+                    })
+                    .First();
+                return new CoursePage(pageUrl, html, maxDist, IsContentOnly: true);
+            }
+        }
+
+        return null;
     }
 
     private async Task<(ParsedGpxRoute Route, Uri GpxUrl)?> TryFetchGpxFromUrlAsync(
@@ -695,5 +581,32 @@ internal sealed class BfsScraper(ILogger logger)
             results.Add(downloadUrl);
         }
         return results.DistinctBy(u => u.AbsoluteUri).ToList();
+    }
+
+    /// <summary>Checks that both URIs share the same registrable domain (ignoring www prefix).</summary>
+    private static bool IsSameDomain(Uri candidate, Uri origin)
+    {
+        static string NormalizeHost(string host) =>
+            host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
+
+        return NormalizeHost(candidate.Host).Equals(NormalizeHost(origin.Host), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Social/platform domains where a bare URL (no slug) is useless to BFS-crawl.
+    /// URLs with a meaningful path (e.g. facebook.com/events/123) are still allowed.
+    /// </summary>
+    private static readonly string[] SocialDomains =
+        ["facebook.com", "fb.me", "fb.com", "youtube.com", "youtu.be",
+         "instagram.com", "twitter.com", "x.com", "tiktok.com", "linkedin.com"];
+
+    private static bool IsBareSocialDomain(Uri uri)
+    {
+        var host = uri.Host.ToLowerInvariant();
+        if (host.StartsWith("www.")) host = host[4..];
+        if (!SocialDomains.Any(d => host.Equals(d, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        var path = uri.AbsolutePath.TrimEnd('/');
+        return string.IsNullOrEmpty(path);
     }
 }

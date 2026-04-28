@@ -115,7 +115,7 @@ public class ScrapeRaceWorker
                 RaceScraperResult? bfsResult;
                 try
                 {
-                    bfsResult = await _bfsScraper.ScrapeAsync(bfsUrls, job.Name, job.Distance, httpClient, cancellationToken);
+                    bfsResult = await _bfsScraper.ScrapeAsync(bfsUrls, httpClient, cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -296,14 +296,11 @@ public class ScrapeRaceWorker
                 urls.Add(uri);
         }
 
-        // The organizer's canonical URL (derived from the domain key).
-        if (Uri.TryCreate(doc.Url, UriKind.Absolute, out var docUrl))
-            TryAdd(docUrl);
-
-        // The organizer id is the bare domain – ensure the root is always a search target
-        // even when doc.Url points to a subpage (e.g. "https://example.se/stafett/").
         if (Uri.TryCreate($"https://{doc.Id}", UriKind.Absolute, out var idUrl))
             TryAdd(idUrl);
+
+        if (Uri.TryCreate(doc.Url, UriKind.Absolute, out var docUrl))
+            TryAdd(docUrl);
 
         // All source URLs from all discovery sources.
         if (doc.Discovery is not null)

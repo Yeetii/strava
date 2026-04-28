@@ -28,7 +28,7 @@ public class TestScrapeUrl(
 
         var scraper = new BfsScraper(logger);
         var httpClient = httpClientFactory.CreateClient();
-        var result = await scraper.ScrapeAsync([uri], eventName: null, distance: null, httpClient, cancellationToken);
+        var result = await scraper.ScrapeAsync([uri], httpClient, cancellationToken);
 
         var body = new
         {

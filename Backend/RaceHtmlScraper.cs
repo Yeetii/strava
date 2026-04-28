@@ -10,6 +10,117 @@ namespace Backend;
 // for parsing HTTP API responses that are only consumed by ScrapeRaceWorker.
 public static partial class RaceHtmlScraper
 {
+    /// <summary>
+    /// Extracts the raw name candidate from HTML using structured sources in priority order:
+    /// JSON-LD name, og:title, &lt;title&gt; tag (first segment), &lt;h1&gt; tag.
+    /// Returns the raw string before any separator-splitting or filtering.
+    /// </summary>
+    public static string? ExtractNameCandidate(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        // 1. JSON-LD "name" field
+        foreach (Match m in LdJsonBlockRegex().Matches(html))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(m.Groups["json"].Value);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("name", out var nameProp))
+                {
+                    var name = nameProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(name))
+                        return name.Trim();
+                }
+            }
+            catch { /* ignore parse errors */ }
+        }
+
+        // 2. og:title meta tag
+        var ogTitleMatch = OgTitleRegex().Match(html);
+        if (ogTitleMatch.Success)
+        {
+            var title = ogTitleMatch.Groups["title"].Value;
+            if (!string.IsNullOrWhiteSpace(title))
+                return title.Trim();
+        }
+
+        // 3. <title> tag (take first segment before separator)
+        var titleTagMatch = TitleTagRegex().Match(html);
+        if (titleTagMatch.Success)
+        {
+            var title = titleTagMatch.Groups["title"].Value;
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                var parts = TitleSeparatorRegex().Split(title);
+                return parts.Length > 0 ? parts[0].Trim() : title.Trim();
+            }
+        }
+
+        // 4. <h1> tag
+        foreach (Match m in HeadingRegex().Matches(html))
+        {
+            if (m.Groups["level"].Value == "1")
+            {
+                var h1 = HtmlTagRegex().Replace(m.Groups["text"].Value, " ");
+                h1 = CollapseWhitespaceRegex().Replace(h1, " ").Trim();
+                if (!string.IsNullOrWhiteSpace(h1))
+                    return h1;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Attempts to extract the event/race name from HTML using common patterns: JSON-LD, og:title, &lt;title&gt;, &lt;h1&gt;.
+    /// When <paramref name="startPageName"/> is provided, separator splits prefer the segment least similar to it.
+    /// </summary>
+    public static string? ExtractName(string html, Uri pageUrl, string? startPageName = null)
+    {
+        var candidate = ExtractNameCandidate(html);
+        if (string.IsNullOrWhiteSpace(candidate))
+            return null;
+
+        // If candidate contains a separator, pick the best segment.
+        var separators = new[] { "|", "/", ",", "-" };
+        var splitParts = candidate.Split(separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (splitParts.Length > 1)
+        {
+            // If a start page name is supplied, prefer the segment that overlaps least with it
+            // (e.g. on "50K | My Race Event", pick "50K" rather than the event name).
+            if (startPageName is not null)
+            {
+                var startWords = new HashSet<string>(
+                    startPageName.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(w => w.ToLowerInvariant()),
+                    StringComparer.OrdinalIgnoreCase);
+                int Overlap(string part) => part
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Count(w => startWords.Contains(w.ToLowerInvariant()));
+                var ordered = splitParts
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .OrderBy(Overlap)
+                    .ToList();
+                if (ordered.Count > 0 && Overlap(ordered[0]) < Overlap(ordered[^1]))
+                    return ordered[0].Trim();
+                // tied — fall through to count method
+            }
+
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in splitParts)
+            {
+                if (string.IsNullOrWhiteSpace(part)) continue;
+                int count = Regex.Matches(html, Regex.Escape(part), RegexOptions.IgnoreCase).Count;
+                counts[part] = count;
+            }
+            var best = counts.OrderByDescending(kv => kv.Value).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(best.Key))
+                return best.Key.Trim();
+            return splitParts[0].Trim();
+        }
+        return candidate.Trim();
+    }
     public record PriceInfo(string Amount, string Currency);
     public record BeTrailSubEventInfo(string? Distance, double? ElevationGain, string? RaceType, string? Date);
 
@@ -42,6 +153,10 @@ public static partial class RaceHtmlScraper
     public static string? ExtractDistanceFromUrl(Uri url)
     {
         var path = Uri.UnescapeDataString(url.AbsolutePath);
+
+        // Recognize 'Backyard' as a distance in the URL path
+        if (path.Contains("backyard", StringComparison.OrdinalIgnoreCase))
+            return "backyard";
 
         // Try numeric distance patterns: "80-km", "80km", "100k", "100M", "42.195-km", "10-miles"
         var match = UrlDistanceRegex().Match(path);
@@ -87,6 +202,7 @@ public static partial class RaceHtmlScraper
 
         var seen = new HashSet<int>(); // rounded km values for dedup
         var results = new List<string>();
+
         foreach (Match m in ContentDistanceRegex().Matches(visibleText))
         {
             var num = m.Groups["num"].Value;

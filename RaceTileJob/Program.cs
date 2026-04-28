@@ -13,6 +13,13 @@ var builder = Host.CreateDefaultBuilder(args)
         config.AddJsonFile("local.settings.json", optional: true, reloadOnChange: false);
         config.AddEnvironmentVariables();
         config.AddCommandLine(args);
+
+        var tempConfig = config.Build();
+        var valuesSection = tempConfig.GetSection("Values");
+        foreach (var kvp in valuesSection.GetChildren())
+        {
+            config.AddInMemoryCollection([new KeyValuePair<string, string>(kvp.Key, kvp.Value)]);
+        }
     })
     .ConfigureServices((context, services) =>
     {
@@ -40,7 +47,17 @@ using var scope = host.Services.CreateScope();
 var configuration = host.Services.GetRequiredService<IConfiguration>();
 var job = scope.ServiceProvider.GetRequiredService<RaceTileBuildService>();
 var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-var forceBuild = configuration.GetValue<bool>("ForceRaceTileBuild");
+// Treat --Force as true if present, even if no value is provided
+var forceBuild = false;
+var forceArg = args.FirstOrDefault(a => string.Equals(a, "--Force", StringComparison.OrdinalIgnoreCase));
+if (forceArg != null)
+{
+    forceBuild = true;
+}
+else
+{
+    forceBuild = configuration.GetValue<bool>("Force");
+}
 
 try
 {
