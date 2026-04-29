@@ -1,0 +1,9 @@
+# PmtilesJob-specific ignore for Docker builds using PmtilesJob as context
+**/bin
+**/bin/**
+**/obj
+**/obj/**
+**/*.log
+**/*.tmp
+**/*.md
+**/*.dockerignore

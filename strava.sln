@@ -15,9 +15,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Backend.Tests", "Backend.Te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared.Benchmarks", "Shared.Benchmarks\Shared.Benchmarks.csproj", "{2934DC37-21DA-43A4-A3C1-2478ABFF52B1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RaceTileJob", "RaceTileJob\RaceTileJob.csproj", "{7B09C119-1B4C-4E0E-9F96-C608F2EE5B51}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PmtilesJob", "PmtilesJob\PmtilesJob.csproj", "{7B09C119-1B4C-4E0E-9F96-C608F2EE5B51}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RaceTileJob.Tests", "RaceTileJob.Tests\RaceTileJob.Tests.csproj", "{D787D740-1307-4BAD-81BC-DFE82D87DA27}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PmtilesJob.Tests", "PmtilesJob.Tests\PmtilesJob.Tests.csproj", "{D787D740-1307-4BAD-81BC-DFE82D87DA27}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

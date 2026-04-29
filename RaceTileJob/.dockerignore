@@ -1,9 +1,0 @@
-# RaceTileJob-specific ignore for Docker builds using RaceTileJob as context
-**/bin
-**/bin/**
-**/obj
-**/obj/**
-**/*.log
-**/*.tmp
-**/*.md
-**/*.dockerignore
