@@ -71,9 +71,6 @@ public static partial class RaceAssembler
     /// Race IDs are built from the organizer id: <c>{organizerKey}-{index}</c> where index is
     /// assigned after sorting routes by distance (ascending).
     /// </summary>
-    public static List<StoredFeature> AssembleRaces(RaceOrganizerDocument doc)
-        => AssembleRacesAsync(doc, null, CancellationToken.None).GetAwaiter().GetResult();
-
     public static async Task<List<StoredFeature>> AssembleRacesAsync(
         RaceOrganizerDocument doc,
         ILocationGeocodingService? geocodingService,

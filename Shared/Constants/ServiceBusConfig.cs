@@ -11,7 +11,6 @@ namespace Shared.Constants
         public const string ScrapeRace = "scrapeRace";
         public const string RaceDiscoveryJobs = "raceDiscoveryJobs";
         public const string MistralScrapeJobs = "mistralScrape";
-        public const string AssembleRace = "assembleRace";
         public const string EnrichAdminBoundaryJobs = "enrichAdminBoundaryJobs";
     }
 }

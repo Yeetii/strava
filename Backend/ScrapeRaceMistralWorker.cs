@@ -19,7 +19,6 @@ public class ScrapeRaceMistralWorker
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly BlobOrganizerStore _organizerClient;
     private readonly ServiceBusClient _serviceBusClient;
-    private readonly ServiceBusSender _assembleSender;
     private readonly ILogger<ScrapeRaceMistralWorker> _logger;
     private readonly string _agentId;
     private readonly string _apiKey;
@@ -36,7 +35,6 @@ public class ScrapeRaceMistralWorker
         _httpClientFactory = httpClientFactory;
         _organizerClient = organizerClient;
         _serviceBusClient = serviceBusClient;
-        _assembleSender = serviceBusClient.CreateSender(ServiceBusConfig.AssembleRace);
         _logger = logger;
         _agentId = configuration.GetValue<string>("MistralStudioAgentId") ?? throw new Exception("MistralStudioAgentId is not configured");
         _apiKey = configuration.GetValue<string>("MistralStudioApiKey") ?? throw new Exception("MistralStudioApiKey is not configured");
@@ -97,11 +95,6 @@ public class ScrapeRaceMistralWorker
             {
                 await _organizerClient.WriteScraperOutputAsync(organizerKey, "mistral", ToScraperOutput(result), cancellationToken);
                 _logger.LogInformation("ManualMistralScrapeWorker wrote {RouteCount} routes for {OrganizerKey}", result.Routes.Count, organizerKey);
-
-                await _assembleSender.SendMessageAsync(new ServiceBusMessage(organizerKey)
-                {
-                    ContentType = "text/plain"
-                }, cancellationToken);
             }
 
             await actions.CompleteMessageAsync(message, cancellationToken);

@@ -13,7 +13,7 @@ using Shared.Services;
 namespace API.Endpoints.Admin;
 
 public class PostRaceEvent(
-    RaceOrganizerClient organizerClient,
+    BlobOrganizerStore organizerClient,
     ServiceBusClient serviceBusClient,
     IConfiguration configuration,
     ILogger<PostRaceEvent> logger)
@@ -58,7 +58,7 @@ public class PostRaceEvent(
             return badReq;
         }
 
-        var organizerKey = RaceOrganizerClient.DeriveOrganizerKey(parsedUrl);
+        var organizerKey = BlobOrganizerStore.DeriveOrganizerKey(parsedUrl);
         var discovery = new SourceDiscovery
         {
             DiscoveredAtUtc = DateTime.UtcNow.ToString("o"),

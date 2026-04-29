@@ -14,8 +14,8 @@
         "serviceBus": {
             "maxAutoLockRenewalDuration": "00:10:00",
             "maxConcurrentCalls": 1,
-            "prefetchCount": 0,
-            "maxMessageBatchSize": 10
+            "prefetchCount": 32,
+            "maxMessageBatchSize": 32
         }
     }
 }

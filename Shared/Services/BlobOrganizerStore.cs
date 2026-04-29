@@ -173,25 +173,6 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
             cancellationToken: cancellationToken);
     }
 
-    public async Task PatchLastAssembledAsync(
-        string organizerKey,
-        int? maxSlotIndex,
-        Dictionary<string, RaceSlotHashes>? assemblyHashes,
-        CancellationToken cancellationToken = default)
-    {
-        await ModifyAsync(
-            organizerKey,
-            doc =>
-            {
-                doc.LastAssembledUtc = DateTime.UtcNow.ToString("o");
-                if (maxSlotIndex.HasValue)
-                    doc.LastMaxSlotIndex = maxSlotIndex;
-                if (assemblyHashes is not null)
-                    doc.AssemblyHashes = assemblyHashes;
-            },
-            cancellationToken: cancellationToken);
-    }
-
     // ── Query ─────────────────────────────────────────────────────────────
 
     /// <summary>

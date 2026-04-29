@@ -72,10 +72,12 @@ var host = new HostBuilder()
 
         services.AddSingleton(serviceProvider =>
         {
-            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.RaceOrganizersContainer);
+            var blobConnection = configuration.GetValue<string>("BlobStorageConnection")
+                ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
+            var containerClient = new Azure.Storage.Blobs.BlobContainerClient(blobConnection, BlobContainerNames.RaceOrganizers);
+            containerClient.CreateIfNotExists();
             var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            return new RaceOrganizerClient(container, loggerFactory);
+            return new BlobOrganizerStore(containerClient, loggerFactory);
         });
 
         services.AddScoped(serviceProvider =>

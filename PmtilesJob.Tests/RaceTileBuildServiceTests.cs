@@ -237,6 +237,31 @@ public class PmtilesUtilityServiceTests
         Assert.Contains("-z", args);
         Assert.Contains("8", args);
         Assert.Contains("-X", args);
+        Assert.DoesNotContain("-y", args);
+    }
+
+    [Fact]
+    public void GetOutdoorMapFilterArguments_KeepsAllowlistedAttributes()
+    {
+        var args = PmtilesUtilityService.GetOutdoorMapFilterArguments("/tmp/world.pmtiles", "/tmp/outdoors.pmtiles");
+
+        Assert.Contains("-y", args);
+        foreach (var attr in PmtilesUtilityService.OutdoorMapKeptAttributes)
+        {
+            Assert.Contains(attr, args);
+        }
+
+        // Localized names not in the keeplist must not appear as -y values
+        var keeplistValues = args
+            .Select((a, i) => (arg: a, prev: i > 0 ? args[i - 1] : null))
+            .Where(x => x.prev == "-y")
+            .Select(x => x.arg)
+            .ToList();
+        Assert.DoesNotContain("name:ar", keeplistValues);
+        Assert.DoesNotContain("name:zh-Hans", keeplistValues);
+        Assert.DoesNotContain("ref:USCG", keeplistValues);
+        Assert.Contains("name:sma", keeplistValues);
+        Assert.Contains("name:sv", keeplistValues);
     }
 
     [Fact]

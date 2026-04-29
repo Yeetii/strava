@@ -1,12 +1,10 @@
 using System.Net;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
-using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
 
@@ -14,12 +12,11 @@ namespace API.Endpoints.Admin;
 
 /// <summary>
 /// Accepts one or more GPX files (as raw XML strings) alongside a race URL.
-/// Parses the GPX content synchronously, writes the routes as scraper output under
-/// the key "manual-gpx", and enqueues an assemble job — no BFS crawl needed.
+/// Parses the GPX content synchronously and writes the routes as scraper output under
+/// the key "manual-gpx" — no BFS crawl needed.
 /// </summary>
 public class PostManualGpx(
-    RaceOrganizerClient organizerClient,
-    ServiceBusClient serviceBusClient,
+    BlobOrganizerStore organizerClient,
     IConfiguration configuration,
     ILogger<PostManualGpx> logger)
 {
@@ -104,7 +101,7 @@ public class PostManualGpx(
         if (routes.Count == 0)
             return await BadRequest(req, $"No GPX files could be parsed ({failedCount} failed)", cancellationToken);
 
-        var organizerKey = RaceOrganizerClient.DeriveOrganizerKey(parsedUrl);
+        var organizerKey = BlobOrganizerStore.DeriveOrganizerKey(parsedUrl);
 
         // Ensure the organizer document exists with a discovery entry.
         var discovery = new SourceDiscovery
@@ -123,11 +120,6 @@ public class PostManualGpx(
         };
         await organizerClient.WriteScraperOutputAsync(organizerKey, "manual-gpx", output, cancellationToken);
         logger.LogInformation("PostManualGpx: wrote {Count} routes for {Key}", routes.Count, organizerKey);
-
-        // Enqueue assembly.
-        var assembleSender = serviceBusClient.CreateSender(ServiceBusConfig.AssembleRace);
-        await assembleSender.SendMessageAsync(
-            new ServiceBusMessage(organizerKey) { ContentType = "text/plain" }, cancellationToken);
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(

@@ -15,50 +15,46 @@ namespace Backend;
 /// Reads an organizer key from the Service Bus queue, fetches the <see cref="RaceOrganizerDocument"/>
 /// from Cosmos, runs the scraper pipeline, and writes <see cref="ScraperOutput"/> back to the document.
 /// </summary>
-public class ScrapeRaceWorker
+public class ScrapeRaceWorker(
+    IHttpClientFactory httpClientFactory,
+    BlobOrganizerStore organizerClient,
+    ServiceBusClient serviceBusClient,
+    ILogger<ScrapeRaceWorker> logger)
 {
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly BlobOrganizerStore _organizerClient;
-    private readonly ServiceBusClient _serviceBusClient;
-    private readonly ILogger<ScrapeRaceWorker> _logger;
+    private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+    private readonly BlobOrganizerStore _organizerClient = organizerClient;
+    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+    private readonly ILogger<ScrapeRaceWorker> _logger = logger;
 
-    private readonly IReadOnlyList<(string Key, IRaceScraper Scraper)> _scrapers;
-    private readonly BfsScraper _bfsScraper;
+    private readonly IReadOnlyList<(string Key, IRaceScraper Scraper)> _scrapers = [
+            ("utmb", new UtmbScraper(logger)),
+            ("itra", new ItraScraper(logger)),
+        ];
+    private readonly BfsScraper _bfsScraper = new(logger);
     private static readonly JsonSerializerOptions HashSerializerOptions = new(JsonSerializerDefaults.Web);
 
     // Domains handled by specialized scrapers or discovery — BFS skips these.
     private static readonly string[] SpecialDomains = ["utmb.world", "itra.run", "tracedetrail.fr", "runagain.com", "statistik.d-u-v.org", "betrail.run"];
 
-    public ScrapeRaceWorker(
-        IHttpClientFactory httpClientFactory,
-        BlobOrganizerStore organizerClient,
-        ServiceBusClient serviceBusClient,
-        ILogger<ScrapeRaceWorker> logger)
-    {
-        _httpClientFactory = httpClientFactory;
-        _organizerClient = organizerClient;
-        _serviceBusClient = serviceBusClient;
-        _logger = logger;
-
-        _bfsScraper = new BfsScraper(logger);
-        _scrapers = [
-            ("utmb", new UtmbScraper(logger)),
-            ("itra", new ItraScraper(logger)),
-        ];
-    }
-
     [Function(nameof(ScrapeRaceWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.ScrapeRace, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
+        [ServiceBusTrigger(ServiceBusConfig.ScrapeRace, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] messages,
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
+    {
+        await Parallel.ForEachAsync(messages,
+            new ParallelOptions { MaxDegreeOfParallelism = messages.Length, CancellationToken = cancellationToken },
+            (message, ct) => new ValueTask(ProcessSingleAsync(message, actions, ct)));
+    }
+
+    private async Task ProcessSingleAsync(ServiceBusReceivedMessage message, ServiceBusMessageActions actions, CancellationToken cancellationToken)
     {
         var request = DeserializeMessage(message);
         var organizerKey = request.OrganizerKey.Trim();
         if (string.IsNullOrWhiteSpace(organizerKey))
         {
             _logger.LogWarning("Empty organizer key (MessageId={MessageId})", message.MessageId);
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "EmptyOrganizerKey");
+            await actions.DeadLetterMessageAsync(message, deadLetterReason: "EmptyOrganizerKey", cancellationToken: cancellationToken);
             return;
         }
 
@@ -68,8 +64,7 @@ public class ScrapeRaceWorker
         if (doc is null)
         {
             _logger.LogWarning("Organizer document not found: {Key} (MessageId={MessageId})", organizerKey, message.MessageId);
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "DocumentNotFound",
-                deadLetterErrorDescription: $"No document for key '{organizerKey}'");
+            await actions.DeadLetterMessageAsync(message, deadLetterReason: "DocumentNotFound", deadLetterErrorDescription: $"No document for key '{organizerKey}'", cancellationToken: cancellationToken);
             return;
         }
 

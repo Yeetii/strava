@@ -49,6 +49,30 @@ public class PmtilesUtilityService
 
     public static IReadOnlyList<string> AdminBoundariesIncludedKinds { get; } = ["country", "region", "macroregion"];
 
+    /// <summary>
+    /// Attributes kept in all layers of the outdoor-filtered map. Drops the 40+ localised name fields
+    /// and 20+ ref:* fields that make up the bulk of the file size while retaining names for the
+    /// languages relevant to a Scandinavian-focused trail running app (including South Sami).
+    /// </summary>
+    public static IReadOnlyList<string> OutdoorMapKeptAttributes { get; } =
+    [
+        // universal
+        "kind", "kind_detail", "sort_rank", "min_zoom",
+        // names – generic + alternate
+        "name", "name2", "name3",
+        // names – Scandinavian + South Sami + major international languages
+        "name:sv", "name:fi", "name:no", "name:da", "name:sma",
+        "name:en", "name:de", "name:fr",
+        "pgf:name", "pgf:name2",
+        // places
+        "capital", "population_rank",
+        // roads
+        "is_bridge", "is_tunnel", "is_link",
+        "ref", "shield_text", "network", "service",
+        // boundaries
+        "brk_a3", "disputed",
+    ];
+
     private readonly ILogger<PmtilesUtilityService> _logger;
     private readonly string _tippecanoeBinary;
     private readonly string _tileJoinBinary;
@@ -124,7 +148,8 @@ public class PmtilesUtilityService
         IEnumerable<string>? includeLayers = null,
         IEnumerable<string>? excludeLayers = null,
         int? maximumZoom = null,
-        bool excludeAllAttributes = false)
+        bool excludeAllAttributes = false,
+        IEnumerable<string>? keepAttributes = null)
     {
         var includeList = includeLayers?.Where(static layer => !string.IsNullOrWhiteSpace(layer)).ToArray();
         var excludeList = excludeLayers?.Where(static layer => !string.IsNullOrWhiteSpace(layer)).ToArray();
@@ -149,6 +174,14 @@ public class PmtilesUtilityService
         if (excludeAllAttributes)
         {
             arguments.Add("-X");
+        }
+        else if (keepAttributes is not null)
+        {
+            foreach (var attr in keepAttributes.Where(static a => !string.IsNullOrWhiteSpace(a)))
+            {
+                arguments.Add("-y");
+                arguments.Add(attr);
+            }
         }
 
         if (includeList is { Length: > 0 })
@@ -183,7 +216,8 @@ public class PmtilesUtilityService
                 outputPmtilesPath,
                 includeLayers: OutdoorMapIncludedLayers,
                 maximumZoom: maximumZoom,
-                excludeAllAttributes: excludeAllAttributes)
+                excludeAllAttributes: excludeAllAttributes,
+                keepAttributes: excludeAllAttributes ? null : OutdoorMapKeptAttributes)
             .ToList();
         arguments.Insert(arguments.Count - 1, "-j");
         arguments.Insert(arguments.Count - 1, OutdoorPlacesFilterJson);
@@ -394,6 +428,13 @@ public class PmtilesUtilityService
         CancellationToken cancellationToken)
     {
         EnsureBinaryExists(_tileJoinBinary, AppConfig.TileJoinBinaryPath, "tile-join");
+
+        if (Path.GetFullPath(inputPmtilesPath) == Path.GetFullPath(outputPmtilesPath))
+        {
+            throw new InvalidOperationException(
+                $"Input and output paths resolve to the same file '{Path.GetFullPath(inputPmtilesPath)}'. " +
+                "In-place filtering is not supported — specify a different output path.");
+        }
 
         if (!IsValidPmtilesFile(inputPmtilesPath))
         {
