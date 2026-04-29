@@ -1,7 +1,7 @@
 meta {
   name: Manual GPX Upload
   type: http
-  seq: 5
+  seq: 3
 }
 
 post {
@@ -16,12 +16,12 @@ headers {
 
 body:json {
   {
-    "url": "https://www.example.com/race",
-    "name": "Example Race",
+    "url": "https://www.sormlandultra.se/banan/",
+    "name": "Sörmland Ultra Marathon",
     "gpxFiles": [
       {
-        "content": "<base64-encoded GPX — run: base64 < file.gpx | pbcopy>",
-        "name": "50km",
+        "content": "base64 < ~/Downloads/Sörmland_Ultra_Marathon_50k.gpx| pbcopy",
+        "name": "Sörmland Ultra Marathon",
         "distance": "50 km"
       }
     ]
