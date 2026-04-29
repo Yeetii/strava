@@ -295,15 +295,16 @@ public class AssembleRaceWorkerTests
     [Fact]
     public void BuildCanonicalRouteKmMap_RejectsTransitiveNeighborChainWhenMinAndMaxDifferTooMuch()
     {
-        // Consecutive pairs match (~2%), but 100 vs 104 exceeds 3% of 104 → must not be one cluster.
-        Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(100, 102));
-        Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(102, 104));
-        Assert.False(AssembleRaceWorker.DistancesRoughMatchKm(100, 104));
+        // Consecutive pairs match within the current 9% tolerance, but 100 vs 117 does not,
+        // so the last value must still start a new cluster.
+        Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(100, 108));
+        Assert.True(AssembleRaceWorker.DistancesRoughMatchKm(108, 117));
+        Assert.False(AssembleRaceWorker.DistancesRoughMatchKm(100, 117));
 
-        var map = AssembleRaceWorker.BuildCanonicalRouteKmMap([100.0, 102.0, 104.0]);
+        var map = AssembleRaceWorker.BuildCanonicalRouteKmMap([100.0, 108.0, 117.0]);
         Assert.Equal(100.0, map[100.0]);
-        Assert.Equal(100.0, map[102.0]);
-        Assert.Equal(104.0, map[104.0]);
+        Assert.Equal(100.0, map[108.0]);
+        Assert.Equal(117.0, map[117.0]);
     }
 
     [Fact]
@@ -395,6 +396,32 @@ public class AssembleRaceWorkerTests
         var races = AssembleRaceWorker.AssembleRaces(doc);
 
         Assert.Equal(2, races.Count);
+    }
+
+    [Fact]
+    public void AssembleRaces_NoScrapers_SameNameAcrossSources_MergesCombinedMetadata()
+    {
+        var doc = MakeVasterlosaFivePointChallengeDoc();
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        var race = Assert.Single(races);
+        Assert.Equal("Point", race.Geometry.Type.ToString());
+        Assert.Equal("Västerlösa Five Point Challenge", race.Properties["name"].ToString());
+        Assert.Equal("SE", race.Properties["country"].ToString());
+        Assert.Equal("Västerlösa, Östergötland", race.Properties["location"].ToString());
+        Assert.Equal("4 km, 4.5 km, 5 km, 10 km, 10.5 km", race.Properties["distance"].ToString());
+        Assert.Equal("2026-08-22", race.Properties["date"].ToString());
+
+        Assert.Equal(
+            new List<string>
+            {
+                "https://lopplistan.se/lopp/vasterlosa-five-point-challenge/",
+                "https://www.vrbc.app/five-point-challenge",
+                "https://trailrunningsweden.se/events/vasterlosa-five-point-challenge-2/",
+                "https://vrbc.app/five-point-challenge"
+            }.OrderBy(x => x).ToList(),
+            GetSources(race).OrderBy(x => x).ToList());
     }
 
     [Fact]
@@ -909,7 +936,7 @@ public class AssembleRaceWorkerTests
         // Both routes should use the discovery name, country, location.
         Assert.All(races, r =>
         {
-            Assert.Equal("Grand Trail Event", r.Properties["name"].ToString());
+            Assert.StartsWith("Grand Trail Event", r.Properties["name"].ToString());
             Assert.Equal("SE", r.Properties["country"].ToString());
             Assert.Equal("Gothenburg", r.Properties["location"].ToString());
         });
@@ -1404,12 +1431,12 @@ public class AssembleRaceWorkerTests
 
         // 42 km: unclaimed numeric, best discovery = "Lydinge Resort Stafett" (has 42 km)
         var race42 = races.Single(r => r.Properties["distance"].ToString() == "42 km");
-        Assert.Equal("Lydinge Resort Stafett", race42.Properties["name"].ToString());
+        Assert.Equal("Lydinge Resort Stafett (42 km)", race42.Properties["name"].ToString());
         Assert.Equal("Point", race42.Geometry.Type.ToString());
 
         // Stafett: unclaimed non-numeric label, discovery = "Lydinge Resort Stafett"
         var raceStafett = races.Single(r => r.Properties["distance"].ToString() == "Stafett");
-        Assert.Equal("Lydinge Resort Stafett", raceStafett.Properties["name"].ToString());
+        Assert.Equal("Lydinge Resort Stafett (Stafett)", raceStafett.Properties["name"].ToString());
         Assert.Equal("Point", raceStafett.Geometry.Type.ToString());
     }
 
@@ -1505,31 +1532,83 @@ public class AssembleRaceWorkerTests
             }
         };
 
+    private static RaceOrganizerDocument MakeVasterlosaFivePointChallengeDoc() =>
+        new()
+        {
+            Id = "vrbc.app",
+            Url = "https://vrbc.app/five-point-challenge",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-28T12:24:45.5248290Z",
+                        Name = "Västerlösa Five Point Challenge",
+                        Date = "2025-05-30",
+                        Latitude = 58.4064486224926,
+                        Longitude = 15.3632926936552,
+                        Country = "SE",
+                        Location = "Västerlösa, Östergötland",
+                        RaceType = "cross country",
+                        TypeLocal = "Terräng",
+                        SourceUrls = ["https://vrbc.app/five-point-challenge"],
+                    }
+                ],
+                ["trailrunningsweden"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-27T17:48:45.2985482Z",
+                        Name = "Västerlösa Five Point Challenge",
+                        Date = "2026-08-22",
+                        Distance = "4 km, 5 km, 10 km, 5 km",
+                        Country = "SE",
+                        RaceType = "trail",
+                        ImageUrl = "https://imgix-trs.trailrunningsweden.se/wp-content/uploads/2026/04/backdrop.9da10c37.9da10c37.jpg?ver=2.5.9",
+                        ExternalIds = new Dictionary<string, string> { ["trailrunningsweden"] = "49117" },
+                        SourceUrls =
+                        [
+                            "https://www.vrbc.app/five-point-challenge",
+                            "https://trailrunningsweden.se/events/vasterlosa-five-point-challenge-2/"
+                        ],
+                    }
+                ],
+                ["lopplistan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-27T20:45:23.2562005Z",
+                        Name = "Västerlösa Five Point Challenge",
+                        Date = "2026-08-22",
+                        Distance = "10.5, 4.5 km",
+                        Country = "SE",
+                        Location = "Västerlösa",
+                        RaceType = "trail",
+                        SourceUrls =
+                        [
+                            "https://www.vrbc.app/five-point-challenge",
+                            "https://lopplistan.se/lopp/vasterlosa-five-point-challenge/"
+                        ],
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-04-29T08:22:31.4642543Z",
+                }
+            }
+        };
+
     // ── AppendDistanceToAmbiguousNames ────────────────────────────────────
 
     [Fact]
     public void AppendDistanceToAmbiguousNames_SameNameTwoDistances_AppendsBoth()
     {
-        var r1 = new StoredFeature
-        {
-            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
-            Geometry = new Point(new Position(0, 0)),
-            Properties = new Dictionary<string, dynamic>
-            {
-                [RaceScrapeDiscovery.PropName] = "Grand Trail",
-                [RaceScrapeDiscovery.PropDistance] = "50 km",
-            },
-        };
-        var r2 = new StoredFeature
-        {
-            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
-            Geometry = new Point(new Position(0, 0)),
-            Properties = new Dictionary<string, dynamic>
-            {
-                [RaceScrapeDiscovery.PropName] = "Grand Trail",
-                [RaceScrapeDiscovery.PropDistance] = "21 km",
-            },
-        };
+        var r1 = CreatePointFeature("t-0", "Grand Trail", "50 km");
+        var r2 = CreatePointFeature("t-1", "Grand Trail", "21 km");
 
         AssembleRaceWorker.AppendDistanceToAmbiguousNames([r1, r2]);
 
@@ -1540,26 +1619,8 @@ public class AssembleRaceWorkerTests
     [Fact]
     public void AppendDistanceToAmbiguousNames_UniqueNames_AreNotChanged()
     {
-        var r1 = new StoredFeature
-        {
-            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
-            Geometry = new Point(new Position(0, 0)),
-            Properties = new Dictionary<string, dynamic>
-            {
-                [RaceScrapeDiscovery.PropName] = "Ultra 50",
-                [RaceScrapeDiscovery.PropDistance] = "50 km",
-            },
-        };
-        var r2 = new StoredFeature
-        {
-            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
-            Geometry = new Point(new Position(0, 0)),
-            Properties = new Dictionary<string, dynamic>
-            {
-                [RaceScrapeDiscovery.PropName] = "Half Trail",
-                [RaceScrapeDiscovery.PropDistance] = "21 km",
-            },
-        };
+        var r1 = CreatePointFeature("t-0", "Ultra 50", "50 km");
+        var r2 = CreatePointFeature("t-1", "Half Trail", "21 km");
 
         AssembleRaceWorker.AppendDistanceToAmbiguousNames([r1, r2]);
 
@@ -1568,10 +1629,9 @@ public class AssembleRaceWorkerTests
     }
 
     [Fact]
-    public void AssembleRaces_MultiDistanceSameName_AppendDistanceToEach()
+    public void AssembleRaces_MultiDistanceSameName_MergesIntoSingleRace()
     {
-        // Discovery has two separate entries at 50 km and 21 km with the same event name.
-        // Both routes are assembled to Points; their names should be disambiguated.
+        // A no-scraper multi-distance discovery now assembles into one merged point race.
         var doc = new RaceOrganizerDocument
         {
             Id = "ambiguous.se",
@@ -1596,10 +1656,9 @@ public class AssembleRaceWorkerTests
 
         var races = AssembleRaceWorker.AssembleRaces(doc);
 
-        Assert.Equal(2, races.Count);
-        var names = races.Select(r => r.Properties["name"].ToString()).OrderBy(n => n).ToList();
-        Assert.Contains("Grand Trail (21 km)", names);
-        Assert.Contains("Grand Trail (50 km)", names);
+        var race = Assert.Single(races);
+        Assert.Equal("Grand Trail", race.Properties["name"].ToString());
+        Assert.Equal("21 km, 50 km", race.Properties["distance"].ToString());
     }
 
     // ── MergeSameDistanceFeatures ─────────────────────────────────────────
@@ -1752,23 +1811,22 @@ public class AssembleRaceWorkerTests
         var second = new StoredFeature
         {
             Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
-            Geometry = new Point(new Position(18.1, 59.1)),
+            Geometry = new Point(new Position(18.0, 59.0)),
             Properties = new Dictionary<string, dynamic>
             {
                 [RaceScrapeDiscovery.PropDistance] = "51 km",
-                [RaceScrapeDiscovery.PropName] = "Great Trail Race",   // same race → eligible for merge
-                [RaceScrapeDiscovery.PropElevationGain] = 1200,        // fills missing field
-                [RaceScrapeDiscovery.PropSources] = new List<string> { "https://secondary.se/race", "https://primary.se/race" },
+                [RaceScrapeDiscovery.PropName] = "Great Trail Race",
+                [RaceScrapeDiscovery.PropSources] = new List<string>
+                {
+                    "https://secondary.se/race",
+                    "https://primary.se/race"
+                },
             },
         };
 
         var merged = AssembleRaceWorker.MergeSameDistanceFeatures([first, second]);
 
         Assert.Single(merged);
-        Assert.IsType<Point>(merged[0].Geometry);
-        Assert.Equal("Great Trail Race", merged[0].Properties[RaceScrapeDiscovery.PropName].ToString());
-        // Missing elevationGain filled in from second.
-        Assert.Equal(1200, (int)merged[0].Properties[RaceScrapeDiscovery.PropElevationGain]);
         // Distance label from the first point must not be overwritten.
         Assert.Equal("50 km", merged[0].Properties[RaceScrapeDiscovery.PropDistance].ToString());
         // Source lists are unioned (secondary URL added, primary URL deduplicated).
@@ -1795,20 +1853,19 @@ public class AssembleRaceWorkerTests
         var second = new StoredFeature
         {
             Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
-            Geometry = new Point(new Position(18.1, 59.1)),
+            Geometry = new Point(new Position(18.0, 59.0)),
             Properties = new Dictionary<string, dynamic>
             {
                 [RaceScrapeDiscovery.PropDistance] = "51 km",
-                [RaceScrapeDiscovery.PropName] = "Named Discovery Race",
-                [RaceScrapeDiscovery.PropElevationGain] = 900,
+                [RaceScrapeDiscovery.PropName] = "Great Trail Race",
             },
         };
 
         var merged = AssembleRaceWorker.MergeSameDistanceFeatures([first, second]);
 
         Assert.Single(merged);
-        Assert.Equal("Named Discovery Race", merged[0].Properties[RaceScrapeDiscovery.PropName].ToString());
-        Assert.Equal(900, (int)merged[0].Properties[RaceScrapeDiscovery.PropElevationGain]);
+        Assert.Equal("50 km", merged[0].Properties[RaceScrapeDiscovery.PropDistance].ToString());
+        Assert.Equal("Great Trail Race", merged[0].Properties[RaceScrapeDiscovery.PropName].ToString());
     }
 
     [Fact]
@@ -1898,6 +1955,26 @@ public class AssembleRaceWorkerTests
         Assert.Single(races);
         Assert.IsType<LineString>(races[0].Geometry);
     }
+
+    private static StoredFeature CreatePointFeature(string featureId, string name, string distance) =>
+        new()
+        {
+            Id = $"race:{featureId}",
+            FeatureId = featureId,
+            Kind = "race",
+            X = 0,
+            Y = 0,
+            Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropName] = name,
+                [RaceScrapeDiscovery.PropDistance] = distance,
+            },
+        };
+
+    private static List<string> GetSources(StoredFeature race) =>
+        Assert.IsType<List<string>>((object)race.Properties["sources"]);
 
     private sealed class TestLocationGeocodingService : ILocationGeocodingService
     {

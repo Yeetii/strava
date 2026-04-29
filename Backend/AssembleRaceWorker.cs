@@ -246,8 +246,9 @@ public partial class AssembleRaceWorker(
         if (dedupedRoutes.Count == 0)
         {
             // No scraper output — fall back to a single point per deduplicated discovery entry.
+            var mergedNoRouteDiscoveries = MergeDiscoveriesByName(flatDiscoveries);
             int idx = 0;
-            foreach (var (_, d) in flatDiscoveries)
+            foreach (var (_, d) in mergedNoRouteDiscoveries)
             {
                 var coords = d.Latitude is not null && d.Longitude is not null
                     ? (d.Latitude.Value, d.Longitude.Value)
@@ -257,7 +258,7 @@ public partial class AssembleRaceWorker(
 
                 var (lat, lng) = coords.Value;
                 var featureId = $"{organizerKey}-{idx++}";
-                var props = BuildProperties(mergedDiscovery, scraperKey: null, route: null,
+                var props = BuildProperties(d, scraperKey: null, route: null,
                     scraperImageUrl: null, scraperLogoUrl: null, websiteUrl: doc.Url);
                 results.Add(BuildPointFeature(featureId, lng, lat, props));
             }
@@ -496,15 +497,142 @@ public partial class AssembleRaceWorker(
         var result = new List<(string Source, SourceDiscovery Entry)>();
         foreach (var list in components.Values.OrderBy(g => g.Min()))
         {
-            var best = list
-                .Select(idx => arr[idx])
-                .OrderByDescending(d => ParseDate(d.Entry.Date))
-                .ThenByDescending(d => ParseDate(d.Entry.DiscoveredAtUtc))
-                .First();
-            result.Add(best);
+            result.Add(MergeDiscoveryCluster(list.Select(idx => arr[idx]).ToList()));
         }
 
         return result;
+    }
+
+    private static List<(string Source, SourceDiscovery Entry)> MergeDiscoveriesByName(
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> discoveries)
+    {
+        if (discoveries.Count <= 1)
+            return discoveries.ToList();
+
+        var groups = new List<List<(string Source, SourceDiscovery Entry)>>();
+        foreach (var discovery in discoveries)
+        {
+            var key = NormalizeNameKey(discovery.Entry.Name);
+            if (key is null)
+            {
+                groups.Add([discovery]);
+                continue;
+            }
+
+            var existing = groups.FirstOrDefault(group =>
+                string.Equals(NormalizeNameKey(group[0].Entry.Name), key, StringComparison.Ordinal));
+
+            if (existing is null)
+                groups.Add([discovery]);
+            else
+                existing.Add(discovery);
+        }
+
+        return groups.Select(group => MergeDiscoveryCluster(group)).ToList();
+    }
+
+    private static (string Source, SourceDiscovery Entry) MergeDiscoveryCluster(
+        IReadOnlyList<(string Source, SourceDiscovery Entry)> cluster)
+    {
+        var merged = new SourceDiscovery
+        {
+            DiscoveredAtUtc = cluster
+                .Select(x => x.Entry.DiscoveredAtUtc)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .OrderByDescending(ParseDate)
+                .FirstOrDefault() ?? DateTime.UtcNow.ToString("o"),
+            Date = cluster
+                .Select(x => x.Entry.Date)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .OrderByDescending(ParseDate)
+                .FirstOrDefault(),
+            Distance = MergeDiscoveryDistances(cluster.Select(x => x.Entry.Distance)),
+            Location = PickMostSpecificString(cluster.Select(x => x.Entry.Location)),
+        };
+
+        foreach (var (_, entry) in cluster)
+        {
+            merged.Name ??= entry.Name;
+            merged.Country ??= entry.Country;
+            merged.RaceType ??= entry.RaceType;
+            merged.ImageUrl ??= entry.ImageUrl;
+            merged.LogoUrl ??= entry.LogoUrl;
+            merged.Organizer ??= entry.Organizer;
+            merged.Description ??= entry.Description;
+            merged.StartFee ??= entry.StartFee;
+            merged.Currency ??= entry.Currency;
+            merged.County ??= entry.County;
+            merged.TypeLocal ??= entry.TypeLocal;
+            merged.Latitude ??= entry.Latitude;
+            merged.Longitude ??= entry.Longitude;
+            merged.ElevationGain ??= entry.ElevationGain;
+            merged.RegistrationOpen ??= entry.RegistrationOpen;
+            merged.Playgrounds ??= entry.Playgrounds;
+            merged.RunningStones ??= entry.RunningStones;
+            merged.UtmbWorldSeriesCategory ??= entry.UtmbWorldSeriesCategory;
+            merged.ItraPoints ??= entry.ItraPoints;
+            merged.ItraNationalLeague ??= entry.ItraNationalLeague;
+
+            if (entry.ExternalIds is { Count: > 0 })
+            {
+                merged.ExternalIds ??= new Dictionary<string, string>();
+                foreach (var (key, value) in entry.ExternalIds)
+                    merged.ExternalIds.TryAdd(key, value);
+            }
+
+            if (entry.SourceUrls is not { Count: > 0 })
+                continue;
+
+            merged.SourceUrls ??= [];
+            foreach (var url in entry.SourceUrls)
+                if (!merged.SourceUrls.Contains(url))
+                    merged.SourceUrls.Add(url);
+        }
+
+        return (cluster[0].Source, merged);
+    }
+
+    private static string? MergeDiscoveryDistances(IEnumerable<string?> distances)
+    {
+        var numeric = new List<double>();
+        var labels = new List<string>();
+
+        foreach (var distance in distances)
+        {
+            if (string.IsNullOrWhiteSpace(distance))
+                continue;
+
+            foreach (var token in distance.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0))
+            {
+                var km = ParseDistanceKm(token);
+                if (km.HasValue)
+                {
+                    if (!numeric.Contains(km.Value))
+                        numeric.Add(km.Value);
+                    continue;
+                }
+
+                if (!labels.Contains(token, StringComparer.OrdinalIgnoreCase))
+                    labels.Add(token);
+            }
+        }
+
+        var parts = numeric
+            .OrderBy(x => x)
+            .Select(x => string.Format(CultureInfo.InvariantCulture, "{0:G} km", x))
+            .Concat(labels)
+            .ToList();
+
+        return parts.Count == 0 ? null : string.Join(", ", parts);
+    }
+
+    private static string? PickMostSpecificString(IEnumerable<string?> values)
+    {
+        return values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .OrderByDescending(x => x.Length)
+            .FirstOrDefault();
     }
 
     private static string? NormalizeNameKey(string? name)

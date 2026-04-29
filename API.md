@@ -2,6 +2,8 @@
 
 Base URL: `https://peakshunters.erikmagnusson.com/api`
 
+Repository note: Cosmos container partition keys are not uniform across this codebase. For write-path and patch/delete conventions, see [COSMOS_CONTAINERS.md](/Users/erik/Code/Erik/strava/COSMOS_CONTAINERS.md).
+
 ## Authentication
 
 Authenticated endpoints require a `session` cookie obtained from `POST /{authCode}/login`.
