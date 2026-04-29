@@ -77,6 +77,7 @@ public class RaceTileBuildService
 
         var leaseClient = dirtyBlob.GetBlobLeaseClient();
         var leaseAcquired = false;
+        string? runId = null;
         try
         {
             if (dirtyExists)
@@ -85,7 +86,7 @@ public class RaceTileBuildService
                 leaseAcquired = true;
             }
 
-            var runId = Guid.NewGuid().ToString("N");
+            runId = Guid.NewGuid().ToString("N");
             _logger.LogInformation("Starting race tile build {RunId}. ForceBuild={ForceBuild}.", runId, forceBuild);
 
             var (geoJsonPath, geoJsonFeatureCount) = await ExportAllRaceFeaturesToGeoJsonAsync(runId, cancellationToken);
@@ -119,6 +120,28 @@ public class RaceTileBuildService
             {
                 await leaseClient.ReleaseAsync(cancellationToken: cancellationToken);
             }
+
+            if (!string.IsNullOrWhiteSpace(runId))
+            {
+                DeleteRunTempPath(runId);
+            }
+        }
+    }
+
+    private void DeleteRunTempPath(string runId)
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), "race-tiles", runId);
+        if (!Directory.Exists(tempPath))
+            return;
+
+        try
+        {
+            Directory.Delete(tempPath, recursive: true);
+            _logger.LogTrace("Deleted race tile temp path {TempPath} for run {RunId}.", tempPath, runId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete race tile temp path {TempPath} for run {RunId}.", tempPath, runId);
         }
     }
 
