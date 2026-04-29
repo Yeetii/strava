@@ -13,7 +13,7 @@ public class CleanPastRaces(
         [TimerTrigger("0 0 4 * * 1")] TimerInfo timerInfo,
         CancellationToken cancellationToken)
     {
-        var (deleted, cutoff) = await racesCollectionClient.DeletePastRacesAsync(cancellationToken);
-        logger.LogInformation("CleanPastRaces: deleted {Count} past race(s) with date before {Cutoff}", deleted, cutoff);
+        var (expired, cutoff) = await racesCollectionClient.ExpirePastRacesAsync(cancellationToken);
+        logger.LogInformation("CleanPastRaces: marked {Count} past race(s) for TTL expiry with date before {Cutoff}", expired, cutoff);
     }
 }

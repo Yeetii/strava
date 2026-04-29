@@ -1,0 +1,15 @@
+meta {
+  name: Get Race TTL Status
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/races/{{organizerKey}}/ttl
+  body: none
+  auth: none
+}
+
+params:path {
+  organizerKey: example.com
+}

@@ -108,8 +108,14 @@ public partial class AssembleRaceWorker(
                     if (prevHash.GeometryHash == newHash.GeometryHash)
                     {
                         // Geometry unchanged — patch only the properties path (~1–10 RU vs full upsert).
-                        await raceCollectionClient.PatchRacePropertiesAsync(race.Id, race.Properties, cancellationToken);
-                        patched++;
+                        if (await raceCollectionClient.PatchRacePropertiesAsync(race.Id, race.Properties, cancellationToken))
+                        {
+                            patched++;
+                            continue;
+                        }
+
+                        await raceCollectionClient.UpsertDocument(race, cancellationToken);
+                        upserted++;
                         continue;
                     }
                 }
@@ -122,12 +128,11 @@ public partial class AssembleRaceWorker(
                 "Assembly writes for {Key}: {Upserted} upserted, {Patched} props-patched, {Skipped} unchanged/skipped",
                 organizerKey, upserted, patched, skipped);
 
-            // Expire superseded slots. Fast path uses the stored previous max to avoid a fan-out query.
+            // Expire trailing superseded slots even when all active races were skipped as unchanged.
+            // The sweep starts at current max + 1 and stops on the first missing slot.
             RaceCollectionClient.TryGetHighestRaceSlotIndex(organizerKey, races, out var maxSlot);
-            var patchOfDeathIds = maxSlot >= 0
-                ? await raceCollectionClient.MarkHigherRaceSlotsExpiredAsync(
-                    organizerKey, maxSlot, doc.LastMaxSlotIndex, cancellationToken)
-                : [];
+            var patchOfDeathIds = await raceCollectionClient.MarkHigherRaceSlotsExpiredAsync(
+                organizerKey, maxSlot, cancellationToken);
 
             if (patchOfDeathIds.Count > 0)
             {

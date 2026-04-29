@@ -17,6 +17,9 @@ public class RaceCollectionClient(Container container, ILoggerFactory loggerFact
 {
     public const int DefaultZoom = 8;
 
+    public sealed record RaceTtlStatus(string Id, string? FeatureId, int? Ttl, string? Date);
+    private sealed record RacePatchTarget(string Id, int X, int Y);
+
     /// <summary>
     /// Parses the numeric slot suffix from a stored race document id
     /// <c>race:{organizerKey}-{n}</c>.
@@ -51,37 +54,25 @@ public class RaceCollectionClient(Container container, ILoggerFactory loggerFact
     }
 
     /// <summary>
-    /// Sets <c>ttl = 1</c> on race slots whose index is in the range
-    /// (<paramref name="highestSlotInUseInclusive"/>, <paramref name="previousMaxSlotInclusive"/>].
+    /// Sets <c>ttl = 1</c> on trailing race slots starting immediately after the current highest
+    /// assembled slot and keeps scanning upward until Cosmos returns 404.
     /// Uses cheap point-patches — one per superseded slot (~1 RU each).
-    /// When <paramref name="previousMaxSlotInclusive"/> is unknown or not greater than the current
-    /// max, nothing is done; superseded slots will be cleaned up on the next run once the
-    /// previous max has been recorded.
     /// Returns the document ids that were patched (empty if none).
     /// </summary>
     public async Task<IReadOnlyList<string>> MarkHigherRaceSlotsExpiredAsync(
         string organizerKey,
         int highestSlotInUseInclusive,
-        int? previousMaxSlotInclusive = null,
         CancellationToken cancellationToken = default)
     {
-        if (!previousMaxSlotInclusive.HasValue || previousMaxSlotInclusive.Value <= highestSlotInUseInclusive)
-            return [];
-
         IReadOnlyList<PatchOperation> ttlPatch = [PatchOperation.Set("/ttl", 1)];
         var expired = new List<string>();
-        for (int slot = highestSlotInUseInclusive + 1; slot <= previousMaxSlotInclusive.Value; slot++)
+        for (int slot = highestSlotInUseInclusive + 1; ; slot++)
         {
             var docId = $"{FeatureKinds.Race}:{organizerKey}-{slot}";
-            try
-            {
-                await PatchDocument(docId, new PartitionKey(docId), ttlPatch, cancellationToken);
-                expired.Add(docId);
-            }
-            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-            {
-                // Slot was already expired or never created — nothing to do.
-            }
+            if (!await TryPatchRaceDocumentByIdAsync(docId, ttlPatch, cancellationToken))
+                break;
+
+            expired.Add(docId);
         }
         return expired;
     }
@@ -101,15 +92,8 @@ public class RaceCollectionClient(Container container, ILoggerFactory loggerFact
         var expired = new List<string>();
         foreach (var docId in documentIds)
         {
-            try
-            {
-                await PatchDocument(docId, new PartitionKey(docId), ttlPatch, cancellationToken);
+            if (await TryPatchRaceDocumentByIdAsync(docId, ttlPatch, cancellationToken))
                 expired.Add(docId);
-            }
-            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-            {
-                // Already expired or never created — nothing to do.
-            }
         }
         return expired;
     }
@@ -118,34 +102,87 @@ public class RaceCollectionClient(Container container, ILoggerFactory loggerFact
     /// Patches only the <c>/properties</c> path on an existing race document.
     /// Use this when geometry is unchanged but metadata (name, date, url, …) has been updated.
     /// </summary>
-    public async Task PatchRacePropertiesAsync(
+    public async Task<bool> PatchRacePropertiesAsync(
         string id,
         IDictionary<string, dynamic> properties,
         CancellationToken cancellationToken = default)
     {
-        await PatchDocument(
+        return await TryPatchRaceDocumentByIdAsync(
             id,
-            new PartitionKey(id),
             [PatchOperation.Set("/properties", properties)],
             cancellationToken);
     }
 
-    public async Task<(int Deleted, string Cutoff)> DeletePastRacesAsync(CancellationToken cancellationToken = default)
+    public async Task<(int Expired, string Cutoff)> ExpirePastRacesAsync(CancellationToken cancellationToken = default)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
         var queryDefinition = new QueryDefinition(
-            "SELECT VALUE c.id FROM c WHERE c.kind = @kind AND IS_DEFINED(c.properties.date) AND c.properties.date < @today")
+            "SELECT VALUE c.id FROM c WHERE c.kind = @kind AND IS_DEFINED(c.properties.date) AND c.properties.date < @today AND (NOT IS_DEFINED(c.ttl) OR c.ttl != 1)")
             .WithParameter("@kind", FeatureKinds.Race)
             .WithParameter("@today", today);
 
         var ids = await ExecuteQueryAsync<string>(queryDefinition, cancellationToken: cancellationToken);
         var idList = ids.ToList();
 
+        IReadOnlyList<PatchOperation> ttlPatch = [PatchOperation.Set("/ttl", 1)];
+
         foreach (var id in idList)
         {
-            await DeleteDocument(id, new PartitionKey(id), cancellationToken);
+            await TryPatchRaceDocumentByIdAsync(id, ttlPatch, cancellationToken);
         }
 
         return (idList.Count, today);
     }
+
+    public async Task<IReadOnlyList<RaceTtlStatus>> GetRaceTtlStatusAsync(
+        string organizerKey,
+        CancellationToken cancellationToken = default)
+    {
+        var prefix = $"{FeatureKinds.Race}:{organizerKey}-";
+        var queryDefinition = new QueryDefinition(
+            @"SELECT c.id, c.featureId, c.ttl, c.properties.date
+              FROM c
+              WHERE STARTSWITH(c.id, @prefix)")
+            .WithParameter("@prefix", prefix);
+
+        var items = (await ExecuteQueryAsync<RaceTtlStatus>(queryDefinition, cancellationToken: cancellationToken))
+            .OrderBy(item => TryParseRaceDocumentSlotIndex(item.Id, organizerKey, out var index) ? index : int.MaxValue)
+            .ThenBy(item => item.Id, StringComparer.Ordinal)
+            .ToList();
+
+        return items;
+    }
+
+    private async Task<bool> TryPatchRaceDocumentByIdAsync(
+        string id,
+        IReadOnlyList<PatchOperation> operations,
+        CancellationToken cancellationToken)
+    {
+        var target = await GetRacePatchTargetAsync(id, cancellationToken);
+        if (target is null)
+            return false;
+
+        try
+        {
+            await PatchDocument(id, BuildRacePartitionKey(target.X, target.Y), operations, cancellationToken);
+            return true;
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
+
+    private async Task<RacePatchTarget?> GetRacePatchTargetAsync(string id, CancellationToken cancellationToken)
+    {
+        var queryDefinition = new QueryDefinition(
+            "SELECT c.id, c.x, c.y FROM c WHERE c.id = @id")
+            .WithParameter("@id", id);
+
+        return (await ExecuteQueryAsync<RacePatchTarget>(queryDefinition, cancellationToken: cancellationToken))
+            .FirstOrDefault();
+    }
+
+    private static PartitionKey BuildRacePartitionKey(int x, int y)
+        => new PartitionKeyBuilder().Add((double)x).Add((double)y).Build();
 }

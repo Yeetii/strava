@@ -350,12 +350,12 @@ public class RaceOrganizerClient(Container container, ILoggerFactory loggerFacto
         var pk = new PartitionKey(organizerKey);
         var ops = new List<PatchOperation>
         {
-            PatchOperation.Set("/lastAssembledUtc", DateTime.UtcNow.ToString("o")),
+            PatchOperation.Add("/lastAssembledUtc", DateTime.UtcNow.ToString("o")),
         };
         if (maxSlotIndex.HasValue)
-            ops.Add(PatchOperation.Set("/lastMaxSlotIndex", maxSlotIndex.Value));
+            ops.Add(PatchOperation.Add("/lastMaxSlotIndex", maxSlotIndex.Value));
         if (assemblyHashes is not null)
-            ops.Add(PatchOperation.Set("/assemblyHashes", assemblyHashes));
+            ops.Add(PatchOperation.Add("/assemblyHashes", assemblyHashes));
         await _container.PatchItemAsync<RaceOrganizerDocument>(
             organizerKey, pk, ops, cancellationToken: cancellationToken);
     }
