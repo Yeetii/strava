@@ -31,7 +31,7 @@ internal sealed class UtmbScraper(ILogger logger) : IRaceScraper
         if (gpxUrls.Count == 0)
         {
             logger.LogWarning("UTMB: no GPX links found on race page {Url}", job.UtmbUrl);
-            return null;
+            return new RaceScraperResult([]);
         }
 
         var routes = new List<ScrapedRoute>();
@@ -42,7 +42,7 @@ internal sealed class UtmbScraper(ILogger logger) : IRaceScraper
                 routes.Add(route);
         }
 
-        return routes.Count > 0 ? new RaceScraperResult(routes) : null;
+        return new RaceScraperResult(routes);
     }
 
     private async Task<ScrapedRoute?> TryFetchGpxRouteAsync(

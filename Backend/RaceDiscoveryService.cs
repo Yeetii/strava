@@ -2,6 +2,8 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Services;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace Backend;
@@ -47,7 +49,6 @@ public class RaceDiscoveryService(ServiceBusClient serviceBusClient, RaceOrganiz
             .Select((key, i) =>
             {
                 var message = BuildScrapeServiceBusMessage(new ScrapeRaceMessage(key, isUrgent));
-                message.ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 5);
                 return message;
             })
             .ToList();
@@ -64,8 +65,14 @@ public class RaceDiscoveryService(ServiceBusClient serviceBusClient, RaceOrganiz
         return new ServiceBusMessage(body)
         {
             ContentType = "application/json",
-            MessageId = $"scrape:{message.OrganizerKey}:{Guid.NewGuid()}"
+            MessageId = BuildScrapeMessageId(message.OrganizerKey)
         };
+    }
+
+    private static string BuildScrapeMessageId(string organizerKey)
+    {
+        var organizerHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(organizerKey))).ToLowerInvariant();
+        return $"scrape:{organizerHash}:{Guid.NewGuid():N}";
     }
 
     public async Task EnqueueDiscoveryMessageAsync(

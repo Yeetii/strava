@@ -49,7 +49,7 @@ internal sealed class ItraScraper(ILogger logger) : IRaceScraper
                 GpxSource: GpxSourceKind.Itra));
         }
 
-        return routes.Count > 0 ? new RaceScraperResult(routes) : null;
+        return new RaceScraperResult(routes);
     }
 
     private static bool IsTraceItraUrl(Uri url)
