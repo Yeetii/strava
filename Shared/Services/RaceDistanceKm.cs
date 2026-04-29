@@ -9,7 +9,7 @@ namespace Shared.Services;
 public static class RaceDistanceKm
 {
     /// <summary>Default relative tolerance for symmetric “roughly the same ultra” checks (assembly).</summary>
-    public const double DefaultSymmetricRoughFraction = 0.03;
+    public const double DefaultSymmetricRoughFraction = 0.09;
 
     /// <summary>Statute miles to kilometres (same factor as <c>RaceScrapeDiscovery</c> verbose parsing).</summary>
     public const double StatuteMilesToKm = 1.60934;

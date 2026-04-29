@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using BAMCIS.GeoJSON;
 using Azure.Messaging.ServiceBus;
@@ -29,11 +30,31 @@ public partial class AssembleRaceWorker(
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     private readonly ILocationGeocodingService _geocodingService = geocodingService;
+    /// <summary>
+    /// Increment this whenever property-handling or merge logic changes so that stored
+    /// <see cref="RaceSlotHashes"/> from previous assembly runs are automatically invalidated.
+    /// </summary>
+    internal const int AssemblyVersion = 5;
+
     // Discovery source priority (highest → lowest).
     internal static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "lopplistan", "loppkartan"];
 
     // Scraper key priority (highest → lowest).
     internal static readonly string[] ScraperPriority = ["utmb", "itra", "mistral", "bfs"];
+
+    // Matches a leading bare-integer prefix such as "10 " in "10 Sätila Trail 85km".
+    // The negative lookahead prevents stripping when the number IS a distance unit (e.g. "50 km …").
+    private static readonly Regex LeadingNumericPrefix =
+        new(@"^\d+\s+(?!(?:km|mi(?:les?)?)(?:\b|$))", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // Matches a trailing distance token such as " 85km" or " 85 km" at the end of a name.
+    private static readonly Regex TrailingDistanceSuffix =
+        new(@"\s+\d+(?:[.,]\d+)?\s*(?:km|mi(?:les?)?)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // Matches a trailing bare decimal such as " 43.0" or " 43,5" (no unit) at the end of a name.
+    // These are numeric artifacts from discovery sources and are always stripped.
+    private static readonly Regex TrailingBareDecimalSuffix =
+        new(@"\s+\d+[.,]\d+\s*$", RegexOptions.Compiled);
 
     [Function(nameof(AssembleRaceWorker))]
     public async Task Run(
@@ -74,7 +95,8 @@ public partial class AssembleRaceWorker(
                 var newHash = ComputeHashes(race);
                 newHashes[slotKey] = newHash;
 
-                if (doc.AssemblyHashes?.TryGetValue(slotKey, out var prevHash) == true)
+                if (doc.AssemblyHashes?.TryGetValue(slotKey, out var prevHash) == true
+                    && prevHash.AssemblyVersion == AssemblyVersion)
                 {
                     if (prevHash.GeometryHash == newHash.GeometryHash &&
                         prevHash.PropertiesHash == newHash.PropertiesHash)
@@ -117,6 +139,37 @@ public partial class AssembleRaceWorker(
                 logger.LogInformation(
                     "Patch of death (ttl=1): patched {Count} superseded race document(s) for {Key} (slot index > {MaxSlot}). Ids: {Ids}",
                     patchOfDeathIds.Count, organizerKey, maxSlot, idPreview);
+            }
+
+            // Expire slots that disappeared from this assembly run (e.g. a Point merged into a
+            // LineString shifts or removes a slot below maxSlot, which the range-based expiry
+            // above would never reach).
+            // Two complementary detection strategies:
+            //   1. Diff against previous AssemblyHashes (covers steady-state case).
+            //   2. Sweep [0, maxSlot) for holes (covers old organizers with null AssemblyHashes
+            //      and any transition where hashes were stored without a now-merged slot).
+            var newSlotKeys = newHashes.Keys.ToHashSet(StringComparer.Ordinal);
+            var mergedAwayDocIds = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var k in (doc.AssemblyHashes ?? []).Keys)
+                if (!newSlotKeys.Contains(k))
+                    mergedAwayDocIds.Add($"{FeatureKinds.Race}:{k}");
+
+            for (int slot = 0; slot < maxSlot; slot++)
+            {
+                var slotKey = $"{organizerKey}-{slot}";
+                if (!newSlotKeys.Contains(slotKey))
+                    mergedAwayDocIds.Add($"{FeatureKinds.Race}:{slotKey}");
+            }
+
+            var mergedAwayIds = mergedAwayDocIds.ToList();
+            if (mergedAwayIds.Count > 0)
+            {
+                var mergedPatched = await raceCollectionClient.ExpireSpecificSlotsAsync(mergedAwayIds, cancellationToken);
+                if (mergedPatched.Count > 0)
+                    logger.LogInformation(
+                        "Patch of death (merged slots): expired {Count} merged-away race document(s) for {Key}. Ids: {Ids}",
+                        mergedPatched.Count, organizerKey, string.Join(", ", mergedPatched));
             }
 
             // Record assembly metadata (timestamp, max slot, per-slot hashes) on the organizer document.
@@ -294,7 +347,9 @@ public partial class AssembleRaceWorker(
             results.Add(BuildPointFeature(featureId, lng, lat, props));
         }
 
-        return results;
+        var merged = MergeSameDistanceFeatures(results);
+        AppendDistanceToAmbiguousNames(merged);
+        return merged;
     }
 
     // ── Merge helpers ────────────────────────────────────────────────────
@@ -553,15 +608,17 @@ public partial class AssembleRaceWorker(
     {
         var props = new Dictionary<string, dynamic>();
 
-        // Name: discovery is the authoritative source; fall back to route name.
-        var name = discovery.Name ?? route?.Name;
-        if (!string.IsNullOrWhiteSpace(name))
-            props[RaceScrapeDiscovery.PropName] = name;
-
         // Distance: route distance is more specific (per-race), fall back to discovery.
         var distance = route?.Distance ?? discovery.Distance;
         if (!string.IsNullOrWhiteSpace(distance))
             props[RaceScrapeDiscovery.PropDistance] = distance;
+
+        // Name: discovery is the authoritative source; fall back to route name.
+        // Sanitize: strip leading numeric race-number prefixes and any trailing distance label
+        // that contradicts the authoritative distance field.
+        var name = discovery.Name ?? route?.Name;
+        if (!string.IsNullOrWhiteSpace(name))
+            props[RaceScrapeDiscovery.PropName] = SanitizeName(name, distance);
 
         // Elevation gain: discovery first, fall back to route.
         var elevationGain = discovery.ElevationGain ?? route?.ElevationGain;
@@ -651,6 +708,49 @@ public partial class AssembleRaceWorker(
         return string.Compare(candidateRouteDate, discoveryDate, StringComparison.Ordinal) > 0
             ? candidateRouteDate
             : discoveryDate;
+    }
+
+    /// <summary>
+    /// Sanitizes a race name by applying two transforms in order:
+    /// <list type="number">
+    ///   <item>Strip a leading bare-integer prefix that is not itself a distance
+    ///     (e.g. "10 Sätila Trail 85km" → "Sätila Trail 85km").</item>
+    ///   <item>Strip a trailing distance token whose parsed value does <em>not</em> roughly match
+    ///     <paramref name="effectiveDistance"/> — i.e. trust the distance field, not the name
+    ///     (e.g. "Sätila Trail 85km" with distance "21 km" → "Sätila Trail").
+    ///     When name and distance do match the embedded label is left intact.</item>
+    /// </list>
+    /// Returns the original (trimmed) name when sanitization would produce an empty string.
+    /// </summary>
+    internal static string SanitizeName(string name, string? effectiveDistance)
+    {
+        var result = LeadingNumericPrefix.Replace(name.Trim(), string.Empty).Trim();
+
+        // Strip trailing bare decimal numbers unconditionally (e.g. " 43.0").
+        // These are numeric artifacts added by discovery sources — never proper name parts.
+        var bareMatch = TrailingBareDecimalSuffix.Match(result);
+        if (bareMatch.Success)
+        {
+            var stripped = TrailingBareDecimalSuffix.Replace(result, string.Empty).Trim();
+            if (!string.IsNullOrWhiteSpace(stripped))
+                result = stripped;
+        }
+
+        var suffixMatch = TrailingDistanceSuffix.Match(result);
+        if (suffixMatch.Success && !string.IsNullOrWhiteSpace(effectiveDistance))
+        {
+            var embeddedKm = ParseDistanceKm(suffixMatch.Value.Trim());
+            var effectiveKm = ParseDistanceKm(effectiveDistance);
+            if (embeddedKm.HasValue && effectiveKm.HasValue
+                && !DistancesRoughMatchKm(embeddedKm.Value, effectiveKm.Value))
+            {
+                var stripped = TrailingDistanceSuffix.Replace(result, string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(stripped))
+                    result = stripped;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(result) ? name.Trim() : result;
     }
 
     private static List<string> BuildSourceUrls(
@@ -771,6 +871,7 @@ public partial class AssembleRaceWorker(
     internal static RaceSlotHashes ComputeHashes(StoredFeature race)
         => new()
         {
+            AssemblyVersion = AssemblyVersion,
             PropertiesHash = ComputeMd5(SerializeProperties(race.Properties)),
             GeometryHash = ComputeMd5(SerializeGeometry(race.Geometry)),
         };

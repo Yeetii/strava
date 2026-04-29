@@ -87,6 +87,34 @@ public class RaceCollectionClient(Container container, ILoggerFactory loggerFact
     }
 
     /// <summary>
+    /// Sets <c>ttl = 1</c> on specific race documents by their full document IDs.
+    /// Used to expire slots that disappeared (e.g. were merged into another slot) between
+    /// assembly runs — such slots fall below <c>maxSlot</c> so
+    /// <see cref="MarkHigherRaceSlotsExpiredAsync"/> would never reach them.
+    /// Returns the document ids that were patched (empty if none).
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ExpireSpecificSlotsAsync(
+        IEnumerable<string> documentIds,
+        CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<PatchOperation> ttlPatch = [PatchOperation.Set("/ttl", 1)];
+        var expired = new List<string>();
+        foreach (var docId in documentIds)
+        {
+            try
+            {
+                await PatchDocument(docId, new PartitionKey(docId), ttlPatch, cancellationToken);
+                expired.Add(docId);
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                // Already expired or never created — nothing to do.
+            }
+        }
+        return expired;
+    }
+
+    /// <summary>
     /// Patches only the <c>/properties</c> path on an existing race document.
     /// Use this when geometry is unchanged but metadata (name, date, url, …) has been updated.
     /// </summary>

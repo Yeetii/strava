@@ -217,7 +217,7 @@ public class AssembleRaceWorkerTests
                 X = 0,
                 Y = 0,
                 Zoom = 8,
-                Geometry = new LineString(new[] { new Position(0, 0), new Position(1, 1) }),
+                Geometry = new LineString([new Position(0, 0), new Position(1, 1)]),
                 Properties = new Dictionary<string, dynamic> { [RaceScrapeDiscovery.PropDistance] = "163 km" },
             }
         };
@@ -259,7 +259,7 @@ public class AssembleRaceWorkerTests
                 X = 0,
                 Y = 0,
                 Zoom = 8,
-                Geometry = new LineString(new[] { new Position(0, 0), new Position(1, 1) }),
+                Geometry = new LineString([new Position(0, 0), new Position(1, 1)]),
                 Properties = new Dictionary<string, dynamic>
                 {
                     [RaceScrapeDiscovery.PropDistance] = "50 km, 163 km",
@@ -284,7 +284,7 @@ public class AssembleRaceWorkerTests
                 X = 0,
                 Y = 0,
                 Zoom = 8,
-                Geometry = new LineString(new[] { new Position(0, 0), new Position(1.47, 0) }),
+                Geometry = new LineString([new Position(0, 0), new Position(1.47, 0)]),
                 Properties = new Dictionary<string, dynamic>(),
             }
         };
@@ -679,6 +679,77 @@ public class AssembleRaceWorkerTests
 
         Assert.Equal(2, routes.Count);
         Assert.Equal("UTMB Route", routes[0].Route.Name);  // utmb > bfs
+    }
+
+    // ── SanitizeName ─────────────────────────────────────────────────────
+
+    [Theory]
+    // Leading numeric prefix stripped, mismatching trailing distance stripped.
+    [InlineData("10 Sätila Trail 85km", "21 km", "Sätila Trail")]
+    // Only leading prefix stripped (no trailing distance in name).
+    [InlineData("10 Sätila Trail", "21 km", "Sätila Trail")]
+    // Trailing distance matches → kept as-is.
+    [InlineData("Sätila Trail 21km", "21 km", "Sätila Trail 21km")]
+    // Trailing distance within 3% of effective distance → kept.
+    [InlineData("Sätila Trail 21km", "21.5 km", "Sätila Trail 21km")]
+    // Mismatching trailing distance stripped (no leading prefix).
+    [InlineData("Sätila Trail 85km", "21 km", "Sätila Trail")]
+    // No effective distance → only leading prefix stripped.
+    [InlineData("7 Trail Race", null, "Trail Race")]
+    // Leading number that IS a distance unit (e.g. "50 km Race") → not stripped.
+    [InlineData("50 km Race", "50 km", "50 km Race")]
+    // Already clean name → unchanged.
+    [InlineData("Grand Trail Race", "50 km", "Grand Trail Race")]
+    // Stripping would leave empty string → original name returned.
+    [InlineData("85km", "21 km", "85km")]
+    // Trailing bare decimal (no unit) → always stripped regardless of distance match.
+    [InlineData("Sätila Trail 43.0", "43 km", "Sätila Trail")]
+    [InlineData("Sätila Trail 43.0", "21 km", "Sätila Trail")]
+    [InlineData("Sätila Trail 43.0", "43.0", "Sätila Trail")]
+    // Leading prefix + trailing bare decimal → both stripped.
+    [InlineData("10 Sätila Trail 43.0", "43.0", "Sätila Trail")]
+    // Trailing bare decimal with comma as decimal separator → stripped.
+    [InlineData("Trail Race 43,5", "43 km", "Trail Race")]
+    // Stripping bare decimal alone would leave empty → original name returned.
+    [InlineData("43.0", "43 km", "43.0")]
+    public void SanitizeName_ReturnsExpected(string name, string? effectiveDistance, string expected)
+    {
+        var result = AssembleRaceWorker.SanitizeName(name, effectiveDistance);
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void AssembleRaces_NameWithMismatchedDistanceAndNumericPrefix_IsSanitized()
+    {
+        // Full-stack test: discovery name "10 Sätila Trail 85km", route distance "21 km".
+        // The assembled race should have a clean name "Sätila Trail" and distance "21 km".
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "satila.se",
+            Url = "https://satila.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:00:00Z",
+                        Name = "10 Sätila Trail 85km",
+                        Date = "2026-09-05",
+                        Latitude = 57.5,
+                        Longitude = 12.3,
+                        Distance = "21 km",
+                        Country = "SE",
+                    }
+                ]
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Single(races);
+        Assert.Equal("Sätila Trail", races[0].Properties["name"].ToString());
+        Assert.Equal("21 km", races[0].Properties["distance"].ToString());
     }
 
     // ── PickBestDate ─────────────────────────────────────────────────────
@@ -1433,6 +1504,400 @@ public class AssembleRaceWorkerTests
                 }
             }
         };
+
+    // ── AppendDistanceToAmbiguousNames ────────────────────────────────────
+
+    [Fact]
+    public void AppendDistanceToAmbiguousNames_SameNameTwoDistances_AppendsBoth()
+    {
+        var r1 = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropName] = "Grand Trail",
+                [RaceScrapeDiscovery.PropDistance] = "50 km",
+            },
+        };
+        var r2 = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropName] = "Grand Trail",
+                [RaceScrapeDiscovery.PropDistance] = "21 km",
+            },
+        };
+
+        AssembleRaceWorker.AppendDistanceToAmbiguousNames([r1, r2]);
+
+        Assert.Equal("Grand Trail (50 km)", r1.Properties[RaceScrapeDiscovery.PropName].ToString());
+        Assert.Equal("Grand Trail (21 km)", r2.Properties[RaceScrapeDiscovery.PropName].ToString());
+    }
+
+    [Fact]
+    public void AppendDistanceToAmbiguousNames_UniqueNames_AreNotChanged()
+    {
+        var r1 = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropName] = "Ultra 50",
+                [RaceScrapeDiscovery.PropDistance] = "50 km",
+            },
+        };
+        var r2 = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropName] = "Half Trail",
+                [RaceScrapeDiscovery.PropDistance] = "21 km",
+            },
+        };
+
+        AssembleRaceWorker.AppendDistanceToAmbiguousNames([r1, r2]);
+
+        Assert.Equal("Ultra 50", r1.Properties[RaceScrapeDiscovery.PropName].ToString());
+        Assert.Equal("Half Trail", r2.Properties[RaceScrapeDiscovery.PropName].ToString());
+    }
+
+    [Fact]
+    public void AssembleRaces_MultiDistanceSameName_AppendDistanceToEach()
+    {
+        // Discovery has two separate entries at 50 km and 21 km with the same event name.
+        // Both routes are assembled to Points; their names should be disambiguated.
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "ambiguous.se",
+            Url = "https://ambiguous.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-18T21:00:00Z",
+                        Name = "Grand Trail",
+                        Date = "2026-09-01",
+                        Latitude = 59.0,
+                        Longitude = 18.0,
+                        Distance = "50 km, 21 km",
+                        Country = "SE",
+                    }
+                ]
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Equal(2, races.Count);
+        var names = races.Select(r => r.Properties["name"].ToString()).OrderBy(n => n).ToList();
+        Assert.Contains("Grand Trail (21 km)", names);
+        Assert.Contains("Grand Trail (50 km)", names);
+    }
+
+    // ── MergeSameDistanceFeatures ─────────────────────────────────────────
+
+    [Fact]
+    public void MergeSameDistanceFeatures_PointSameDistanceAsLine_IsMergedAndDropped()
+    {
+        var line = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new LineString([new Position(0, 0), new Position(1, 1)]),
+            Properties = new Dictionary<string, dynamic> { [RaceScrapeDiscovery.PropDistance] = "50 km" },
+        };
+        var point = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic> { [RaceScrapeDiscovery.PropDistance] = "51 km" },
+        };
+
+        var filtered = AssembleRaceWorker.MergeSameDistanceFeatures([line, point]);
+
+        Assert.Single(filtered);
+        Assert.IsType<LineString>(filtered[0].Geometry);
+    }
+
+    [Fact]
+    public void MergeSameDistanceFeatures_PointDifferentDistanceFromLine_IsKept()
+    {
+        var line = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new LineString([new Position(0, 0), new Position(1, 1)]),
+            Properties = new Dictionary<string, dynamic> { [RaceScrapeDiscovery.PropDistance] = "50 km" },
+        };
+        var point = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic> { [RaceScrapeDiscovery.PropDistance] = "100 km" },
+        };
+
+        var filtered = AssembleRaceWorker.MergeSameDistanceFeatures([line, point]);
+
+        Assert.Equal(2, filtered.Count);
+    }
+
+    [Fact]
+    public void MergeSameDistanceFeatures_MissingPropsFromPointAreCopiedToLine()
+    {
+        // LineString has distance but no elevationGain or itraPoints.
+        // Point has elevationGain and itraPoints (e.g. from an itra discovery entry).
+        // After merging the Point should be gone and the LineString should carry both.
+        var line = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new LineString([new Position(0, 0), new Position(1, 1)]),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "50 km",
+                [RaceScrapeDiscovery.PropName] = "Trail Race",
+                [RaceScrapeDiscovery.PropSources] = new List<string> { "https://bfs.se/race" },
+            },
+        };
+        var point = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "51 km",
+                [RaceScrapeDiscovery.PropElevationGain] = 3000,
+                [RaceScrapeDiscovery.PropItraPoints] = 4,
+                [RaceScrapeDiscovery.PropSources] = new List<string> { "https://itra.run/race", "https://bfs.se/race" },
+            },
+        };
+
+        var filtered = AssembleRaceWorker.MergeSameDistanceFeatures([line, point]);
+
+        Assert.Single(filtered);
+        Assert.IsType<LineString>(filtered[0].Geometry);
+        Assert.Equal(3000, (int)filtered[0].Properties[RaceScrapeDiscovery.PropElevationGain]);
+        Assert.Equal(4, (int)filtered[0].Properties[RaceScrapeDiscovery.PropItraPoints]);
+        // Distance label from the LineString must not be overwritten.
+        Assert.Equal("50 km", filtered[0].Properties[RaceScrapeDiscovery.PropDistance].ToString());
+        // Source lists should be unioned (itra URL added, bfs URL deduplicated).
+        var sources = (List<string>)filtered[0].Properties[RaceScrapeDiscovery.PropSources];
+        Assert.Contains("https://bfs.se/race", sources);
+        Assert.Contains("https://itra.run/race", sources);
+        Assert.Equal(2, sources.Count);
+    }
+
+    [Fact]
+    public void MergeSameDistanceFeatures_DiscoveryPropsOnPointOverrideBfsPropsOnLine()
+    {
+        // LineString was built primarily from bfs scraper data and carries bfs-sourced name/elevationGain.
+        // Point was built from an itra discovery entry at the same distance and carries a more
+        // authoritative name and elevationGain. Discovery props from the Point should win.
+        var line = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new LineString([new Position(0, 0), new Position(1, 1)]),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "50 km",
+                [RaceScrapeDiscovery.PropName] = "BFS Route Name",  // lower-priority scraper name
+                [RaceScrapeDiscovery.PropElevationGain] = 500,      // low-quality scraper elevation
+            },
+        };
+        var point = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(0, 0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "51 km",
+                [RaceScrapeDiscovery.PropName] = "ITRA Race Name",  // higher-priority discovery name
+                [RaceScrapeDiscovery.PropElevationGain] = 3000,     // itra discovery elevation
+                [RaceScrapeDiscovery.PropItraPoints] = 4,
+            },
+        };
+
+        var filtered = AssembleRaceWorker.MergeSameDistanceFeatures([line, point]);
+
+        Assert.Single(filtered);
+        Assert.IsType<LineString>(filtered[0].Geometry);
+        // Discovery (point) name and elevationGain override the bfs (line) values.
+        Assert.Equal("ITRA Race Name", filtered[0].Properties[RaceScrapeDiscovery.PropName].ToString());
+        Assert.Equal(3000, (int)filtered[0].Properties[RaceScrapeDiscovery.PropElevationGain]);
+        Assert.Equal(4, (int)filtered[0].Properties[RaceScrapeDiscovery.PropItraPoints]);
+        // Distance label from the LineString must not be overwritten.
+        Assert.Equal("50 km", filtered[0].Properties[RaceScrapeDiscovery.PropDistance].ToString());
+    }
+
+    [Fact]
+    public void MergeSameDistanceFeatures_TwoPointsSameName_SecondIsAbsorbed()
+    {
+        // Two points at ~50 km with the SAME name → same race, different measurement → merge.
+        var first = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(18.0, 59.0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "50 km",
+                [RaceScrapeDiscovery.PropName] = "Great Trail Race",
+                [RaceScrapeDiscovery.PropSources] = new List<string> { "https://primary.se/race" },
+            },
+        };
+        var second = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(18.1, 59.1)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "51 km",
+                [RaceScrapeDiscovery.PropName] = "Great Trail Race",   // same race → eligible for merge
+                [RaceScrapeDiscovery.PropElevationGain] = 1200,        // fills missing field
+                [RaceScrapeDiscovery.PropSources] = new List<string> { "https://secondary.se/race", "https://primary.se/race" },
+            },
+        };
+
+        var merged = AssembleRaceWorker.MergeSameDistanceFeatures([first, second]);
+
+        Assert.Single(merged);
+        Assert.IsType<Point>(merged[0].Geometry);
+        Assert.Equal("Great Trail Race", merged[0].Properties[RaceScrapeDiscovery.PropName].ToString());
+        // Missing elevationGain filled in from second.
+        Assert.Equal(1200, (int)merged[0].Properties[RaceScrapeDiscovery.PropElevationGain]);
+        // Distance label from the first point must not be overwritten.
+        Assert.Equal("50 km", merged[0].Properties[RaceScrapeDiscovery.PropDistance].ToString());
+        // Source lists are unioned (secondary URL added, primary URL deduplicated).
+        var sources = (List<string>)merged[0].Properties[RaceScrapeDiscovery.PropSources];
+        Assert.Contains("https://primary.se/race", sources);
+        Assert.Contains("https://secondary.se/race", sources);
+        Assert.Equal(2, sources.Count);
+    }
+
+    [Fact]
+    public void MergeSameDistanceFeatures_TwoPointsOneNameless_SecondIsAbsorbed()
+    {
+        // First point has no name (e.g. a bare scraper point); second is a named discovery entry.
+        // They should merge so the surviving point inherits the discovery name.
+        var first = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(18.0, 59.0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "50 km",
+            },
+        };
+        var second = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(18.1, 59.1)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "51 km",
+                [RaceScrapeDiscovery.PropName] = "Named Discovery Race",
+                [RaceScrapeDiscovery.PropElevationGain] = 900,
+            },
+        };
+
+        var merged = AssembleRaceWorker.MergeSameDistanceFeatures([first, second]);
+
+        Assert.Single(merged);
+        Assert.Equal("Named Discovery Race", merged[0].Properties[RaceScrapeDiscovery.PropName].ToString());
+        Assert.Equal(900, (int)merged[0].Properties[RaceScrapeDiscovery.PropElevationGain]);
+    }
+
+    [Fact]
+    public void MergeSameDistanceFeatures_TwoPointsDifferentNames_AreNotMerged()
+    {
+        // Two distinct races at ~100 km and ~101 km with different names must not be merged.
+        var first = new StoredFeature
+        {
+            Id = "race:t-0", FeatureId = "t-0", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(6.0, 45.0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "100 km",
+                [RaceScrapeDiscovery.PropName] = "UTMB Ultra 100",
+            },
+        };
+        var second = new StoredFeature
+        {
+            Id = "race:t-1", FeatureId = "t-1", Kind = "race", X = 0, Y = 0, Zoom = 8,
+            Geometry = new Point(new Position(6.0, 45.0)),
+            Properties = new Dictionary<string, dynamic>
+            {
+                [RaceScrapeDiscovery.PropDistance] = "101 km",
+                [RaceScrapeDiscovery.PropName] = "UTMB CCC",  // different race!
+            },
+        };
+
+        var merged = AssembleRaceWorker.MergeSameDistanceFeatures([first, second]);
+
+        Assert.Equal(2, merged.Count);
+    }
+
+    [Fact]
+    public void AssembleRaces_LineStringAndPointAtSameDistance_PointIsDropped()
+    {
+        // Two scraper routes at ~50 km: one with coords (→ LineString), one without (→ Point).
+        // After assembly the Point should be dropped in favour of the LineString.
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "mergetest.se",
+            Url = "https://mergetest.se/",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["loppkartan"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-01-01T00:00:00Z",
+                        Name = "Merge Test Race",
+                        Date = "2026-09-01",
+                        Latitude = 59.0,
+                        Longitude = 18.0,
+                        Distance = "50 km",
+                        Country = "SE",
+                    }
+                ]
+            },
+            Scrapers = new Dictionary<string, ScraperOutput>
+            {
+                ["bfs"] = new ScraperOutput
+                {
+                    ScrapedAtUtc = "2026-09-01T00:00:00Z",
+                    Routes =
+                    [
+                        // Route with coordinates → will become a LineString.
+                        new ScrapedRouteOutput
+                        {
+                            Name = "Merge Test 50 km",
+                            Distance = "50 km",
+                            Date = "2026-09-01",
+                            Coordinates = [[18.0, 59.0], [18.1, 59.1], [18.2, 59.2]],
+                        },
+                        // Route without coordinates at same distance → should NOT emit a Point.
+                        new ScrapedRouteOutput
+                        {
+                            Name = "Merge Test 51 km",
+                            Distance = "51 km",
+                            Date = "2026-09-01",
+                        },
+                    ]
+                }
+            }
+        };
+
+        var races = AssembleRaceWorker.AssembleRaces(doc);
+
+        Assert.Single(races);
+        Assert.IsType<LineString>(races[0].Geometry);
+    }
 
     private sealed class TestLocationGeocodingService : ILocationGeocodingService
     {

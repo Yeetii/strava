@@ -37,6 +37,11 @@ public class RaceOrganizerDocument : IDocument
 /// </summary>
 public class RaceSlotHashes
 {
+    /// <summary>
+    /// Assembly logic version when this hash was computed. Mismatches force re-assembly
+    /// even when the underlying data hasn't changed.
+    /// </summary>
+    public int AssemblyVersion { get; set; }
     public string? PropertiesHash { get; set; }
     public string? GeometryHash { get; set; }
 }

@@ -448,4 +448,205 @@ partial class AssembleRaceWorker
         var sub = CountRedundantMeasurementSingletons(canonicalRouteKm, flatDiscoveries);
         return Math.Max(1, raw - sub);
     }
+
+    /// <summary>
+    /// Two-pass merge over the assembled features:
+    /// <list type="number">
+    ///   <item>Points whose distance matches a <see cref="LineString"/> are absorbed into that
+    ///   line. Point properties <em>override</em> line properties (discovery metadata wins over
+    ///   scraper-sourced values).</item>
+    ///   <item>Remaining same-distance <see cref="Point"/> pairs are merged: the first (highest-
+    ///   priority) point survives; later ones <em>fill in missing</em> properties only.</item>
+    /// </list>
+    /// <see cref="RaceScrapeDiscovery.PropSources"/> lists are always unioned.
+    /// The distance label is never overwritten on the surviving feature.
+    /// </summary>
+    internal static List<StoredFeature> MergeSameDistanceFeatures(List<StoredFeature> results)
+    {
+        if (results.Count <= 1) return results;
+
+        var toRemove = new HashSet<string>(StringComparer.Ordinal);
+
+        // Pass 1: absorb points into same-distance linestrings.
+        var lines = results.Where(r => r.Geometry is LineString).ToList();
+        if (lines.Count > 0)
+        {
+            foreach (var point in results.Where(r => r.Geometry is Point))
+            {
+                var pointKms = GetFeatureDistancesKm(point);
+                if (pointKms.Count == 0) continue;
+
+                StoredFeature? bestLine = null;
+                double bestDelta = double.MaxValue;
+
+                foreach (var line in lines)
+                {
+                    foreach (var pkm in pointKms)
+                    {
+                        if (!AssemblyAlreadyCoversRoughDistanceKm(pkm, [line])) continue;
+
+                        var lineKms = GetFeatureDistancesKm(line);
+                        var delta = lineKms.Count > 0
+                            ? lineKms.Min(lkm => Math.Abs(lkm - pkm))
+                            : ApproximateGreatCircleLineLengthKm((LineString)line.Geometry) is { } approx
+                                ? Math.Abs(approx - pkm)
+                                : 0;
+
+                        if (delta < bestDelta)
+                        {
+                            bestDelta = delta;
+                            bestLine = line;
+                        }
+                    }
+                }
+
+                if (bestLine is null) continue;
+
+                MergeProperties(bestLine.Properties, point.Properties, overwrite: true);
+                toRemove.Add(point.FeatureId!);
+            }
+        }
+
+        // Pass 2: merge same-distance points into the first surviving point.
+        var remainingPoints = results
+            .Where(r => r.Geometry is Point && !toRemove.Contains(r.FeatureId!))
+            .ToList();
+
+        if (remainingPoints.Count > 1)
+        {
+            for (int i = 0; i < remainingPoints.Count; i++)
+            {
+                var survivor = remainingPoints[i];
+                if (toRemove.Contains(survivor.FeatureId!)) continue;
+
+                var survivorKms = GetFeatureDistancesKm(survivor);
+                if (survivorKms.Count == 0) continue;
+
+                for (int j = i + 1; j < remainingPoints.Count; j++)
+                {
+                    var candidate = remainingPoints[j];
+                    if (toRemove.Contains(candidate.FeatureId!)) continue;
+
+                    var candidateKms = GetFeatureDistancesKm(candidate);
+                    if (candidateKms.Count == 0) continue;
+
+                    if (survivorKms.Any(skm => candidateKms.Any(ckm => DistancesRoughMatchKm(skm, ckm)))
+                        && NamesCompatibleForMerge(survivor.Properties, candidate.Properties))
+                    {
+                        MergeProperties(survivor.Properties, candidate.Properties, overwrite: false);
+                        toRemove.Add(candidate.FeatureId!);
+                    }
+                }
+            }
+        }
+
+        return toRemove.Count == 0
+            ? results
+            : results.Where(r => !toRemove.Contains(r.FeatureId!)).ToList();
+    }
+
+    private static List<double> GetFeatureDistancesKm(StoredFeature feature)
+    {
+        if (!feature.Properties.TryGetValue(RaceScrapeDiscovery.PropDistance, out var raw)) return [];
+        var s = Convert.ToString(raw, Inv);
+        return string.IsNullOrWhiteSpace(s) ? [] : ParseDistanceList(s);
+    }
+
+    /// <summary>
+    /// Two features are name-compatible for point-to-point merging when at least one has no name,
+    /// or both share the same normalised name. Prevents merging genuinely distinct same-distance
+    /// races (e.g. UTMB Ultra 100 vs UTMB CCC both at ~100 km) into a single feature.
+    /// </summary>
+    private static bool NamesCompatibleForMerge(
+        IDictionary<string, dynamic> aProps,
+        IDictionary<string, dynamic> bProps)
+    {
+        var aName = aProps.TryGetValue(RaceScrapeDiscovery.PropName, out var an)
+            ? NormalizeNameKey(Convert.ToString(an, Inv)) : null;
+        var bName = bProps.TryGetValue(RaceScrapeDiscovery.PropName, out var bn)
+            ? NormalizeNameKey(Convert.ToString(bn, Inv)) : null;
+
+        // At least one side is nameless → compatible (the other fills the gap).
+        if (aName is null || bName is null) return true;
+
+        return string.Equals(aName, bName, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Merges properties from <paramref name="sourceProps"/> into <paramref name="targetProps"/>.
+    /// When <paramref name="overwrite"/> is <see langword="true"/>, source values replace existing
+    /// target values (used when absorbing a higher-priority discovery point into a scraper line).
+    /// When <see langword="false"/>, only missing keys are filled (used for point-to-point merging
+    /// where the surviving point already carries the best available metadata).
+    /// <see cref="RaceScrapeDiscovery.PropSources"/> lists are always unioned.
+    /// The distance label is never overwritten on the target.
+    /// </summary>
+    private static void MergeProperties(
+        IDictionary<string, dynamic> targetProps,
+        IDictionary<string, dynamic> sourceProps,
+        bool overwrite)
+    {
+        foreach (var (key, value) in sourceProps)
+        {
+            if (key == RaceScrapeDiscovery.PropDistance)
+                continue;
+
+            if (key == RaceScrapeDiscovery.PropSources)
+            {
+                if (value is not List<string> sourceSources) continue;
+                if (targetProps.TryGetValue(key, out var existing) && existing is List<string> targetSources)
+                {
+                    foreach (var url in sourceSources)
+                        if (!targetSources.Contains(url, StringComparer.OrdinalIgnoreCase))
+                            targetSources.Add(url);
+                }
+                else
+                {
+                    targetProps[key] = new List<string>(sourceSources);
+                }
+                continue;
+            }
+
+            if (overwrite || !targetProps.ContainsKey(key))
+                targetProps[key] = value;
+        }
+    }
+
+    /// <summary>
+    /// When two or more assembled races share the same name, appends the distance label to each
+    /// ambiguous name so users can tell them apart (e.g. "Grand Trail" → "Grand Trail (50 km)").
+    /// Races without a name, or without a distance, are left unchanged.
+    /// </summary>
+    internal static void AppendDistanceToAmbiguousNames(List<StoredFeature> results)
+    {
+        if (results.Count <= 1) return;
+
+        // Group by normalised name.
+        var byName = new Dictionary<string, List<StoredFeature>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in results)
+        {
+            if (!r.Properties.TryGetValue(RaceScrapeDiscovery.PropName, out var nameRaw)) continue;
+            var name = Convert.ToString(nameRaw, Inv)?.Trim();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            if (!byName.TryGetValue(name, out List<StoredFeature>? list))
+                byName[name] = list = [];
+            list.Add(r);
+        }
+
+        foreach (var (_, group) in byName)
+        {
+            if (group.Count <= 1) continue;
+
+            foreach (var r in group)
+            {
+                if (!r.Properties.TryGetValue(RaceScrapeDiscovery.PropDistance, out var distRaw)) continue;
+                var dist = Convert.ToString(distRaw, Inv)?.Trim();
+                if (string.IsNullOrWhiteSpace(dist)) continue;
+
+                var currentName = Convert.ToString(r.Properties[RaceScrapeDiscovery.PropName], Inv)!;
+                r.Properties[RaceScrapeDiscovery.PropName] = $"{currentName} ({dist})";
+            }
+        }
+    }
 }
