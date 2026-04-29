@@ -30,7 +30,7 @@ public class Activity : IDocument
 
     public Feature ToFeature()
     {
-        var properties = new Dictionary<string, dynamic>
+        var properties = new Dictionary<string, object?>
         {
             ["id"] = Id,
             ["userId"] = UserId,

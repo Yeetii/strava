@@ -70,14 +70,24 @@ try
         case PmtilesCommandKind.FilterOutdoor:
         {
             var utilityService = scope.ServiceProvider.GetRequiredService<PmtilesUtilityService>();
-            await utilityService.FilterOutdoorMapAsync(command.InputPath!, command.OutputPath!, CancellationToken.None);
+            await utilityService.FilterOutdoorMapAsync(
+                command.InputPath!,
+                command.OutputPath!,
+                command.MaximumZoom,
+                command.ExcludeAllAttributes,
+                CancellationToken.None);
             return 0;
         }
 
         case PmtilesCommandKind.FilterAdminBoundaries:
         {
             var utilityService = scope.ServiceProvider.GetRequiredService<PmtilesUtilityService>();
-            await utilityService.FilterAdminBoundariesMapAsync(command.InputPath!, command.OutputPath!, CancellationToken.None);
+            await utilityService.FilterAdminBoundariesMapAsync(
+                command.InputPath!,
+                command.OutputPath!,
+                command.MaximumZoom,
+                command.ExcludeAllAttributes,
+                CancellationToken.None);
             return 0;
         }
 

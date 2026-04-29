@@ -122,7 +122,9 @@ public class PmtilesUtilityService
         string inputPmtilesPath,
         string outputPmtilesPath,
         IEnumerable<string>? includeLayers = null,
-        IEnumerable<string>? excludeLayers = null)
+        IEnumerable<string>? excludeLayers = null,
+        int? maximumZoom = null,
+        bool excludeAllAttributes = false)
     {
         var includeList = includeLayers?.Where(static layer => !string.IsNullOrWhiteSpace(layer)).ToArray();
         var excludeList = excludeLayers?.Where(static layer => !string.IsNullOrWhiteSpace(layer)).ToArray();
@@ -132,7 +134,22 @@ public class PmtilesUtilityService
             throw new ArgumentException("Specify either include layers or exclude layers for tile-join, not both.");
         }
 
-        var arguments = new List<string> { "-o", outputPmtilesPath };
+        var arguments = new List<string>
+        {
+            "-o", outputPmtilesPath,
+            "-pg",
+        };
+
+        if (maximumZoom is not null)
+        {
+            arguments.Add("-z");
+            arguments.Add(maximumZoom.Value.ToString());
+        }
+
+        if (excludeAllAttributes)
+        {
+            arguments.Add("-X");
+        }
 
         if (includeList is { Length: > 0 })
         {
@@ -155,17 +172,37 @@ public class PmtilesUtilityService
         return arguments;
     }
 
-    public static IReadOnlyList<string> GetOutdoorMapFilterArguments(string inputPmtilesPath, string outputPmtilesPath)
+    public static IReadOnlyList<string> GetOutdoorMapFilterArguments(
+        string inputPmtilesPath,
+        string outputPmtilesPath,
+        int? maximumZoom = null,
+        bool excludeAllAttributes = false)
     {
-        var arguments = GetTileJoinArguments(inputPmtilesPath, outputPmtilesPath, includeLayers: OutdoorMapIncludedLayers).ToList();
+        var arguments = GetTileJoinArguments(
+                inputPmtilesPath,
+                outputPmtilesPath,
+                includeLayers: OutdoorMapIncludedLayers,
+                maximumZoom: maximumZoom,
+                excludeAllAttributes: excludeAllAttributes)
+            .ToList();
         arguments.Insert(arguments.Count - 1, "-j");
         arguments.Insert(arguments.Count - 1, OutdoorPlacesFilterJson);
         return arguments;
     }
 
-    public static IReadOnlyList<string> GetAdminBoundariesFilterArguments(string inputPmtilesPath, string outputPmtilesPath)
+    public static IReadOnlyList<string> GetAdminBoundariesFilterArguments(
+        string inputPmtilesPath,
+        string outputPmtilesPath,
+        int? maximumZoom = null,
+        bool excludeAllAttributes = false)
     {
-        var arguments = GetTileJoinArguments(inputPmtilesPath, outputPmtilesPath, includeLayers: ["boundaries"]).ToList();
+        var arguments = GetTileJoinArguments(
+                inputPmtilesPath,
+                outputPmtilesPath,
+                includeLayers: ["boundaries"],
+                maximumZoom: maximumZoom,
+                excludeAllAttributes: excludeAllAttributes)
+            .ToList();
         arguments.Insert(arguments.Count - 1, "-j");
         arguments.Insert(arguments.Count - 1, AdminBoundariesFilterJson);
         return arguments;
@@ -225,22 +262,32 @@ public class PmtilesUtilityService
         return ParseTippecanoeFeatureCount(output);
     }
 
-    public async Task FilterOutdoorMapAsync(string inputPmtilesPath, string outputPmtilesPath, CancellationToken cancellationToken)
+    public async Task FilterOutdoorMapAsync(
+        string inputPmtilesPath,
+        string outputPmtilesPath,
+        int? maximumZoom,
+        bool excludeAllAttributes,
+        CancellationToken cancellationToken)
     {
         await FilterPmtilesAsync(
             inputPmtilesPath,
             outputPmtilesPath,
-            GetOutdoorMapFilterArguments,
+            (input, output) => GetOutdoorMapFilterArguments(input, output, maximumZoom, excludeAllAttributes),
             "outdoor",
             cancellationToken);
     }
 
-    public async Task FilterAdminBoundariesMapAsync(string inputPmtilesPath, string outputPmtilesPath, CancellationToken cancellationToken)
+    public async Task FilterAdminBoundariesMapAsync(
+        string inputPmtilesPath,
+        string outputPmtilesPath,
+        int? maximumZoom,
+        bool excludeAllAttributes,
+        CancellationToken cancellationToken)
     {
         await FilterPmtilesAsync(
             inputPmtilesPath,
             outputPmtilesPath,
-            GetAdminBoundariesFilterArguments,
+            (input, output) => GetAdminBoundariesFilterArguments(input, output, maximumZoom, excludeAllAttributes),
             "admin-boundary",
             cancellationToken);
     }
@@ -326,6 +373,13 @@ public class PmtilesUtilityService
         var output = stdout.ToString() + stderr;
         if (process.ExitCode != 0)
         {
+            if (process.ExitCode == 137)
+            {
+                throw new InvalidOperationException(
+                    $"{toolName} failed with exit code 137, which usually indicates the process was killed by the OS due to memory pressure. " +
+                    $"This job now disables tilestats generation for filtered outputs to reduce memory usage, but the source tileset may still be too large for the current machine: {output}");
+            }
+
             throw new InvalidOperationException($"{toolName} failed with exit code {process.ExitCode}: {output}");
         }
 

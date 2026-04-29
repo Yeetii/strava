@@ -14,25 +14,25 @@ public class Athlete
         public int ResourceState { get; set; }
 
         [JsonPropertyName("firstname")]
-        public string Firstname { get; set; }
+        public required string Firstname { get; set; }
 
         [JsonPropertyName("lastname")]
-        public string Lastname { get; set; }
+        public required string Lastname { get; set; }
 
         [JsonPropertyName("bio")]
-        public string Bio { get; set; }
+        public string? Bio { get; set; }
 
         [JsonPropertyName("city")]
-        public string City { get; set; }
+        public string? City { get; set; }
 
         [JsonPropertyName("state")]
-        public string State { get; set; }
+        public string? State { get; set; }
 
         [JsonPropertyName("country")]
-        public string Country { get; set; }
+        public string? Country { get; set; }
 
         [JsonPropertyName("sex")]
-        public string Sex { get; set; }
+        public string? Sex { get; set; }
 
         [JsonPropertyName("premium")]
         public bool Premium { get; set; }
@@ -53,14 +53,14 @@ public class Athlete
         public double? Weight { get; set; }
 
         [JsonPropertyName("profile_medium")]
-        public string ProfileMedium { get; set; }
+        public string? ProfileMedium { get; set; }
 
         [JsonPropertyName("profile")]
-        public string Profile { get; set; }
+        public string? Profile { get; set; }
 
         [JsonPropertyName("friend")]
-        public object Friend { get; set; }
+        public object? Friend { get; set; }
 
         [JsonPropertyName("follower")]
-        public object Follower { get; set; }
+        public object? Follower { get; set; }
     }

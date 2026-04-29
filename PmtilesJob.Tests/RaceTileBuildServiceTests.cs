@@ -18,6 +18,22 @@ public class PmtilesUtilityServiceTests
         Assert.Equal(PmtilesCommandKind.FilterOutdoor, command.Command);
         Assert.Equal("/tmp/world.pmtiles", command.InputPath);
         Assert.Equal("/tmp/outdoors.pmtiles", command.OutputPath);
+        Assert.Null(command.MaximumZoom);
+        Assert.False(command.ExcludeAllAttributes);
+    }
+
+    [Fact]
+    public void Parse_AllowsFilterOutdoorPerformanceOptions()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(
+            ["filter-outdoor", "--input", "/tmp/world.pmtiles", "--output", "/tmp/outdoors.pmtiles", "--max-zoom", "8", "--exclude-all-attributes"],
+            configuration);
+
+        Assert.Equal(PmtilesCommandKind.FilterOutdoor, command.Command);
+        Assert.Equal(8, command.MaximumZoom);
+        Assert.True(command.ExcludeAllAttributes);
     }
 
     [Fact]
@@ -181,6 +197,7 @@ public class PmtilesUtilityServiceTests
 
         Assert.Equal("-o", args[0]);
         Assert.Equal(output, args[1]);
+        Assert.Contains("-pg", args);
         Assert.Contains("-l", args);
         Assert.Contains("-j", args);
         foreach (var layer in PmtilesUtilityService.OutdoorMapIncludedLayers)
@@ -207,6 +224,20 @@ public class PmtilesUtilityServiceTests
         }
 
         Assert.Equal(input, args[^1]);
+    }
+
+    [Fact]
+    public void GetOutdoorMapFilterArguments_AllowsMaximumZoomAndAttributeStripping()
+    {
+        var args = PmtilesUtilityService.GetOutdoorMapFilterArguments(
+            "/tmp/world.pmtiles",
+            "/tmp/outdoors.pmtiles",
+            maximumZoom: 8,
+            excludeAllAttributes: true);
+
+        Assert.Contains("-z", args);
+        Assert.Contains("8", args);
+        Assert.Contains("-X", args);
     }
 
     [Fact]
