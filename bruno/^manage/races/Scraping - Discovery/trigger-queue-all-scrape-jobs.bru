@@ -5,17 +5,11 @@ meta {
 }
 
 post {
-  url: {{backendUrl}}/admin/functions/QueueAllScrapeJobs
-  body: json
+  url: {{backendUrl}}/api/manage/queue-all-scrape-jobs
+  body: none
   auth: none
 }
 
-headers {
-  Content-Type: application/json
-}
-
-body:json {
-  {
-    "input": null
-  }
+params:query {
+  ~code: {{functionKey}}
 }

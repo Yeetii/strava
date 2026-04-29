@@ -245,6 +245,21 @@ public static partial class RaceHtmlScraper
         return (cleanHtml, visibleText);
     }
 
+    // Extracts same-domain <script src="..."> URLs from an HTML page (for JS bundle scanning).
+    public static IReadOnlyCollection<Uri> ExtractScriptSrcLinksFromHtml(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        return [.. ScriptSrcRegex().Matches(html)
+            .Select(m => m.Groups["src"].Value)
+            .Where(src => !string.IsNullOrEmpty(src))
+            .Select(src => Uri.TryCreate(pageUrl, src, out var uri) ? uri : null)
+            .Where(uri => uri is { Scheme: "http" or "https" })
+            .Cast<Uri>()
+            .Distinct()];
+    }
+
     // Extracts .gpx URLs from an HTML page.
     // Looks in href attributes and also in JSON-escaped script content.
     public static IReadOnlyCollection<Uri> ExtractGpxUrlsFromHtml(string html, Uri pageUrl)
@@ -478,6 +493,9 @@ public static partial class RaceHtmlScraper
     [GeneratedRegex("href\\s*=\\s*[\"'](?<href>[^\"']+)[\"']", RegexOptions.IgnoreCase)]
     private static partial Regex HrefRegex();
 
+    [GeneratedRegex(@"<script\b[^>]*\bsrc\s*=\s*[""'](?<src>[^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex ScriptSrcRegex();
+
     // Matches both normal URLs (https://...) and JSON-escaped URLs (https:\/\/...).
     [GeneratedRegex("(?<url>https?:\\\\?/\\\\?/[^\"'\\s<>]+?\\.gpx(?:\\?[^\"'\\s<>]*)?)", RegexOptions.IgnoreCase)]
     private static partial Regex AbsoluteGpxRegex();
@@ -521,6 +539,13 @@ public static partial class RaceHtmlScraper
     // Matches common image extensions: jpg, jpeg, webp, png, gif, svg.
     [GeneratedRegex(@"(?<url>https?://[^\s""'<>\)]+\.(?:jpe?g|webp|png|gif|svg)(?:\.webp)?)", RegexOptions.IgnoreCase)]
     private static partial Regex AnyImageUrlRegex();
+
+    // Matches the first image URL from an Elementor background slideshow gallery embedded in data-settings JSON.
+    // Elementor HTML-encodes the JSON: &quot;background_slideshow_gallery&quot;:[{&quot;id&quot;:n,&quot;url&quot;:&quot;https:\/\/...\/image.jpg&quot;},...]
+    // After decoding &quot;→" and \/→/, this regex matches the decoded form.
+    // The id field is optional (some sites omit it).
+    [GeneratedRegex(@"""background_slideshow_gallery""\s*:\s*\[\s*\{[^}]*?""url""\s*:\s*""(?<url>[^""]+)""", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex ElementorSlideshowGalleryRegex();
 
     // Matches background-image: url('...') in CSS/style attrs — captures the URL (absolute or relative).
     // Uses [^;]{0,80} to avoid crossing HTML attribute boundaries on entity-decoded pages.

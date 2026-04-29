@@ -697,6 +697,30 @@ public static partial class RaceHtmlScraper
     }
 
     /// <summary>
+    /// Extracts the first image from an Elementor background slideshow gallery.
+    /// Elementor stores these as HTML-entity-encoded JSON in <c>data-settings</c> attributes:
+    /// <c>data-settings="{...&amp;quot;background_slideshow_gallery&amp;quot;:[{...&amp;quot;url&amp;quot;:&amp;quot;https:\/\/..\/image.jpg&amp;quot;}...]}"</c>.
+    /// Returns the URL of the first slide image, or null if no slideshow gallery is found.
+    /// </summary>
+    public static Uri? ExtractElementorSlideshowImage(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return null;
+
+        // Decode HTML entities and JSON-escaped slashes so the gallery JSON becomes parseable.
+        var decoded = html.Replace("&quot;", "\"").Replace("&amp;", "&").Replace("\\/", "/");
+        foreach (Match m in ElementorSlideshowGalleryRegex().Matches(decoded))
+        {
+            var rawUrl = m.Groups["url"].Value;
+            if (Uri.TryCreate(pageUrl, rawUrl, out var uri) && uri.Scheme is "http" or "https"
+                && !IsTrackingPixel(uri))
+                return uri;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Returns the most prominent image URL from an HTML page.
     /// Prefers large images (by explicit width/height), Open Graph meta images,
     /// and images whose src/alt/class hints at a hero/banner. Skips tiny icons, trackers, and data URIs.
@@ -705,6 +729,12 @@ public static partial class RaceHtmlScraper
     {
         if (string.IsNullOrWhiteSpace(html))
             return null;
+
+        // Elementor background slideshow galleries are the intentional hero images for the page section.
+        // Extract them directly from the data-settings JSON before falling back to scored heuristics.
+        var slideshowImage = ExtractElementorSlideshowImage(html, pageUrl);
+        if (slideshowImage is not null)
+            return slideshowImage;
 
         var decoded = html.Replace("&quot;", "\"").Replace("&amp;", "&").Replace("&#039;", "'").Replace("\\/", "/");
         var ogCandidate = ExtractOgImageCandidate(html, pageUrl);
@@ -757,12 +787,16 @@ public static partial class RaceHtmlScraper
     {
         foreach (Match m in CssBackgroundImageRegex().Matches(html))
         {
-            var rawUrl = m.Groups["url"].Value.Trim();
+            // Decode HTML entities (e.g. style="background-image: url(&quot;/img.jpg&quot;)")
+            // and strip any surrounding quotes left after decoding.
+            var rawUrl = m.Groups["url"].Value.Trim()
+                .Replace("&quot;", "\"").Replace("&amp;", "&")
+                .Trim('"', '\'');
             if (!HasSupportedImageExtension(rawUrl, pageUrl))
                 continue;
 
             var position = (double)m.Index / Math.Max(html.Length, 1);
-            var bonus = 5 + GetBackgroundContextBonus(html, m.Index) + GetElementorContextBonus(GetBackgroundSelectorContext(html, m.Index));
+            var bonus = 5 + GetBackgroundContextBonus(html, m.Index);
             if (TryCreateScoredCandidate(pageUrl, rawUrl, position, bonus, out var candidate))
                 yield return candidate;
         }
@@ -779,8 +813,7 @@ public static partial class RaceHtmlScraper
 
             var classValue = ImgClassRegex().Match(tag).Groups["class"].Value;
             var bonus = (HasBackgroundClassHint(classValue) ? 4 : 0)
-                + GetImageDimensionScoreAdjustment(tag)
-                + GetElementorContextBonus(tag + " " + GetSurroundingContext(html, m.Index, 400, 0));
+                + GetImageDimensionScoreAdjustment(tag);
             var position = (double)m.Index / Math.Max(html.Length, 1);
             if (TryCreateScoredCandidate(pageUrl, imageUrl, position, bonus, out var candidate))
                 yield return candidate;
@@ -880,16 +913,7 @@ public static partial class RaceHtmlScraper
     private static int GetGenericImageContextBonus(string html, int matchIndex)
     {
         var context = GetSurroundingContext(html, matchIndex, 240, 240);
-        var bonus = GetHeroContextBonus(context) + GetElementorContextBonus(context);
-
-        if (context.Contains("background_slideshow_gallery", StringComparison.OrdinalIgnoreCase)
-            || context.Contains("background_background\":\"slideshow", StringComparison.OrdinalIgnoreCase)
-            || context.Contains("elementor-background-slideshow", StringComparison.OrdinalIgnoreCase))
-        {
-            bonus += 10;
-        }
-
-        return bonus;
+        return GetHeroContextBonus(context);
     }
 
     private static int GetClassBasedBackgroundBonus(string html, int matchIndex)
@@ -902,31 +926,11 @@ public static partial class RaceHtmlScraper
         return HasBackgroundClassHint(classValue ?? string.Empty) ? 4 : 0;
     }
 
-    private static int GetElementorContextBonus(string context)
-    {
-        if (string.IsNullOrWhiteSpace(context))
-            return 0;
-
-        var bonus = 0;
-        if (context.Contains("elementor", StringComparison.OrdinalIgnoreCase))
-            bonus += 3;
-
-        if (context.Contains("elementor-widget-image", StringComparison.OrdinalIgnoreCase)
-            || context.Contains("data-elementor", StringComparison.OrdinalIgnoreCase)
-            || context.Contains("elementor-section", StringComparison.OrdinalIgnoreCase))
-        {
-            bonus += 2;
-        }
-
-        return bonus;
-    }
-
     private static int GetHeroContextBonus(string context)
     {
         if (context.Contains("kb-bg-slide", StringComparison.OrdinalIgnoreCase)
             || context.Contains("kt-row-has-bg", StringComparison.OrdinalIgnoreCase)
             || context.Contains("kb-row-layout-wrap", StringComparison.OrdinalIgnoreCase)
-            || context.Contains("elementor-background-slideshow", StringComparison.OrdinalIgnoreCase)
             || context.Contains("hero", StringComparison.OrdinalIgnoreCase)
             || context.Contains("banner", StringComparison.OrdinalIgnoreCase))
         {

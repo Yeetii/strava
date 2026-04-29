@@ -39,7 +39,7 @@ internal sealed class BfsScraper(ILogger logger)
         var deadlineUtc = DateTimeOffset.UtcNow.Add(CrawlBudget);
         var bfsResult = await FindGpxRoutesAsync(httpClient, startUrl, scrapeUrls, deadlineUtc, cancellationToken);
         var (imageUrl, logoUrl, startPageDate, startPageElevation, startFee, currency, startPageRaceType, _, _) =
-            ExtractCoursePageMetadata(bfsResult.StartPageHtml ?? string.Empty, startUrl, bfsResult.CssContent);
+            ExtractCoursePageMetadata(bfsResult.StartPageHtml ?? string.Empty, startUrl, bfsResult.SupplementaryContent);
         var extractedName = RaceHtmlScraper.ExtractEventName(startUrl, bfsResult.StartPageHtml,
             [.. bfsResult.CoursePages.Select(cp => (cp.Url, cp.Html))]);
 
@@ -193,7 +193,7 @@ internal sealed class BfsScraper(ILogger logger)
         IReadOnlyList<(ParsedGpxRoute Route, Uri GpxUrl, Uri SourcePageUrl, string? SourceHtml)> Routes,
         string? StartPageHtml,
         IReadOnlyList<CoursePage> CoursePages,
-        string? CssContent,
+        string? SupplementaryContent,
         IReadOnlyList<string> RaceDayMapSlugs);
 
     private record CoursePage(Uri Url, string Html, string? Distance, bool IsContentOnly = false);
@@ -201,10 +201,10 @@ internal sealed class BfsScraper(ILogger logger)
     private static (Uri? ImageUrl, Uri? LogoUrl, string? Date, double? ElevationGain, string? StartFee, string? Currency, string? RaceType, string? Name, string? Distance) ExtractCoursePageMetadata(
         string html,
         Uri pageUrl,
-        string? cssContent,
+        string? supplementaryContent,
         string? startPageHtml = null)
     {
-        var combined = cssContent is not null ? html + "\n" + cssContent : html;
+        var combined = supplementaryContent is not null ? html + "\n" + supplementaryContent : html;
         var imageUrl = RaceHtmlScraper.ExtractProminentImage(combined, pageUrl);
         var logoUrl = RaceHtmlScraper.ExtractLogo(html, pageUrl);
         var date = RaceHtmlScraper.ExtractDate(html);
@@ -273,6 +273,8 @@ internal sealed class BfsScraper(ILogger logger)
         var driveFolderProbes = new Dictionary<string, (string Html, Uri PageUrl)>(StringComparer.OrdinalIgnoreCase);
         // Dropbox shared folders — downloaded as zip after BFS; GPX entries stored for inline fetch.
         var dropboxFolderProbes = new Dictionary<string, (string Html, Uri PageUrl)>(StringComparer.OrdinalIgnoreCase);
+        // Same-domain JS bundles to probe post-crawl for embedded GPX paths (SPAs like Vite/React).
+        var scriptBundleProbes = new Dictionary<string, (string Html, Uri PageUrl)>(StringComparer.OrdinalIgnoreCase);
         var inlineGpxByUrl = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // RaceDayMap slugs found in iframe embeds on any visited page.
         var raceDayMapSlugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -378,6 +380,13 @@ internal sealed class BfsScraper(ILogger logger)
                         externalGpxProbes.TryAdd(kmLink.AbsoluteUri, (html, pageUrl));
                 }
 
+                // Collect same-domain JS bundles to probe for embedded GPX paths (SPAs).
+                foreach (var scriptUrl in RaceHtmlScraper.ExtractScriptSrcLinksFromHtml(html, pageUrl))
+                {
+                    if (IsSameDomain(scriptUrl, startUrl))
+                        scriptBundleProbes.TryAdd(scriptUrl.AbsoluteUri, (html, pageUrl));
+                }
+
                 if (depth < MaxDepth)
                 {
                     foreach (var courseLink in RaceHtmlScraper.ExtractCourseLinksFromHtml(html, pageUrl))
@@ -393,8 +402,8 @@ internal sealed class BfsScraper(ILogger logger)
             currentLevel = nextLevel;
         }
 
-        logger.LogDebug("BFS crawl done. Visited {Pages} pages, found {Gpx} GPX URLs, {ExtProbes} external probes",
-            visitedPages.Count, gpxUrlToPage.Count, externalGpxProbes.Count);
+        logger.LogDebug("BFS crawl done. Visited {Pages} pages, found {Gpx} GPX URLs, {ExtProbes} external probes, {Scripts} JS bundles",
+            visitedPages.Count, gpxUrlToPage.Count, externalGpxProbes.Count, scriptBundleProbes.Count);
 
         // Probe external "GPX"-labelled links: fetch the page and scrape it for GPX files.
         // Any GPX found is attributed to the internal page that linked to the external site.
@@ -425,6 +434,23 @@ internal sealed class BfsScraper(ILogger logger)
         }
 
         logger.LogDebug("BFS: external probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
+
+        // Probe same-domain JS bundles for embedded GPX paths (e.g. Vite/React SPAs that render links via JS).
+        // Bundle content is also accumulated for image extraction (background images etc. in JS-rendered sites).
+        var scriptBundleContent = new List<string>();
+        foreach (var (scriptUrl, (sourceHtml, sourcePageUrl)) in scriptBundleProbes.Take(5))
+        {
+            if (!HasRemainingBudget(deadlineUtc)) break;
+            logger.LogDebug("BFS: probing JS bundle for GPX links: {Url}", scriptUrl);
+            var scriptContent = await TryFetchStringAsync(httpClient, new Uri(scriptUrl), deadlineUtc, cancellationToken);
+            if (scriptContent is null) continue;
+            foreach (var gpxUri in RaceHtmlScraper.ExtractGpxUrlsFromHtml(scriptContent, sourcePageUrl))
+                gpxUrlToPage.TryAdd(gpxUri.AbsoluteUri, (sourceHtml, sourcePageUrl));
+            scriptBundleContent.Add(scriptContent);
+        }
+
+        if (scriptBundleProbes.Count > 0)
+            logger.LogDebug("BFS: JS bundle probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
 
         // Probe Google Drive folder links: recursively crawl subfolders (skipping ignored names)
         // and collect download URLs. Attributed to the internal page that linked to the folder.
@@ -463,8 +489,9 @@ internal sealed class BfsScraper(ILogger logger)
         if (dropboxFolderProbes.Count > 0)
             logger.LogDebug("BFS: Dropbox folder probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
 
-        // Fetch external CSS stylesheets from the start page so background-image URLs are found by image extraction.
-        string? cssContent = null;
+        // Fetch external CSS stylesheets and same-domain JS bundles from the start page so background-image
+        // URLs are found by image extraction (CSS) and SPA-embedded asset URLs are also scanned (JS bundles).
+        string? supplementaryContent = null;
         if (startPageHtml is not null)
         {
             var cssUrls = RaceHtmlScraper.ExtractStylesheetUrls(startPageHtml, startUrl);
@@ -473,13 +500,17 @@ internal sealed class BfsScraper(ILogger logger)
             {
                 var cssTasks = cssUrls.Take(5).Select(u => TryFetchStringAsync(httpClient, u, deadlineUtc, cancellationToken));
                 var cssResults = await Task.WhenAll(cssTasks);
-                cssContent = string.Join("\n", cssResults.Where(c => c is not null));
-                logger.LogDebug("BFS: CSS fetched, total {Len} chars", cssContent.Length);
+                supplementaryContent = string.Join("\n", cssResults.Where(c => c is not null));
+                logger.LogDebug("BFS: CSS fetched, total {Len} chars", supplementaryContent.Length);;
             }
         }
 
+        // Append JS bundle content so image extraction can find background images in SPA bundles.
+        if (scriptBundleContent.Count > 0)
+            supplementaryContent = (supplementaryContent is not null ? supplementaryContent + "\n" : "") + string.Join("\n", scriptBundleContent);
+
         if (gpxUrlToPage.Count == 0)
-            return new BfsResult([], startPageHtml, coursePages, cssContent, [.. raceDayMapSlugs]);
+            return new BfsResult([], startPageHtml, coursePages, supplementaryContent, [.. raceDayMapSlugs]);
 
         // Fetch all GPX URLs concurrently.
         var gpxTasks = gpxUrlToPage.Keys.Select(url =>
@@ -513,6 +544,8 @@ internal sealed class BfsScraper(ILogger logger)
             })
             // Deduplicate by filename: if two URLs resolve to the same file name (case-insensitive),
             // keep only the first. Uses the last non-empty path segment, or the Drive file ID for uc URLs.
+            // For Dropbox folder entry URIs the distinguishing identifier is the fragment (e.g. #100M.gpx),
+            // not the path (which is the shared folder ID and identical for all entries).
             .GroupBy(r =>
             {
                 var uri = r.gpxUrl;
@@ -522,6 +555,8 @@ internal sealed class BfsScraper(ILogger logger)
                     var id = System.Web.HttpUtility.ParseQueryString(uri.Query)["id"];
                     return (id ?? uri.AbsoluteUri).ToLowerInvariant();
                 }
+                if (DropboxShareParser.IsDropboxSharedFolder(uri) && !string.IsNullOrEmpty(uri.Fragment))
+                    return uri.Fragment.ToLowerInvariant();
                 var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
                 return (segments.LastOrDefault() ?? uri.AbsoluteUri).ToLowerInvariant();
             })
@@ -534,7 +569,7 @@ internal sealed class BfsScraper(ILogger logger)
             visitedPages.Count,
             parsedCount,
             routes.Count);
-        return new BfsResult(routes, startPageHtml, coursePages, cssContent, [.. raceDayMapSlugs]);
+        return new BfsResult(routes, startPageHtml, coursePages, supplementaryContent, [.. raceDayMapSlugs]);
     }
 
     private static CoursePage? DetectCoursePage(Uri pageUrl, string html, int depth)
