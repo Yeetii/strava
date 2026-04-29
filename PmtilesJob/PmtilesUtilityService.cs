@@ -394,50 +394,34 @@ public class PmtilesUtilityService
         CancellationToken cancellationToken)
     {
         EnsureBinaryExists(_tileJoinBinary, AppConfig.TileJoinBinaryPath, "tile-join");
-        EnsureBinaryExists(_pmtilesBinary, "pmtiles", "pmtiles");
 
         if (!IsValidPmtilesFile(inputPmtilesPath))
         {
             throw new InvalidOperationException("Input PMTiles file did not pass validation.");
         }
 
-        var temporaryMbtilesPath = GetTileJoinTemporaryMbtilesPath(outputPmtilesPath);
+        if (File.Exists(outputPmtilesPath))
+            File.Delete(outputPmtilesPath);
 
-        try
+        // tile-join writes directly to PMTiles when the output path ends in .pmtiles,
+        // avoiding the memory-intensive intermediate SQLite MBTiles file.
+        await RunProcessAsync(
+            _tileJoinBinary,
+            getFilterArguments(inputPmtilesPath, outputPmtilesPath),
+            "tile-join",
+            cancellationToken);
+
+        if (!IsValidPmtilesFile(outputPmtilesPath))
         {
-            await RunProcessAsync(
-                _tileJoinBinary,
-                getFilterArguments(inputPmtilesPath, temporaryMbtilesPath),
-                "tile-join",
-                cancellationToken);
-
-            if (File.Exists(outputPmtilesPath))
-                File.Delete(outputPmtilesPath);
-
-            await RunProcessAsync(
-                _pmtilesBinary,
-                ["convert", temporaryMbtilesPath, outputPmtilesPath],
-                "pmtiles",
-                cancellationToken);
-
-            if (!IsValidPmtilesFile(outputPmtilesPath))
-            {
-                throw new InvalidOperationException("Filtered PMTiles file did not pass validation.");
-            }
-
-            _logger.LogInformation(
-                "Filtered {FilterName} PMTiles from {InputPath} to {OutputPath} using binaries {TileJoinBinary} and {PmtilesBinary}.",
-                filterName,
-                inputPmtilesPath,
-                outputPmtilesPath,
-                _tileJoinBinary,
-                _pmtilesBinary);
+            throw new InvalidOperationException("Filtered PMTiles file did not pass validation.");
         }
-        finally
-        {
-            if (File.Exists(temporaryMbtilesPath))
-                File.Delete(temporaryMbtilesPath);
-        }
+
+        _logger.LogInformation(
+            "Filtered {FilterName} PMTiles from {InputPath} to {OutputPath} using binary {TileJoinBinary}.",
+            filterName,
+            inputPmtilesPath,
+            outputPmtilesPath,
+            _tileJoinBinary);
     }
 
     private static void EnsureBinaryExists(string binaryPath, string configurationKey, string toolName)

@@ -1,1 +1,5 @@
 *.pmtiles
+*.pmtiles-journal
+*.mbtiles
+*.mbtiles-journal
+*.geojson

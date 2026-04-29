@@ -5,6 +5,7 @@ namespace PmtilesJob;
 public enum PmtilesCommandKind
 {
     BuildRaceTiles,
+    BuildRaceTilesFromOrganizers,
     BuildAdminAreas,
     FilterOutdoor,
     FilterAdminBoundaries,
@@ -88,6 +89,11 @@ public static class PmtilesCommandLine
                 PmtilesCommandKind.BuildAdminAreas,
                 AdminLevels: adminLevels,
                 OutputPath: outputPath);
+        }
+
+        if (args.Length > 0 && string.Equals(args[0], "build-race-tiles-from-organizers", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTilesFromOrganizers);
         }
 
         var forceBuild = HasOption(args, "--Force") || configuration.GetValue<bool>("Force");

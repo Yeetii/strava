@@ -27,7 +27,9 @@ var builder = Host.CreateDefaultBuilder(args)
         var configuration = context.Configuration;
         services.AddSingleton<PmtilesUtilityService>();
 
-        if (command.Command is PmtilesCommandKind.BuildRaceTiles or PmtilesCommandKind.BuildAdminAreas)
+        if (command.Command is PmtilesCommandKind.BuildRaceTiles
+            or PmtilesCommandKind.BuildRaceTilesFromOrganizers
+            or PmtilesCommandKind.BuildAdminAreas)
         {
             var cosmosConnection = configuration.GetConnectionString("CosmosDBConnection")
                 ?? configuration["CosmosDBConnection"]
@@ -43,6 +45,16 @@ var builder = Host.CreateDefaultBuilder(args)
 
                 services.AddSingleton(new BlobServiceClient(blobConnection));
                 services.AddSingleton<RacePmtilesBuildService>();
+            }
+
+            if (command.Command == PmtilesCommandKind.BuildRaceTilesFromOrganizers)
+            {
+                var blobConnection = configuration.GetConnectionString("BlobStorageConnection")
+                    ?? configuration["BlobStorageConnection"]
+                    ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
+
+                services.AddSingleton(new BlobServiceClient(blobConnection));
+                services.AddSingleton<RaceFromOrganizersPmtilesBuildService>();
             }
 
             if (command.Command == PmtilesCommandKind.BuildAdminAreas)
@@ -95,6 +107,13 @@ try
         {
             var job = scope.ServiceProvider.GetRequiredService<AdminAreaPmtilesBuildService>();
             await job.BuildAdminAreasAsync(command.OutputPath!, command.AdminLevels ?? AdminAreaPmtilesBuildService.DefaultAdminLevels, CancellationToken.None);
+            return 0;
+        }
+
+        case PmtilesCommandKind.BuildRaceTilesFromOrganizers:
+        {
+            var job = scope.ServiceProvider.GetRequiredService<RaceFromOrganizersPmtilesBuildService>();
+            await job.BuildAsync(CancellationToken.None);
             return 0;
         }
 
