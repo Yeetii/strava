@@ -141,6 +141,9 @@ public class ScrapeRaceWorker(
         int fullWrites = 0;
         int propsPatched = 0;
         int unchanged = 0;
+        var fullWriteScrapers = new List<string>();
+        var patchedScrapers = new List<string>();
+        var unchangedScrapers = new List<string>();
         var scrapedAtUtc = DateTime.UtcNow.ToString("o");
         var scraperHashes = doc.ScraperHashes is not null
             ? new Dictionary<string, ScraperOutputHashes>(doc.ScraperHashes, StringComparer.Ordinal)
@@ -173,6 +176,7 @@ public class ScrapeRaceWorker(
                 if (prevHashes.RoutesHash == newHashes.RoutesHash && prevHashes.PropertiesHash == newHashes.PropertiesHash)
                 {
                     unchanged++;
+                    unchangedScrapers.Add(scraperKey);
                     continue;
                 }
 
@@ -180,6 +184,7 @@ public class ScrapeRaceWorker(
                 {
                     await _organizerClient.PatchScraperPropertiesAsync(organizerKey, scraperKey, output, cancellationToken);
                     propsPatched++;
+                    patchedScrapers.Add(scraperKey);
                     scrapersRun++;
                     _logger.LogInformation("Scraper/{Scraper}: patched properties for {Key}", scraperKey, organizerKey);
                     continue;
@@ -188,6 +193,7 @@ public class ScrapeRaceWorker(
 
             await _organizerClient.WriteScraperOutputAsync(organizerKey, scraperKey, output, cancellationToken);
             fullWrites++;
+            fullWriteScrapers.Add(scraperKey);
             scrapersRun++;
             _logger.LogInformation("Scraper/{Scraper}: wrote {RouteCount} routes for {Key}",
                 scraperKey, output.Routes?.Count ?? 0, organizerKey);
@@ -220,11 +226,13 @@ public class ScrapeRaceWorker(
                     if (prevHashes.RoutesHash == newHashes.RoutesHash && prevHashes.PropertiesHash == newHashes.PropertiesHash)
                     {
                         unchanged++;
+                        unchangedScrapers.Add("bfs");
                     }
                     else if (prevHashes.RoutesHash == newHashes.RoutesHash)
                     {
                         await _organizerClient.PatchScraperPropertiesAsync(organizerKey, "bfs", output, cancellationToken);
                         propsPatched++;
+                        patchedScrapers.Add("bfs");
                         scrapersRun++;
                         _logger.LogInformation("Scraper/bfs: patched properties for {Key}", organizerKey);
                     }
@@ -232,6 +240,7 @@ public class ScrapeRaceWorker(
                     {
                         await _organizerClient.WriteScraperOutputAsync(organizerKey, "bfs", output, cancellationToken);
                         fullWrites++;
+                        fullWriteScrapers.Add("bfs");
                         scrapersRun++;
                         _logger.LogInformation("Scraper/bfs: wrote {RouteCount} routes for {Key}",
                             output.Routes?.Count ?? 0, organizerKey);
@@ -241,6 +250,7 @@ public class ScrapeRaceWorker(
                 {
                     await _organizerClient.WriteScraperOutputAsync(organizerKey, "bfs", output, cancellationToken);
                     fullWrites++;
+                    fullWriteScrapers.Add("bfs");
                     scrapersRun++;
                     _logger.LogInformation("Scraper/bfs: wrote {RouteCount} routes for {Key}",
                         output.Routes?.Count ?? 0, organizerKey);
@@ -254,16 +264,28 @@ public class ScrapeRaceWorker(
         await _organizerClient.PatchLastScrapedAsync(organizerKey, scrapedAtUtc, scraperHashes, cancellationToken);
 
         _logger.LogInformation(
-            "Scrape writes for {Key}: {FullWrites} full writes, {PropsPatched} property-only patches, {Unchanged} unchanged/skipped",
-            organizerKey, fullWrites, propsPatched, unchanged);
+            "Scrape writes for {Key}: {FullWrites} full writes [{FullWriteScrapers}], {PropsPatched} property-only patches [{PatchedScrapers}], {Unchanged} unchanged/skipped [{UnchangedScrapers}]",
+            organizerKey,
+            fullWrites,
+            string.Join(", ", fullWriteScrapers),
+            propsPatched,
+            string.Join(", ", patchedScrapers),
+            unchanged,
+            string.Join(", ", unchangedScrapers));
     }
 
     // ── Settlement helpers ───────────────────────────────────────────────
 
     private async Task TryCompleteAsync(ServiceBusMessageActions actions, ServiceBusReceivedMessage message, CancellationToken ct)
     {
+        if (!ServiceBusCosmosRetryHelper.HasRealLockToken(message))
+        {
+            _logger.LogDebug("Skipping message completion for {MessageId}: no real peek-lock token", message.MessageId);
+            return;
+        }
+
         try { await actions.CompleteMessageAsync(message, ct); }
-        catch (Exception ex) { _logger.LogDebug(ex, "Could not complete message (manual trigger?)"); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Could not complete message {MessageId}", message.MessageId); }
     }
 
     internal static ScrapeRaceMessage DeserializeMessage(ServiceBusReceivedMessage message)

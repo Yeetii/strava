@@ -87,6 +87,8 @@ internal sealed class BfsScraper(ILogger logger)
                     bfsResult.StartPageHtml, r.Route.Coordinates,
                     GpxParser.CalculateDistanceKm(r.Route.Coordinates), r.GpxUrl, startUrl))];
 
+            var preDedupRouteCount = routes.Count;
+
             // Deduplicate: if two routes share the same name and GPX distances within 10%, keep the first.
             var seen = new List<(string Name, double DistanceKm)>();
             var deduped = new List<ScrapedRoute>(routes.Count);
@@ -107,6 +109,15 @@ internal sealed class BfsScraper(ILogger logger)
                 deduped.Add(r);
             }
             routes = deduped;
+
+            if (routes.Count != preDedupRouteCount)
+            {
+                logger.LogInformation(
+                    "BFS: {Url} — collapsed {Before} GPX-backed route candidates to {After} final routes after name/distance dedupe",
+                    startUrl,
+                    preDedupRouteCount,
+                    routes.Count);
+            }
         }
         else
         {
@@ -517,8 +528,12 @@ internal sealed class BfsScraper(ILogger logger)
             .Select(g => g.First())
             .ToList();
 
-        logger.LogInformation("BFS: {Url} — visited {Pages} pages, {GpxFound} GPX parsed, {Routes} routes",
-            startUrl, visitedPages.Count, parsedCount, routes.Count);
+        logger.LogInformation(
+            "BFS: {Url} — visited {Pages} pages, {GpxFound} GPX parsed, {Routes} unique GPX-backed route candidates",
+            startUrl,
+            visitedPages.Count,
+            parsedCount,
+            routes.Count);
         return new BfsResult(routes, startPageHtml, coursePages, cssContent, [.. raceDayMapSlugs]);
     }
 
