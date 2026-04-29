@@ -22,6 +22,11 @@ public class RaceOrganizerDocument : IDocument
     /// <summary>Per-scraper output. Keys: "utmb", "itra", "bfs", "tracedetrail".</summary>
     public Dictionary<string, ScraperOutput>? Scrapers { get; set; }
 
+    public string? LastScrapedUtc { get; set; }
+
+    /// <summary>Per-scraper content hashes used to avoid rewriting unchanged GPX payloads.</summary>
+    public Dictionary<string, ScraperOutputHashes>? ScraperHashes { get; set; }
+
     public string? LastAssembledUtc { get; set; }
 
     /// <summary>Highest race slot index from the last successful assembly run. Avoids a fan-out query when expiring superseded slots.</summary>
@@ -44,6 +49,12 @@ public class RaceSlotHashes
     public int AssemblyVersion { get; set; }
     public string? PropertiesHash { get; set; }
     public string? GeometryHash { get; set; }
+}
+
+public class ScraperOutputHashes
+{
+    public string? PropertiesHash { get; set; }
+    public string? RoutesHash { get; set; }
 }
 
 /// <summary>

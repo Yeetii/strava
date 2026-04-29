@@ -5,12 +5,14 @@ using Shared.Services;
 namespace Backend.Scrapers;
 
 // Performs a breadth-first search from a race website URL to discover GPX route files.
-// Depth 3 / max 30 pages.
+// Depth 3 / bounded by a total crawl budget.
 internal sealed class BfsScraper(ILogger logger)
 {
     private readonly RaceDayMapScraper _raceDayMap = new(logger);
     private const int MaxDepth = 3;
-    private const int MaxPages = 30;
+    private static readonly TimeSpan CrawlBudget = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MaxSingleRequestTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MinRemainingBudget = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// BFS-scrapes each URL in <paramref name="urls"/> and merges the results.
@@ -22,7 +24,7 @@ internal sealed class BfsScraper(ILogger logger)
     {
         if (urls.Count == 0) return null;
 
-        var filtered = urls.Where(u => !IsBareSocialDomain(u) && !IsBlockedDomain(u)).ToList();
+        var filtered = urls.Where(u => !OrganizerUrlRules.IsBareSocialDomain(u) && !OrganizerUrlRules.IsBlockedMediaDomain(u)).ToList();
         if (filtered.Count == 0) return null;
 
         return await ScrapeSiteAsync(filtered[0], filtered, httpClient, cancellationToken);
@@ -34,7 +36,8 @@ internal sealed class BfsScraper(ILogger logger)
         HttpClient httpClient,
         CancellationToken cancellationToken)
     {
-        var bfsResult = await FindGpxRoutesAsync(httpClient, startUrl, scrapeUrls, cancellationToken);
+        var deadlineUtc = DateTimeOffset.UtcNow.Add(CrawlBudget);
+        var bfsResult = await FindGpxRoutesAsync(httpClient, startUrl, scrapeUrls, deadlineUtc, cancellationToken);
         var (imageUrl, logoUrl, startPageDate, startPageElevation, startFee, currency, startPageRaceType, _, _) =
             ExtractCoursePageMetadata(bfsResult.StartPageHtml ?? string.Empty, startUrl, bfsResult.CssContent);
         var extractedName = RaceHtmlScraper.ExtractEventName(startUrl, bfsResult.StartPageHtml,
@@ -166,8 +169,8 @@ internal sealed class BfsScraper(ILogger logger)
             Distance: resolvedDistance,
             ElevationGain: elevation,
             GpxUrl: gpxUrl,
-            ImageUrl: img is not null && IsBlockedDomain(img) ? null : img,
-            LogoUrl: logo is not null && IsBlockedDomain(logo) ? null : logo,
+            ImageUrl: img is not null && OrganizerUrlRules.IsBlockedMediaDomain(img) ? null : img,
+            LogoUrl: logo is not null && OrganizerUrlRules.IsBlockedMediaDomain(logo) ? null : logo,
             Date: date,
             StartFee: startingFee,
             Currency: curr,
@@ -242,6 +245,7 @@ internal sealed class BfsScraper(ILogger logger)
         HttpClient httpClient,
         Uri startUrl,
         IReadOnlyList<Uri> scrapeUrls,
+        DateTimeOffset deadlineUtc,
         CancellationToken cancellationToken)
     {
         var visitedPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -266,12 +270,12 @@ internal sealed class BfsScraper(ILogger logger)
         // Process one depth level at a time, fetching all pages in the level concurrently.
         var currentLevel = scrapeUrls.Select(u => (Url: u, IsCourseLink: false)).ToList();
 
-        for (int depth = 0; depth <= MaxDepth && currentLevel.Count > 0; depth++)
+        for (int depth = 0; depth <= MaxDepth && currentLevel.Count > 0 && HasRemainingBudget(deadlineUtc); depth++)
         {
             var pagesToFetch = new List<(Uri Url, bool IsCourseLink)>();
             foreach (var entry in currentLevel)
             {
-                if (visitedPages.Count >= MaxPages) break;
+            if (!HasRemainingBudget(deadlineUtc)) break;
                 if (visitedPages.Add(StripFragment(entry.Url)))
                     pagesToFetch.Add(entry);
             }
@@ -282,7 +286,7 @@ internal sealed class BfsScraper(ILogger logger)
             foreach (var p in pagesToFetch)
                 logger.LogDebug("BFS depth {Depth}: {Url}", depth, p.Url);
 
-            var fetchTasks = pagesToFetch.Select(e => TryFetchStringAsync(httpClient, e.Url, cancellationToken));
+            var fetchTasks = pagesToFetch.Select(e => TryFetchStringAsync(httpClient, e.Url, deadlineUtc, cancellationToken));
             var htmlResults = await Task.WhenAll(fetchTasks);
             logger.LogDebug("BFS depth {Depth}: fetched {Ok}/{Total} pages", depth, htmlResults.Count(r => r is not null), htmlResults.Length);
 
@@ -369,7 +373,7 @@ internal sealed class BfsScraper(ILogger logger)
                     {
                         if (!visitedPages.Contains(StripFragment(courseLink))
                             && IsSameDomain(courseLink, startUrl)
-                            && !IsBlockedDomain(courseLink))
+                            && OrganizerUrlRules.CanBfsCrawlUri(courseLink, OrganizerUrlRules.DeriveOrganizerKey(startUrl)))
                             nextLevel.Add((courseLink, true));
                     }
                 }
@@ -385,10 +389,11 @@ internal sealed class BfsScraper(ILogger logger)
         // Any GPX found is attributed to the internal page that linked to the external site.
         foreach (var (externalUrl, (sourceHtml, sourcePageUrl)) in externalGpxProbes.Take(5))
         {
+            if (!HasRemainingBudget(deadlineUtc)) break;
             logger.LogDebug("BFS: probing external GPX link {Url}", externalUrl);
             if (gpxUrlToPage.ContainsKey(externalUrl)) continue;
 
-            var externalContent = await TryFetchStringAsync(httpClient, new Uri(externalUrl), cancellationToken);
+            var externalContent = await TryFetchStringAsync(httpClient, new Uri(externalUrl), deadlineUtc, cancellationToken);
             if (externalContent is null) continue;
 
             // If the external URL returned GPX directly, register it with the internal source page.
@@ -414,8 +419,9 @@ internal sealed class BfsScraper(ILogger logger)
         // and collect download URLs. Attributed to the internal page that linked to the folder.
         foreach (var (folderUrl, (sourceHtml, sourcePageUrl)) in driveFolderProbes.Take(5))
         {
+            if (!HasRemainingBudget(deadlineUtc)) break;
             logger.LogDebug("BFS: probing Google Drive folder {Url}", folderUrl);
-            var downloadUrls = await CrawlGoogleDriveFolderAsync(httpClient, new Uri(folderUrl), cancellationToken);
+            var downloadUrls = await CrawlGoogleDriveFolderAsync(httpClient, new Uri(folderUrl), deadlineUtc, cancellationToken);
             logger.LogDebug("BFS: Drive folder yielded {Count} download URLs", downloadUrls.Count);
             foreach (var dlUrl in downloadUrls)
                 gpxUrlToPage.TryAdd(dlUrl.AbsoluteUri, (sourceHtml, sourcePageUrl));
@@ -427,6 +433,7 @@ internal sealed class BfsScraper(ILogger logger)
         // Dropbox shared folders: dl=1 returns a zip; extract .gpx files and register clickable folder URLs + fragment per entry.
         foreach (var (folderUrl, (sourceHtml, sourcePageUrl)) in dropboxFolderProbes.Take(5))
         {
+            if (!HasRemainingBudget(deadlineUtc)) break;
             logger.LogDebug("BFS: probing Dropbox shared folder {Url}", folderUrl);
             var folderUri = new Uri(folderUrl);
             var zipBytes = await TryFetchDropboxFolderZipAsync(httpClient, folderUri, cancellationToken);
@@ -453,7 +460,7 @@ internal sealed class BfsScraper(ILogger logger)
             logger.LogDebug("BFS: found {Count} CSS stylesheets to fetch", cssUrls.Count);
             if (cssUrls.Count > 0)
             {
-                var cssTasks = cssUrls.Take(5).Select(u => TryFetchStringAsync(httpClient, u, cancellationToken));
+                var cssTasks = cssUrls.Take(5).Select(u => TryFetchStringAsync(httpClient, u, deadlineUtc, cancellationToken));
                 var cssResults = await Task.WhenAll(cssTasks);
                 cssContent = string.Join("\n", cssResults.Where(c => c is not null));
                 logger.LogDebug("BFS: CSS fetched, total {Len} chars", cssContent.Length);
@@ -465,7 +472,7 @@ internal sealed class BfsScraper(ILogger logger)
 
         // Fetch all GPX URLs concurrently.
         var gpxTasks = gpxUrlToPage.Keys.Select(url =>
-            TryFetchGpxFromUrlAsync(httpClient, new Uri(url), cancellationToken, inlineGpxByUrl));
+            TryFetchGpxFromUrlAsync(httpClient, new Uri(url), deadlineUtc, cancellationToken, inlineGpxByUrl));
         var gpxResults = await Task.WhenAll(gpxTasks);
         var parsedCount = gpxResults.Count(r => r.HasValue);
         var failedCount = gpxUrlToPage.Count - parsedCount;
@@ -545,6 +552,7 @@ internal sealed class BfsScraper(ILogger logger)
     private async Task<(ParsedGpxRoute Route, Uri GpxUrl)?> TryFetchGpxFromUrlAsync(
         HttpClient httpClient,
         Uri url,
+        DateTimeOffset deadlineUtc,
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? inlineGpxByUrl = null)
     {
@@ -559,7 +567,7 @@ internal sealed class BfsScraper(ILogger logger)
             ? DropboxShareParser.WithDl1(url)
             : url;
 
-        var content = await TryFetchStringAsync(httpClient, fetchUrl, cancellationToken, inlineGpxByUrl);
+        var content = await TryFetchStringAsync(httpClient, fetchUrl, deadlineUtc, cancellationToken, inlineGpxByUrl);
         if (content is null) return null;
 
         var parsed = GpxParser.TryParseRoute(content);
@@ -578,7 +586,7 @@ internal sealed class BfsScraper(ILogger logger)
         logger.LogDebug("BFS: {Url} has {Count} secondary URLs", url, secondaryUrls.Count);
         var secondaryTasks = secondaryUrls.Take(10).Select(async link =>
         {
-            var linkContent = await TryFetchStringAsync(httpClient, link, cancellationToken, inlineGpxByUrl);
+            var linkContent = await TryFetchStringAsync(httpClient, link, deadlineUtc, cancellationToken, inlineGpxByUrl);
             if (linkContent is null) return ((ParsedGpxRoute, Uri)?)null;
             var linkParsed = GpxParser.TryParseRoute(linkContent);
             return linkParsed is not null ? (linkParsed, link) : null;
@@ -594,11 +602,16 @@ internal sealed class BfsScraper(ILogger logger)
     private async Task<string?> TryFetchStringAsync(
         HttpClient httpClient,
         Uri url,
+        DateTimeOffset deadlineUtc,
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? inlineGpxByUrl = null)
     {
         if (inlineGpxByUrl?.TryGetValue(url.AbsoluteUri, out var inline) == true)
             return inline;
+
+        var remainingBudget = GetRemainingBudget(deadlineUtc);
+        if (remainingBudget is null)
+            return null;
 
         var fetchUri = DropboxShareParser.IsDropboxHost(url) && DropboxShareParser.IsDropboxSharedFile(url)
             ? DropboxShareParser.WithDl1(url)
@@ -607,7 +620,7 @@ internal sealed class BfsScraper(ILogger logger)
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(30));
+            cts.CancelAfter(remainingBudget.Value < MaxSingleRequestTimeout ? remainingBudget.Value : MaxSingleRequestTimeout);
             using var request = new HttpRequestMessage(HttpMethod.Get, fetchUri);
             if (httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
                 request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Peakshunters/1.0)");
@@ -682,6 +695,7 @@ internal sealed class BfsScraper(ILogger logger)
     private async Task<List<Uri>> CrawlGoogleDriveFolderAsync(
         HttpClient httpClient,
         Uri folderUrl,
+        DateTimeOffset deadlineUtc,
         CancellationToken cancellationToken,
         HashSet<string>? visited = null,
         int depth = 0,
@@ -689,11 +703,11 @@ internal sealed class BfsScraper(ILogger logger)
     {
         const int MaxDriveDepth = 3;
         visited ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (depth > MaxDriveDepth || !visited.Add(folderUrl.AbsoluteUri))
+        if (depth > MaxDriveDepth || !visited.Add(folderUrl.AbsoluteUri) || !HasRemainingBudget(deadlineUtc))
             return [];
 
         logger.LogDebug("BFS: crawling Drive folder depth={Depth} {Url}", depth, folderUrl);
-        var folderHtml = preloadedHtml ?? await TryFetchStringAsync(httpClient, folderUrl, cancellationToken);
+        var folderHtml = preloadedHtml ?? await TryFetchStringAsync(httpClient, folderUrl, deadlineUtc, cancellationToken);
         if (folderHtml is null) return [];
 
         // Collect unique item IDs from this folder page, skipping ones already visited as folders.
@@ -710,7 +724,7 @@ internal sealed class BfsScraper(ILogger logger)
         var probeTasks = dataIds.Select(async itemId =>
         {
             var candidateUri = new Uri($"https://drive.google.com/drive/folders/{itemId}");
-            var html = await TryFetchStringAsync(httpClient, candidateUri, cancellationToken);
+            var html = await TryFetchStringAsync(httpClient, candidateUri, deadlineUtc, cancellationToken);
             return (ItemId: itemId, Html: html);
         });
         var probed = await Task.WhenAll(probeTasks);
@@ -730,7 +744,7 @@ internal sealed class BfsScraper(ILogger logger)
                 }
                 logger.LogDebug("BFS: recursing into Drive subfolder '{Name}'", name);
                 var sub = await CrawlGoogleDriveFolderAsync(
-                    httpClient, subfolderUri, cancellationToken, visited, depth + 1, itemHtml);
+                    httpClient, subfolderUri, deadlineUtc, cancellationToken, visited, depth + 1, itemHtml);
                 results.AddRange(sub);
             }
             else
@@ -789,54 +803,15 @@ internal sealed class BfsScraper(ILogger logger)
     /// <summary>Checks that both URIs share the same registrable domain (ignoring www prefix).</summary>
     private static bool IsSameDomain(Uri candidate, Uri origin)
     {
-        static string NormalizeHost(string host) =>
-            host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
-
-        return NormalizeHost(candidate.Host).Equals(NormalizeHost(origin.Host), StringComparison.OrdinalIgnoreCase);
+        return OrganizerUrlRules.NormalizeHost(candidate.Host).Equals(OrganizerUrlRules.NormalizeHost(origin.Host), StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Domains that should never be crawled or used as an image source.
-    /// These are race aggregator / discovery platforms whose content belongs to that platform,
-    /// not to the individual race. Each has its own dedicated scraper or discovery worker.
-    /// </summary>
-    private static readonly string[] BlockedDomains =
-    [
-        "lopplistan.se",
-        "loppkartan.se",
-        "trailrunningsweden.se",
-        "betrail.run",
-        "tracedetrail.fr",
-        "itra.run",
-        "d-u-v.org",
-        "skyrunning.com",
-        "utmb.world",
-    ];
+    private static bool HasRemainingBudget(DateTimeOffset deadlineUtc)
+        => GetRemainingBudget(deadlineUtc) is { } remaining && remaining > TimeSpan.Zero;
 
-    private static bool IsBlockedDomain(Uri uri)
+    private static TimeSpan? GetRemainingBudget(DateTimeOffset deadlineUtc)
     {
-        var host = uri.Host;
-        if (host.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) host = host[4..];
-        return BlockedDomains.Any(d =>
-            host.Equals(d, StringComparison.OrdinalIgnoreCase) ||
-            host.EndsWith("." + d, StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// Social/platform domains where a bare URL (no slug) is useless to BFS-crawl.
-    /// URLs with a meaningful path (e.g. facebook.com/events/123) are still allowed.
-    /// </summary>
-    private static readonly string[] SocialDomains =
-        ["facebook.com", "fb.me", "fb.com", "youtube.com", "youtu.be",
-         "instagram.com", "twitter.com", "x.com", "tiktok.com", "linkedin.com"];
-
-    private static bool IsBareSocialDomain(Uri uri)
-    {
-        var host = uri.Host.ToLowerInvariant();
-        if (host.StartsWith("www.")) host = host[4..];
-        if (!SocialDomains.Any(d => host.Equals(d, StringComparison.OrdinalIgnoreCase)))
-            return false;
-        var path = uri.AbsolutePath.TrimEnd('/');
-        return string.IsNullOrEmpty(path);
+        var remaining = deadlineUtc - DateTimeOffset.UtcNow;
+        return remaining > MinRemainingBudget ? remaining : null;
     }
 }

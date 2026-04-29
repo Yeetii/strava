@@ -91,14 +91,13 @@ public class PmtilesUtilityServiceTests
     }
 
     [Fact]
-    public void Parse_ReturnsBuildCommandAndForceFlag_WhenForceOptionIsProvided()
+    public void Parse_ReturnsBuildRaceTilesFromOrganizers_WhenNoSubcommandIsProvided()
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var command = PmtilesCommandLine.Parse(["--Force"], configuration);
+        var command = PmtilesCommandLine.Parse([], configuration);
 
-        Assert.Equal(PmtilesCommandKind.BuildRaceTiles, command.Command);
-        Assert.True(command.ForceBuild);
+        Assert.Equal(PmtilesCommandKind.BuildRaceTilesFromOrganizers, command.Command);
     }
 
     [Fact]

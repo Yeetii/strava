@@ -8,6 +8,7 @@ namespace Backend;
 
 public class RaceDiscoveryService(ServiceBusClient serviceBusClient, RaceOrganizerClient organizerClient, ILoggerFactory loggerFactory)
 {
+    internal static readonly TimeSpan AutomaticScrapeFreshnessWindow = TimeSpan.FromDays(6);
     private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);
     private readonly ServiceBusSender _discoverySender = serviceBusClient.CreateSender(ServiceBusConfig.RaceDiscoveryJobs);
     private readonly ILogger _logger = loggerFactory.CreateLogger<RaceDiscoveryService>();
@@ -38,21 +39,33 @@ public class RaceDiscoveryService(ServiceBusClient serviceBusClient, RaceOrganiz
 
     public async Task EnqueueScrapeMessagesAsync(
         IReadOnlySet<string> organizerKeys,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool isUrgent = false)
     {
         const int ChunkSize = 100;
         var messages = organizerKeys
-            .Select((key, i) => new ServiceBusMessage(key)
+            .Select((key, i) =>
             {
-                ContentType = "text/plain",
-                ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 5)
+                var message = BuildScrapeServiceBusMessage(new ScrapeRaceMessage(key, isUrgent));
+                message.ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddSeconds(i * 5);
+                return message;
             })
             .ToList();
 
         for (int i = 0; i < messages.Count; i += ChunkSize)
             await _sender.SendMessagesAsync(messages.Skip(i).Take(ChunkSize), cancellationToken);
 
-        _logger.LogInformation("Enqueued {Count} scrape messages", messages.Count);
+        _logger.LogInformation("Enqueued {Count} {Urgency} scrape messages", messages.Count, isUrgent ? "urgent" : "automatic");
+    }
+
+    public static ServiceBusMessage BuildScrapeServiceBusMessage(ScrapeRaceMessage message)
+    {
+        var body = BinaryData.FromString(JsonSerializer.Serialize(message, JsonSerializerOptions));
+        return new ServiceBusMessage(body)
+        {
+            ContentType = "application/json",
+            MessageId = $"scrape:{message.OrganizerKey}:{Guid.NewGuid()}"
+        };
     }
 
     public async Task EnqueueDiscoveryMessageAsync(
@@ -83,3 +96,5 @@ public sealed record RaceDiscoveryMessage(string Agent, int? Page = null)
 {
     public int CurrentPage => Page.GetValueOrDefault(1);
 }
+
+public sealed record ScrapeRaceMessage(string OrganizerKey, bool IsUrgent = false);

@@ -4,7 +4,6 @@ namespace PmtilesJob;
 
 public enum PmtilesCommandKind
 {
-    BuildRaceTiles,
     BuildRaceTilesFromOrganizers,
     BuildAdminAreas,
     FilterOutdoor,
@@ -13,7 +12,6 @@ public enum PmtilesCommandKind
 
 public sealed record PmtilesCommandOptions(
     PmtilesCommandKind Command,
-    bool ForceBuild = false,
     IReadOnlyList<int>? AdminLevels = null,
     int? MaximumZoom = null,
     bool ExcludeAllAttributes = false,
@@ -96,8 +94,7 @@ public static class PmtilesCommandLine
             return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTilesFromOrganizers);
         }
 
-        var forceBuild = HasOption(args, "--Force") || configuration.GetValue<bool>("Force");
-        return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTiles, ForceBuild: forceBuild);
+        return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTilesFromOrganizers);
     }
 
     private static bool HasOption(IEnumerable<string> args, string optionName)

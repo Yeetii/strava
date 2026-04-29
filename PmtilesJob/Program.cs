@@ -27,8 +27,7 @@ var builder = Host.CreateDefaultBuilder(args)
         var configuration = context.Configuration;
         services.AddSingleton<PmtilesUtilityService>();
 
-        if (command.Command is PmtilesCommandKind.BuildRaceTiles
-            or PmtilesCommandKind.BuildRaceTilesFromOrganizers
+        if (command.Command is PmtilesCommandKind.BuildRaceTilesFromOrganizers
             or PmtilesCommandKind.BuildAdminAreas)
         {
             var cosmosConnection = configuration.GetConnectionString("CosmosDBConnection")
@@ -36,16 +35,6 @@ var builder = Host.CreateDefaultBuilder(args)
                 ?? throw new InvalidOperationException("CosmosDBConnection is not configured.");
 
             services.AddSingleton(new CosmosClient(cosmosConnection));
-
-            if (command.Command == PmtilesCommandKind.BuildRaceTiles)
-            {
-                var blobConnection = configuration.GetConnectionString("BlobStorageConnection")
-                    ?? configuration["BlobStorageConnection"]
-                    ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
-
-                services.AddSingleton(new BlobServiceClient(blobConnection));
-                services.AddSingleton<RacePmtilesBuildService>();
-            }
 
             if (command.Command == PmtilesCommandKind.BuildRaceTilesFromOrganizers)
             {
@@ -111,17 +100,10 @@ try
         }
 
         case PmtilesCommandKind.BuildRaceTilesFromOrganizers:
+        default:
         {
             var job = scope.ServiceProvider.GetRequiredService<RaceFromOrganizersPmtilesBuildService>();
             await job.BuildAsync(CancellationToken.None);
-            return 0;
-        }
-
-        case PmtilesCommandKind.BuildRaceTiles:
-        default:
-        {
-            var job = scope.ServiceProvider.GetRequiredService<RacePmtilesBuildService>();
-            await job.BuildIfDirtyAsync(CancellationToken.None, command.ForceBuild);
             return 0;
         }
     }

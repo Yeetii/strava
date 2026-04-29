@@ -2,6 +2,9 @@ using Azure.Messaging.ServiceBus;
 using Backend.Scrapers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Shared.Models;
 using Shared.Services;
 using Shared.Constants;
@@ -11,19 +14,17 @@ namespace Backend;
 /// <summary>
 /// Reads an organizer key from the Service Bus queue, fetches the <see cref="RaceOrganizerDocument"/>
 /// from Cosmos, runs the scraper pipeline, and writes <see cref="ScraperOutput"/> back to the document.
-/// After scraping completes, enqueues the organizer key onto the assembleRace queue so the
-/// <see cref="AssembleRaceWorker"/> can produce final <see cref="StoredFeature"/> documents.
 /// </summary>
 public class ScrapeRaceWorker
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RaceOrganizerClient _organizerClient;
     private readonly ServiceBusClient _serviceBusClient;
-    private readonly ServiceBusSender _assembleSender;
     private readonly ILogger<ScrapeRaceWorker> _logger;
 
     private readonly IReadOnlyList<(string Key, IRaceScraper Scraper)> _scrapers;
     private readonly BfsScraper _bfsScraper;
+    private static readonly JsonSerializerOptions HashSerializerOptions = new(JsonSerializerDefaults.Web);
 
     // Domains handled by specialized scrapers or discovery — BFS skips these.
     private static readonly string[] SpecialDomains = ["utmb.world", "itra.run", "tracedetrail.fr", "runagain.com", "statistik.d-u-v.org", "betrail.run"];
@@ -37,7 +38,6 @@ public class ScrapeRaceWorker
         _httpClientFactory = httpClientFactory;
         _organizerClient = organizerClient;
         _serviceBusClient = serviceBusClient;
-        _assembleSender = serviceBusClient.CreateSender(ServiceBusConfig.AssembleRace);
         _logger = logger;
 
         _bfsScraper = new BfsScraper(logger);
@@ -53,7 +53,8 @@ public class ScrapeRaceWorker
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
-        var organizerKey = message.Body.ToString().Trim();
+        var request = DeserializeMessage(message);
+        var organizerKey = request.OrganizerKey.Trim();
         if (string.IsNullOrWhiteSpace(organizerKey))
         {
             _logger.LogWarning("Empty organizer key (MessageId={MessageId})", message.MessageId);
@@ -73,12 +74,26 @@ public class ScrapeRaceWorker
             return;
         }
 
+        if (!request.IsUrgent && IsFreshEnoughForAutomaticScrape(doc, DateTime.UtcNow))
+        {
+            _logger.LogInformation("Skipping automatic scrape for {Key}; organizer was scraped recently at {LastScrapedUtc}", organizerKey, doc.LastScrapedUtc);
+            await TryCompleteAsync(actions, message, cancellationToken);
+            return;
+        }
+
         // 2. Synthesize a ScrapeJob from the merged discovery data.
         var job = BuildScrapeJobFromDocument(doc);
 
         // 3. Run scraper pipeline — write output per scraper that returns results.
         var httpClient = _httpClientFactory.CreateClient();
         int scrapersRun = 0;
+        int fullWrites = 0;
+        int propsPatched = 0;
+        int unchanged = 0;
+        var scrapedAtUtc = DateTime.UtcNow.ToString("o");
+        var scraperHashes = doc.ScraperHashes is not null
+            ? new Dictionary<string, ScraperOutputHashes>(doc.ScraperHashes, StringComparer.Ordinal)
+            : new Dictionary<string, ScraperOutputHashes>(StringComparer.Ordinal);
 
         try
         {
@@ -100,8 +115,30 @@ public class ScrapeRaceWorker
 
                 if (result is null) continue;
 
-                var output = ToScraperOutput(result);
+                var output = ToScraperOutput(result, scrapedAtUtc);
+                var newHashes = ComputeHashes(output);
+                scraperHashes[scraperKey] = newHashes;
+
+                if (TryGetPreviousHashes(doc, scraperKey, out var prevHashes))
+                {
+                    if (prevHashes.RoutesHash == newHashes.RoutesHash && prevHashes.PropertiesHash == newHashes.PropertiesHash)
+                    {
+                        unchanged++;
+                        continue;
+                    }
+
+                    if (prevHashes.RoutesHash == newHashes.RoutesHash)
+                    {
+                        await _organizerClient.PatchScraperPropertiesAsync(organizerKey, scraperKey, output, cancellationToken);
+                        propsPatched++;
+                        scrapersRun++;
+                        _logger.LogInformation("Scraper/{Scraper}: patched properties for {Key}", scraperKey, organizerKey);
+                        continue;
+                    }
+                }
+
                 await _organizerClient.WriteScraperOutputAsync(organizerKey, scraperKey, output, cancellationToken);
+                fullWrites++;
                 scrapersRun++;
                 _logger.LogInformation("Scraper/{Scraper}: wrote {RouteCount} routes for {Key}",
                     scraperKey, output.Routes?.Count ?? 0, organizerKey);
@@ -125,21 +162,51 @@ public class ScrapeRaceWorker
 
                 if (bfsResult is not null)
                 {
-                    var output = ToScraperOutput(bfsResult);
-                    await _organizerClient.WriteScraperOutputAsync(organizerKey, "bfs", output, cancellationToken);
-                    scrapersRun++;
-                    _logger.LogInformation("Scraper/bfs: wrote {RouteCount} routes for {Key}",
-                        output.Routes?.Count ?? 0, organizerKey);
+                    var output = ToScraperOutput(bfsResult, scrapedAtUtc);
+                    var newHashes = ComputeHashes(output);
+                    scraperHashes["bfs"] = newHashes;
+
+                    if (TryGetPreviousHashes(doc, "bfs", out var prevHashes))
+                    {
+                        if (prevHashes.RoutesHash == newHashes.RoutesHash && prevHashes.PropertiesHash == newHashes.PropertiesHash)
+                        {
+                            unchanged++;
+                        }
+                        else if (prevHashes.RoutesHash == newHashes.RoutesHash)
+                        {
+                            await _organizerClient.PatchScraperPropertiesAsync(organizerKey, "bfs", output, cancellationToken);
+                            propsPatched++;
+                            scrapersRun++;
+                            _logger.LogInformation("Scraper/bfs: patched properties for {Key}", organizerKey);
+                        }
+                        else
+                        {
+                            await _organizerClient.WriteScraperOutputAsync(organizerKey, "bfs", output, cancellationToken);
+                            fullWrites++;
+                            scrapersRun++;
+                            _logger.LogInformation("Scraper/bfs: wrote {RouteCount} routes for {Key}",
+                                output.Routes?.Count ?? 0, organizerKey);
+                        }
+                    }
+                    else
+                    {
+                        await _organizerClient.WriteScraperOutputAsync(organizerKey, "bfs", output, cancellationToken);
+                        fullWrites++;
+                        scrapersRun++;
+                        _logger.LogInformation("Scraper/bfs: wrote {RouteCount} routes for {Key}",
+                            output.Routes?.Count ?? 0, organizerKey);
+                    }
                 }
             }
 
             if (scrapersRun == 0)
                 _logger.LogInformation("No scrapers produced output for {Key}", organizerKey);
 
-            // Enqueue the organizer key for assembly — whether or not any scraper ran.
-            await _assembleSender.SendMessageAsync(
-                new ServiceBusMessage(organizerKey) { ContentType = "text/plain" },
-                cancellationToken);
+            await _organizerClient.PatchLastScrapedAsync(organizerKey, scrapedAtUtc, scraperHashes, cancellationToken);
+
+            _logger.LogInformation(
+                "Scrape writes for {Key}: {FullWrites} full writes, {PropsPatched} property-only patches, {Unchanged} unchanged/skipped",
+                organizerKey, fullWrites, propsPatched, unchanged);
 
             await TryCompleteAsync(actions, message, cancellationToken);
         }
@@ -156,6 +223,80 @@ public class ScrapeRaceWorker
     {
         try { await actions.CompleteMessageAsync(message, ct); }
         catch (Exception ex) { _logger.LogDebug(ex, "Could not complete message (manual trigger?)"); }
+    }
+
+    internal static ScrapeRaceMessage DeserializeMessage(ServiceBusReceivedMessage message)
+    {
+        var body = message.Body.ToString().Trim();
+        if (string.IsNullOrWhiteSpace(body))
+            return new ScrapeRaceMessage(string.Empty, true);
+
+        if (body.StartsWith('{'))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<ScrapeRaceMessage>(body, HashSerializerOptions);
+                if (!string.IsNullOrWhiteSpace(parsed?.OrganizerKey))
+                    return parsed;
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return new ScrapeRaceMessage(body, true);
+    }
+
+    internal static bool IsFreshEnoughForAutomaticScrape(RaceOrganizerDocument doc, DateTime utcNow)
+    {
+        if (string.IsNullOrWhiteSpace(doc.LastScrapedUtc))
+            return false;
+
+        if (!DateTime.TryParse(doc.LastScrapedUtc, out var lastScrapedUtc))
+            return false;
+
+        return lastScrapedUtc >= utcNow.Subtract(RaceDiscoveryService.AutomaticScrapeFreshnessWindow);
+    }
+
+    internal static ScraperOutputHashes ComputeHashes(ScraperOutput output)
+        => new()
+        {
+            PropertiesHash = ComputeSha256(new
+            {
+                output.WebsiteUrl,
+                output.ImageUrl,
+                output.LogoUrl,
+                output.ExtractedName,
+                output.ExtractedDate,
+                output.StartFee,
+                output.Currency,
+            }),
+            RoutesHash = ComputeSha256(output.Routes)
+        };
+
+    private static bool TryGetPreviousHashes(RaceOrganizerDocument doc, string scraperKey, out ScraperOutputHashes hashes)
+    {
+        if (doc.ScraperHashes?.TryGetValue(scraperKey, out hashes!) == true)
+            return true;
+
+        if (doc.Scrapers?.TryGetValue(scraperKey, out var existingOutput) == true)
+        {
+            hashes = ComputeHashes(existingOutput);
+            return true;
+        }
+
+        hashes = new ScraperOutputHashes();
+        return false;
+    }
+
+    private static string? ComputeSha256<T>(T value)
+    {
+        if (value is null)
+            return null;
+
+        var json = JsonSerializer.Serialize(value, HashSerializerOptions);
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(json));
+        return Convert.ToHexString(bytes);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -292,12 +433,11 @@ public class ScrapeRaceWorker
             var host = uri.Host.ToLowerInvariant();
             if (SpecialDomains.Any(host.Contains))
                 return;
+            if (!OrganizerUrlRules.CanBfsCrawlUri(uri, doc.Id))
+                return;
             if (seen.Add(uri.GetLeftPart(UriPartial.Path)))
                 urls.Add(uri);
         }
-
-        if (Uri.TryCreate($"https://{doc.Id}", UriKind.Absolute, out var idUrl))
-            TryAdd(idUrl);
 
         if (Uri.TryCreate(doc.Url, UriKind.Absolute, out var docUrl))
             TryAdd(docUrl);
@@ -338,11 +478,11 @@ public class ScrapeRaceWorker
     /// <summary>
     /// Converts a <see cref="RaceScraperResult"/> into a <see cref="ScraperOutput"/> for storage.
     /// </summary>
-    private static ScraperOutput ToScraperOutput(RaceScraperResult result)
+    private static ScraperOutput ToScraperOutput(RaceScraperResult result, string scrapedAtUtc)
     {
         return new ScraperOutput
         {
-            ScrapedAtUtc = DateTime.UtcNow.ToString("o"),
+            ScrapedAtUtc = scrapedAtUtc,
             WebsiteUrl = result.WebsiteUrl?.AbsoluteUri,
             ImageUrl = result.ImageUrl?.AbsoluteUri,
             LogoUrl = result.LogoUrl?.AbsoluteUri,

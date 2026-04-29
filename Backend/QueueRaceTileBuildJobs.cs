@@ -43,8 +43,7 @@ public class QueueRaceTileBuildJobs
             return;
         }
 
-        _logger.LogInformation("Race change feed detected {Count} updated race features.", updatedRaces.Count);
-        await MarkDirtyAsync(cancellationToken);
+        _logger.LogInformation("Race change feed detected {Count} updated race features. Skipping dirty flag (tile build now driven by raceOrganizers pipeline).", updatedRaces.Count);
     }
 
     private async Task MarkDirtyAsync(CancellationToken cancellationToken)

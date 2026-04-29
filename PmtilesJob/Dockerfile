@@ -11,7 +11,7 @@ COPY Shared/Serialization ./Shared/Serialization
 COPY Shared/Properties ./Shared/Properties
 COPY PmtilesJob/Program.cs ./Program.cs
 COPY PmtilesJob/PmtilesUtilityService.cs ./PmtilesUtilityService.cs
-COPY PmtilesJob/RacePmtilesBuildService.cs ./RacePmtilesBuildService.cs
+COPY PmtilesJob/RaceFromOrganizersPmtilesBuildService.cs ./RaceFromOrganizersPmtilesBuildService.cs
 COPY PmtilesJob/appsettings.json ./appsettings.json
 
 RUN dotnet publish PmtilesJob.csproj -c Release -o /app/publish

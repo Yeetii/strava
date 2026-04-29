@@ -17,8 +17,9 @@ public class QueueAllScrapeJobs(
     [Function(nameof(QueueAllScrapeJobs))]
     public async Task Run([TimerTrigger("0 0 3 * * 2")] TimerInfo timerInfo, CancellationToken cancellationToken)
     {
-        var ids = await raceOrganizerClient.GetAllIds(cancellationToken);
-        logger.LogInformation("Queuing {Count} scrape jobs for all race organizers", ids.Count);
-        await discoveryService.EnqueueScrapeMessagesAsync(ids.ToHashSet(StringComparer.OrdinalIgnoreCase), cancellationToken);
+        var cutoffUtc = DateTime.UtcNow.Subtract(RaceDiscoveryService.AutomaticScrapeFreshnessWindow);
+        var ids = await raceOrganizerClient.GetIdsDueForAutomaticScrapeAsync(cutoffUtc, cancellationToken);
+        logger.LogInformation("Queuing {Count} automatic scrape jobs for organizers not scraped since {CutoffUtc}", ids.Count, cutoffUtc);
+        await discoveryService.EnqueueScrapeMessagesAsync(ids.ToHashSet(StringComparer.OrdinalIgnoreCase), cancellationToken, isUrgent: false);
     }
 }

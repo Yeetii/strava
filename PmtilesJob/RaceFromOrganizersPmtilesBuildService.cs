@@ -13,7 +13,6 @@ namespace PmtilesJob;
 /// <summary>
 /// Builds race PMTiles directly from <c>raceOrganizers</c> Cosmos documents, bypassing the
 /// <c>races</c> container. Runs assembly inline using <see cref="RaceAssembler"/>.
-/// Intended to run in parallel with <see cref="RacePmtilesBuildService"/> during the transition.
 /// </summary>
 public class RaceFromOrganizersPmtilesBuildService
 {
@@ -118,8 +117,10 @@ public class RaceFromOrganizersPmtilesBuildService
         if (!PmtilesUtilityService.IsValidPmtilesFile(pmtilesPath))
             throw new InvalidOperationException("Built PMTiles file did not pass validation.");
 
+        var pmtilesHttpHeaders = new BlobHttpHeaders { CacheControl = "no-cache", ContentType = "application/octet-stream" };
+
         var stagingBlob = container.GetBlobClient($"{StagingPrefix}/{runId}/trails-from-organizers.pmtiles");
-        await stagingBlob.UploadAsync(pmtilesPath, overwrite: true, cancellationToken: cancellationToken);
+        await stagingBlob.UploadAsync(pmtilesPath, new BlobUploadOptions { HttpHeaders = pmtilesHttpHeaders }, cancellationToken);
 
         var productionBlob = container.GetBlobClient(ProductionBlobName);
         await productionBlob.StartCopyFromUriAsync(stagingBlob.Uri, cancellationToken: cancellationToken);
@@ -142,7 +143,7 @@ public class RaceFromOrganizersPmtilesBuildService
     private async Task<BlobContainerClient> GetContainerAsync(CancellationToken cancellationToken)
     {
         var container = _blobServiceClient.GetBlobContainerClient(_blobContainerName);
-        await container.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+        await container.CreateIfNotExistsAsync(PublicAccessType.Blob, cancellationToken: cancellationToken);
         return container;
     }
 
