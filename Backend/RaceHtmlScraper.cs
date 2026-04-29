@@ -198,10 +198,7 @@ public static partial class RaceHtmlScraper
         if (string.IsNullOrWhiteSpace(html))
             return [];
 
-        // Strip <head>, script/style blocks so only visible content remains.
-        var clean = HeadSectionRegex().Replace(html, " ");
-        clean = ScriptStyleRegex().Replace(clean, " ");
-        var visibleText = HtmlTagRegex().Replace(clean, " ");
+        var (_, visibleText) = ScrubHtmlForVisibleTextExtraction(html);
 
         var seen = new HashSet<int>(); // rounded km values for dedup
         var results = new List<string>();
@@ -234,6 +231,18 @@ public static partial class RaceHtmlScraper
                 best = km.Value;
         }
         return best;
+    }
+
+    internal static (string CleanHtml, string VisibleText) ScrubHtmlForVisibleTextExtraction(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return (string.Empty, string.Empty);
+
+        // Strip non-visible sections first so downstream regex work runs on the meaningful page body.
+        var cleanHtml = HeadSectionRegex().Replace(html, " ");
+        cleanHtml = ScriptStyleRegex().Replace(cleanHtml, " ");
+        var visibleText = HtmlTagRegex().Replace(cleanHtml, " ");
+        return (cleanHtml, visibleText);
     }
 
     // Extracts .gpx URLs from an HTML page.
@@ -569,9 +578,18 @@ public static partial class RaceHtmlScraper
     [GeneratedRegex(@"<time\b[^>]*\bdatetime\s*=\s*[""'](?<dt>[^""']+)[""']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex TimeDatetimeRegex();
 
-    // Matches <meta> tags with date-related names (e.g. startDate, event:start_date, date).
-    [GeneratedRegex(@"<meta\b[^>]*(?:property|name)\s*=\s*[""'](?:.*?date.*?)[""'][^>]*content\s*=\s*[""'](?<date>[^""']+)[""']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
-    private static partial Regex MetaDateRegex();
+    // Matches individual <meta ...> tags so callers can inspect attributes without scanning
+    // the whole document with a broader date regex.
+    [GeneratedRegex(@"<meta\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex MetaTagRegex();
+
+    // Matches prose date snippets commonly found in description meta tags, e.g.
+    // "Lördag den 18:e april kl. 11:00".
+    [GeneratedRegex(
+        @"\b(?:[A-Za-zÀ-ÖØ-öø-ÿ]+\s+)?(?:den\s+)?\d{1,2}(?::?(?:e|a|st|nd|rd|th))?\.?\s+(?:" + MonthPattern + @")(?:\s+\d{4})?(?:\s+kl\.?\s*\d{1,2}[:.]\d{2})?\b"
+        + @"|\b(?:[A-Za-zÀ-ÖØ-öø-ÿ]+\s+)?(?:" + MonthPattern + @")\s+\d{1,2}(?::?(?:e|a|st|nd|rd|th))?(?:,?\s+\d{4})?\b",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex DescriptionTextDateRegex();
 
     // Month name pattern covering English, Norwegian, Swedish, German, French.
     private const string MonthPattern =

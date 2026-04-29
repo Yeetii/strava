@@ -285,74 +285,72 @@ public static partial class RaceHtmlScraper
         if (string.IsNullOrWhiteSpace(html))
             return null;
 
-        // Cap input size — dates are in the first portion of the page; large pages cause regex slowdowns.
-        const int MaxChars = 150_000;
-        if (html.Length > MaxChars)
-            html = html[..MaxChars];
+        var structuredSearchHtml = html.Length > 80_000
+            ? html[..80_000]
+            : html;
 
         // 1. JSON-LD startDate (most reliable).
-        foreach (Match m in JsonLdStartDateRegex().Matches(html))
+        foreach (Match ldBlock in LdJsonBlockRegex().Matches(structuredSearchHtml))
         {
-            var date = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Groups["date"].Value.Trim());
-            if (date is not null) return date;
+            foreach (Match m in JsonLdStartDateRegex().Matches(ldBlock.Groups["json"].Value))
+            {
+                var date = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Groups["date"].Value.Trim());
+                if (date is not null) return date;
+            }
         }
 
         // 2. <time datetime="..."> element.
-        foreach (Match m in TimeDatetimeRegex().Matches(html))
+        foreach (Match m in TimeDatetimeRegex().Matches(structuredSearchHtml))
         {
             var date = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Groups["dt"].Value.Trim());
             if (date is not null) return date;
         }
 
         // 3. <meta> tags with date-related names/properties.
-        foreach (Match m in MetaDateRegex().Matches(html))
+        foreach (Match m in MetaTagRegex().Matches(structuredSearchHtml))
         {
-            var date = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Groups["date"].Value.Trim());
-            if (date is not null) return date;
+            var tag = m.Value;
+            var nameOrProperty = ExtractHtmlAttribute(tag, "property") ?? ExtractHtmlAttribute(tag, "name");
+            var content = ExtractHtmlAttribute(tag, "content");
+            if (string.IsNullOrWhiteSpace(nameOrProperty) || string.IsNullOrWhiteSpace(content))
+                continue;
+
+            if (nameOrProperty.Contains("date", StringComparison.OrdinalIgnoreCase))
+            {
+                var date = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(content);
+                if (date is not null)
+                    return date;
+            }
+
+            if (IsDescriptionMetaProperty(nameOrProperty))
+            {
+                var date = ExtractDateFromTextSnippet(content);
+                if (date is not null)
+                    return date;
+            }
         }
 
-        // 4. Visible text: score each candidate by heading context, font-size hints, and frequency.
-        // Strip <head>, script/style blocks, and HTML comments so non-visible dates aren't matched.
-        var cleanHtml = HeadSectionRegex().Replace(html, " ");
-        cleanHtml = ScriptStyleRegex().Replace(cleanHtml, " ");
-        // Strip all HTML tags so dates inside attributes (src, content, href) aren't matched.
-        var visibleText = HtmlTagRegex().Replace(cleanHtml, " ");
+        // 4. Visible text: score each candidate by frequency and rough prominence in the
+        // visible text stream. Avoid rescanning the original HTML per match — that was the
+        // hot path on large generic pages.
+        var (_, visibleText) = ScrubHtmlForVisibleTextExtraction(html);
+        var dateSearchText = visibleText.Length > 24_000
+            ? visibleText[..24_000]
+            : visibleText;
         var candidates = new Dictionary<string, int>(StringComparer.Ordinal); // normalized date → score
-        foreach (Match m in VisibleDateRegex().Matches(visibleText))
+        foreach (var (candidate, index) in EnumerateVisibleDateCandidates(dateSearchText))
         {
-            var normalized = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Value.Trim());
+            var normalized = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(candidate);
             if (normalized is null) continue;
 
             int score = 1; // base occurrence score
 
-            // Check surrounding context in the HTML (with tags) for heading tags or large font-size.
-            var htmlIdx = cleanHtml.IndexOf(m.Value, StringComparison.OrdinalIgnoreCase);
-            var contextStart = htmlIdx >= 0 ? Math.Max(0, htmlIdx - 200) : 0;
-            var contextLen = htmlIdx >= 0
-                ? Math.Min(cleanHtml.Length - contextStart, m.Value.Length + 400)
-                : 0;
-            var context = htmlIdx >= 0 ? cleanHtml.AsSpan(contextStart, contextLen) : ReadOnlySpan<char>.Empty;
-
-            if (context.Contains("<h1", StringComparison.OrdinalIgnoreCase))
-                score += 10;
-            else if (context.Contains("<h2", StringComparison.OrdinalIgnoreCase))
-                score += 7;
-            else if (context.Contains("<h3", StringComparison.OrdinalIgnoreCase))
-                score += 5;
-            else if (context.Contains("<h4", StringComparison.OrdinalIgnoreCase)
-                  || context.Contains("<h5", StringComparison.OrdinalIgnoreCase)
-                  || context.Contains("<h6", StringComparison.OrdinalIgnoreCase))
-                score += 3;
-
-            // Large inline font-size (≥ 20px / 1.5em/rem) hints at prominent text.
-            var fontMatch = FontSizeRegex().Match(context.ToString());
-            if (fontMatch.Success && double.TryParse(fontMatch.Groups["size"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var size))
-            {
-                var unit = fontMatch.Groups["unit"].Value.ToLowerInvariant();
-                var px = unit switch { "em" or "rem" => size * 16, _ => size };
-                if (px >= 24) score += 6;
-                else if (px >= 20) score += 3;
-            }
+            // Earlier dates in the visible text are more likely to be the event date than
+            // dates repeated in footers, schedules, or legal text.
+            if (index < 2_000)
+                score += 4;
+            else if (index < 8_000)
+                score += 2;
 
             candidates.TryGetValue(normalized, out var existing);
             candidates[normalized] = existing + score;
@@ -361,15 +359,325 @@ public static partial class RaceHtmlScraper
         if (candidates.Count > 0)
             return candidates.MaxBy(kv => kv.Value).Key;
 
-        // Fallback: capture loose visible date text even when the primary month-pattern regex misses it.
-        foreach (Match m in LooseVisibleDateRegex().Matches(visibleText))
+        return null;
+    }
+
+    private static bool IsDescriptionMetaProperty(string nameOrProperty)
+    {
+        return nameOrProperty.Equals("description", StringComparison.OrdinalIgnoreCase)
+            || nameOrProperty.Equals("og:description", StringComparison.OrdinalIgnoreCase)
+            || nameOrProperty.Equals("twitter:description", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ExtractDateFromTextSnippet(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        var snippet = text.Length > 1_000 ? text[..1_000] : text;
+        var directMatch = DescriptionTextDateRegex().Match(snippet);
+        if (directMatch.Success)
         {
-            var normalized = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(m.Value.Trim());
-            if (normalized is not null)
-                return normalized;
+            var directDate = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(directMatch.Value);
+            if (directDate is not null)
+                return directDate;
+        }
+
+        var candidates = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (candidate, index) in EnumerateVisibleDateCandidates(snippet))
+        {
+            var normalized = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(candidate);
+            if (normalized is null)
+                continue;
+
+            var score = 1;
+            if (index < 200)
+                score += 4;
+            else if (index < 600)
+                score += 2;
+
+            candidates.TryGetValue(normalized, out var existing);
+            candidates[normalized] = existing + score;
+        }
+
+        if (candidates.Count > 0)
+            return candidates.MaxBy(kv => kv.Value).Key;
+
+        return null;
+    }
+
+    private static string? ExtractHtmlAttribute(string tag, string attributeName)
+    {
+        if (string.IsNullOrWhiteSpace(tag) || string.IsNullOrWhiteSpace(attributeName))
+            return null;
+
+        var searchIndex = 0;
+        while (searchIndex < tag.Length)
+        {
+            var attributeIndex = tag.IndexOf(attributeName, searchIndex, StringComparison.OrdinalIgnoreCase);
+            if (attributeIndex < 0)
+                return null;
+
+            var beforeIndex = attributeIndex - 1;
+            if (beforeIndex >= 0 && !char.IsWhiteSpace(tag[beforeIndex]) && tag[beforeIndex] != '<')
+            {
+                searchIndex = attributeIndex + attributeName.Length;
+                continue;
+            }
+
+            var valueStart = attributeIndex + attributeName.Length;
+            while (valueStart < tag.Length && char.IsWhiteSpace(tag[valueStart]))
+                valueStart++;
+
+            if (valueStart >= tag.Length || tag[valueStart] != '=')
+            {
+                searchIndex = attributeIndex + attributeName.Length;
+                continue;
+            }
+
+            valueStart++;
+            while (valueStart < tag.Length && char.IsWhiteSpace(tag[valueStart]))
+                valueStart++;
+
+            if (valueStart >= tag.Length)
+                return null;
+
+            var quote = tag[valueStart];
+            if (quote is not ('"' or '\''))
+            {
+                searchIndex = attributeIndex + attributeName.Length;
+                continue;
+            }
+
+            valueStart++;
+            var valueEnd = tag.IndexOf(quote, valueStart);
+            if (valueEnd < 0)
+                return null;
+
+            return tag[valueStart..valueEnd];
         }
 
         return null;
+    }
+
+    private static IEnumerable<(string Candidate, int Index)> EnumerateVisibleDateCandidates(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            yield break;
+
+        var tokens = TokenizeVisibleText(text);
+        var seen = new HashSet<(int Start, int End)>();
+
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (LooksLikeNumericDateToken(token.Text))
+            {
+                var trimmed = TrimDateCandidate(token.Text);
+                if (trimmed.Length > 0)
+                    yield return (trimmed, token.Start);
+            }
+
+            if (!LooksLikeMonthToken(token.Text))
+                continue;
+
+            var prev = i > 0 ? tokens[i - 1] : default;
+            var prev2 = i > 1 ? tokens[i - 2] : default;
+            var next = i + 1 < tokens.Count ? tokens[i + 1] : default;
+            var next2 = i + 2 < tokens.Count ? tokens[i + 2] : default;
+
+            if (IsDayLikeToken(prev.Text))
+            {
+                var end = IsYearLikeToken(next.Text) ? i + 1 : i;
+                foreach (var candidate in YieldDateCandidate(text, tokens, i - 1, end, seen))
+                    yield return candidate;
+            }
+
+            if (IsDayLikeToken(next.Text))
+            {
+                var start = i;
+                if (LooksLikeWeekdayToken(prev.Text))
+                    start = i - 1;
+                if (LooksLikeTimeToken(prev2.Text) && LooksLikeWeekdayToken(prev.Text))
+                    start = i - 2;
+
+                var end = IsYearLikeToken(next2.Text) ? i + 2 : i + 1;
+                foreach (var candidate in YieldDateCandidate(text, tokens, start, end, seen))
+                    yield return candidate;
+            }
+        }
+    }
+
+    private static IEnumerable<(string Candidate, int Index)> YieldDateCandidate(
+        string text,
+        List<(int Start, int End, string Text)> tokens,
+        int startIndex,
+        int endIndex,
+        HashSet<(int Start, int End)> seen)
+    {
+        if (startIndex < 0 || endIndex < startIndex || endIndex >= tokens.Count)
+            yield break;
+
+        var startOffset = tokens[startIndex].Start;
+        var endOffset = tokens[endIndex].End;
+        if (!seen.Add((startOffset, endOffset)))
+            yield break;
+
+        var candidate = TrimDateCandidate(text[startOffset..endOffset]);
+        if (candidate.Length == 0)
+            yield break;
+
+        yield return (candidate, startOffset);
+    }
+
+    private static List<(int Start, int End, string Text)> TokenizeVisibleText(string text)
+    {
+        var tokens = new List<(int Start, int End, string Text)>();
+        var start = -1;
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (char.IsWhiteSpace(text[i]))
+            {
+                if (start >= 0)
+                {
+                    tokens.Add((start, i, text[start..i]));
+                    start = -1;
+                }
+
+                continue;
+            }
+
+            if (start < 0)
+                start = i;
+        }
+
+        if (start >= 0)
+            tokens.Add((start, text.Length, text[start..]));
+
+        return tokens;
+    }
+
+    private static bool LooksLikeNumericDateToken(string? token)
+    {
+        var trimmed = TrimDateCandidate(token);
+        if (trimmed.Length < 8)
+            return false;
+
+        var digitCount = 0;
+        foreach (var c in trimmed)
+        {
+            if (char.IsDigit(c))
+                digitCount++;
+        }
+
+        return digitCount >= 6
+            && (trimmed.Contains('/') || trimmed.Contains('.') || trimmed.Contains('-'));
+    }
+
+    private static bool IsDayLikeToken(string? token)
+    {
+        var trimmed = TrimDateCandidate(token);
+        if (trimmed.Length is 0 or > 4)
+            return false;
+
+        if (trimmed.EndsWith(":e", StringComparison.OrdinalIgnoreCase)
+            || trimmed.EndsWith(":a", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[..^2];
+        }
+        else if (trimmed.EndsWith("st", StringComparison.OrdinalIgnoreCase)
+            || trimmed.EndsWith("nd", StringComparison.OrdinalIgnoreCase)
+            || trimmed.EndsWith("rd", StringComparison.OrdinalIgnoreCase)
+            || trimmed.EndsWith("th", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[..^2];
+        }
+
+        return int.TryParse(trimmed.TrimEnd('.'), out var day) && day is >= 1 and <= 31;
+    }
+
+    private static bool IsYearLikeToken(string? token)
+    {
+        var trimmed = TrimDateCandidate(token).TrimEnd('.');
+        return trimmed.Length == 4
+            && int.TryParse(trimmed, out var year)
+            && year is >= 2000 and <= 2100;
+    }
+
+    private static bool LooksLikeTimeToken(string? token)
+    {
+        var trimmed = TrimDateCandidate(token);
+        if (trimmed.Length < 4 || trimmed.Length > 6)
+            return false;
+
+        var colonIndex = trimmed.IndexOf(':');
+        if (colonIndex <= 0 || colonIndex >= trimmed.Length - 1)
+            return false;
+
+        return int.TryParse(trimmed[..colonIndex], out _)
+            && int.TryParse(trimmed[(colonIndex + 1)..], out _);
+    }
+
+    private static bool LooksLikeWeekdayToken(string? token)
+    {
+        var trimmed = TrimDateCandidate(token);
+        if (trimmed.Length < 3)
+            return false;
+
+        var normalized = StripDiacritics(trimmed.ToLowerInvariant());
+        return normalized.StartsWith("mon", StringComparison.Ordinal)
+            || normalized.StartsWith("tue", StringComparison.Ordinal)
+            || normalized.StartsWith("wed", StringComparison.Ordinal)
+            || normalized.StartsWith("thu", StringComparison.Ordinal)
+            || normalized.StartsWith("fri", StringComparison.Ordinal)
+            || normalized.StartsWith("sat", StringComparison.Ordinal)
+            || normalized.StartsWith("sun", StringComparison.Ordinal)
+            || normalized.StartsWith("man", StringComparison.Ordinal)
+            || normalized.StartsWith("tis", StringComparison.Ordinal)
+            || normalized.StartsWith("ons", StringComparison.Ordinal)
+            || normalized.StartsWith("tor", StringComparison.Ordinal)
+            || normalized.StartsWith("fre", StringComparison.Ordinal)
+            || normalized.StartsWith("lor", StringComparison.Ordinal)
+            || normalized.StartsWith("son", StringComparison.Ordinal)
+            || normalized.StartsWith("monday", StringComparison.Ordinal)
+            || normalized.StartsWith("tuesday", StringComparison.Ordinal)
+            || normalized.StartsWith("wednesday", StringComparison.Ordinal)
+            || normalized.StartsWith("thursday", StringComparison.Ordinal)
+            || normalized.StartsWith("friday", StringComparison.Ordinal)
+            || normalized.StartsWith("saturday", StringComparison.Ordinal)
+            || normalized.StartsWith("sunday", StringComparison.Ordinal);
+    }
+
+    private static bool LooksLikeMonthToken(string? token)
+    {
+        var trimmed = TrimDateCandidate(token);
+        if (trimmed.Length < 3)
+            return false;
+
+        var normalized = StripDiacritics(trimmed.ToLowerInvariant());
+        return normalized.StartsWith("jan", StringComparison.Ordinal)
+            || normalized.StartsWith("feb", StringComparison.Ordinal)
+            || normalized.StartsWith("mar", StringComparison.Ordinal)
+            || normalized.StartsWith("apr", StringComparison.Ordinal)
+            || normalized is "maj" or "mai" or "may"
+            || normalized.StartsWith("jun", StringComparison.Ordinal)
+            || normalized.StartsWith("jul", StringComparison.Ordinal)
+            || normalized.StartsWith("aug", StringComparison.Ordinal)
+            || normalized.StartsWith("sep", StringComparison.Ordinal)
+            || normalized.StartsWith("okt", StringComparison.Ordinal)
+            || normalized.StartsWith("oct", StringComparison.Ordinal)
+            || normalized.StartsWith("nov", StringComparison.Ordinal)
+            || normalized.StartsWith("dec", StringComparison.Ordinal)
+            || normalized.StartsWith("dez", StringComparison.Ordinal);
+    }
+
+    private static string TrimDateCandidate(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        return text.Trim().Trim(',', ';', ':', '|', '(', ')', '[', ']', '{', '}', '"', '\'');
     }
 
     /// <summary>

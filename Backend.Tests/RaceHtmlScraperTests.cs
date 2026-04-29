@@ -362,6 +362,45 @@ public class RaceHtmlScraperTests
     }
 
     [Fact]
+    public void ExtractDate_ParsesDateFromLargeNoisyPage()
+    {
+        var html = "<html><body><h1>Osterlen Trail</h1><div>5 september 2026 kl. 10:00</div>"
+            + new string(' ', 1000)
+            + string.Concat(Enumerable.Repeat("<div>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>", 5000))
+            + "</body></html>";
+
+        var date = RaceHtmlScraper.ExtractDate(html);
+
+        Assert.Equal("2026-09-05", date);
+    }
+
+        [Fact]
+        public void ExtractDate_PrefersDescriptionMetaDateOverNoisyYearMenu()
+        {
+                const string html = """
+                        <html>
+                            <head>
+                                <meta property="og:title" content="Race-PM 22km" />
+                                <meta property="og:description" content="Fogarolli Trail 22 K RACE PM Plats och starttid: Lördag den 18:e april kl. 11:00 Christinehof. Bansträckning: Omkring 22km." />
+                            </head>
+                            <body>
+                                <nav>
+                                    <a href="/2025.html">2025</a>
+                                    <a href="/2024.html">2024</a>
+                                    <a href="/2018.html">2018</a>
+                                    <a href="/2017.html">2017</a>
+                                </nav>
+                            </body>
+                        </html>
+                        """;
+
+                var date = RaceHtmlScraper.ExtractDate(html);
+
+                Assert.NotNull(date);
+                Assert.Matches(@"^\d{4}-04-18$", date);
+        }
+
+    [Fact]
     public void ExtractEventName_PicksJsonLdNameOverTitle()
     {
         const string html = """

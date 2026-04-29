@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{backendUrl}}/admin/functions/ScrapeRaceWorker
+  url: {{backendUrl}}/scrape/organizer
   body: json
   auth: none
 }
@@ -16,7 +16,7 @@ headers {
 
 body:json {
   {
-    "input": "mmctrail.no"
+    "organizerKey": "mmctrail.no"
   }
 }
 

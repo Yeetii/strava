@@ -80,20 +80,6 @@ public static partial class RaceScrapeDiscovery
             return $"{year}-{month}-{day}";
         }
 
-        if (DateOnly.TryParse(cleaned, CultureInfo.InvariantCulture, out var dateOnly))
-            return dateOnly.ToString("yyyy-MM-dd");
-
-        var dateCandidate = PlainDateRegex.Match(cleaned).Value;
-        if (!string.IsNullOrWhiteSpace(dateCandidate)
-            && DateOnly.TryParse(dateCandidate, CultureInfo.InvariantCulture, out dateOnly))
-        {
-            return dateOnly.ToString("yyyy-MM-dd");
-        }
-
-        if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture,
-            DateTimeStyles.None, out var dt))
-            return dt.ToString("yyyy-MM-dd");
-
         // Yearless formats like "September 11" or "11 September" — infer nearest upcoming year.
         cleaned = cleaned.Trim().Trim(',').Trim();
         foreach (var fmt in new[] { "MMMM d", "d MMMM", "MMM d", "d MMM" })
@@ -108,6 +94,20 @@ public static partial class RaceScrapeDiscovery
                 return candidate.ToString("yyyy-MM-dd");
             }
         }
+
+        if (DateOnly.TryParse(cleaned, CultureInfo.InvariantCulture, out var dateOnly))
+            return dateOnly.ToString("yyyy-MM-dd");
+
+        var dateCandidate = PlainDateRegex.Match(cleaned).Value;
+        if (!string.IsNullOrWhiteSpace(dateCandidate)
+            && DateOnly.TryParse(dateCandidate, CultureInfo.InvariantCulture, out dateOnly))
+        {
+            return dateOnly.ToString("yyyy-MM-dd");
+        }
+
+        if (DateTime.TryParse(cleaned, CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var dt))
+            return dt.ToString("yyyy-MM-dd");
 
         return null;
     }
@@ -377,7 +377,7 @@ public static partial class RaceScrapeDiscovery
 
 
 
-    [GeneratedRegex(@"(\d+)(?:st|nd|rd|th)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(\d+)(?::?(?:st|nd|rd|th|e|a))\b", RegexOptions.IgnoreCase)]
     private static partial Regex OrdinalSuffixRegex();
 
     // Derives a Cosmos-safe feature ID from a URL.

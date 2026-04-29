@@ -1,7 +1,9 @@
 using Azure.Messaging.ServiceBus;
 using Backend.Scrapers;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -47,6 +49,47 @@ public class ScrapeRaceWorker(
             (message, ct) => new ValueTask(ProcessSingleAsync(message, actions, ct)));
     }
 
+    [Function("ScrapeRaceHttp")]
+    public async Task<HttpResponseData> RunHttp(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "scrape/organizer")] HttpRequestData req,
+        CancellationToken cancellationToken)
+    {
+        ScrapeRaceMessage? parsed;
+        try
+        {
+            parsed = await req.ReadFromJsonAsync<ScrapeRaceMessage>(cancellationToken);
+        }
+        catch
+        {
+            var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+            await bad.WriteStringAsync("Invalid JSON body", cancellationToken);
+            return bad;
+        }
+
+        var organizerKey = parsed?.OrganizerKey?.Trim();
+        if (string.IsNullOrWhiteSpace(organizerKey))
+        {
+            var bad = req.CreateResponse(HttpStatusCode.BadRequest);
+            await bad.WriteStringAsync("Missing required field: organizerKey", cancellationToken);
+            return bad;
+        }
+
+        var doc = await _organizerClient.GetByIdAsync(organizerKey, cancellationToken);
+        if (doc is null)
+        {
+            var notFound = req.CreateResponse(HttpStatusCode.NotFound);
+            await notFound.WriteStringAsync($"No organizer document for key '{organizerKey}'", cancellationToken);
+            return notFound;
+        }
+
+        await RunScrapePipelineAsync(organizerKey, doc, cancellationToken);
+
+        var updated = await _organizerClient.GetByIdAsync(organizerKey, cancellationToken);
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        await response.WriteAsJsonAsync(updated, cancellationToken);
+        return response;
+    }
+
     private async Task ProcessSingleAsync(ServiceBusReceivedMessage message, ServiceBusMessageActions actions, CancellationToken cancellationToken)
     {
         var request = DeserializeMessage(message);
@@ -75,6 +118,20 @@ public class ScrapeRaceWorker(
             return;
         }
 
+        try
+        {
+            await RunScrapePipelineAsync(organizerKey, doc, cancellationToken);
+            await TryCompleteAsync(actions, message, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                ex, actions, message, _serviceBusClient, ServiceBusConfig.ScrapeRace, _logger, cancellationToken);
+        }
+    }
+
+    private async Task RunScrapePipelineAsync(string organizerKey, RaceOrganizerDocument doc, CancellationToken cancellationToken)
+    {
         // 2. Synthesize a ScrapeJob from the merged discovery data.
         var job = BuildScrapeJobFromDocument(doc);
 
@@ -89,98 +146,87 @@ public class ScrapeRaceWorker(
             ? new Dictionary<string, ScraperOutputHashes>(doc.ScraperHashes, StringComparer.Ordinal)
             : new Dictionary<string, ScraperOutputHashes>(StringComparer.Ordinal);
 
-        try
+        // 3a. Specialized scrapers (utmb, itra).
+        foreach (var (scraperKey, scraper) in _scrapers)
         {
-            // 3a. Specialized scrapers (utmb, itra).
-            foreach (var (scraperKey, scraper) in _scrapers)
-            {
-                if (!scraper.CanHandle(job)) continue;
+            if (!scraper.CanHandle(job)) continue;
 
-                RaceScraperResult? result;
-                try
+            RaceScraperResult? result;
+            try
+            {
+                result = await scraper.ScrapeAsync(job, httpClient, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Scraper {Scraper} failed for {Key}", scraperKey, organizerKey);
+                continue;
+            }
+
+            if (result is null) continue;
+
+            var output = ToScraperOutput(result, scrapedAtUtc);
+            var newHashes = ComputeHashes(output);
+            scraperHashes[scraperKey] = newHashes;
+
+            if (TryGetPreviousHashes(doc, scraperKey, out var prevHashes))
+            {
+                if (prevHashes.RoutesHash == newHashes.RoutesHash && prevHashes.PropertiesHash == newHashes.PropertiesHash)
                 {
-                    result = await scraper.ScrapeAsync(job, httpClient, cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Scraper {Scraper} failed for {Key}", scraperKey, organizerKey);
+                    unchanged++;
                     continue;
                 }
 
-                if (result is null) continue;
+                if (prevHashes.RoutesHash == newHashes.RoutesHash)
+                {
+                    await _organizerClient.PatchScraperPropertiesAsync(organizerKey, scraperKey, output, cancellationToken);
+                    propsPatched++;
+                    scrapersRun++;
+                    _logger.LogInformation("Scraper/{Scraper}: patched properties for {Key}", scraperKey, organizerKey);
+                    continue;
+                }
+            }
 
-                var output = ToScraperOutput(result, scrapedAtUtc);
+            await _organizerClient.WriteScraperOutputAsync(organizerKey, scraperKey, output, cancellationToken);
+            fullWrites++;
+            scrapersRun++;
+            _logger.LogInformation("Scraper/{Scraper}: wrote {RouteCount} routes for {Key}",
+                scraperKey, output.Routes?.Count ?? 0, organizerKey);
+        }
+
+        // 3b. BFS scraper — scrape every general URL from the organizer doc.
+        var bfsUrls = CollectBfsUrls(doc);
+        if (bfsUrls.Count > 0)
+        {
+            _logger.LogInformation("BFS: scraping {Count} URLs for {Key}", bfsUrls.Count, organizerKey);
+            RaceScraperResult? bfsResult;
+            try
+            {
+                bfsResult = await _bfsScraper.ScrapeAsync(bfsUrls, httpClient, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Scraper bfs failed for {Key}", organizerKey);
+                bfsResult = null;
+            }
+
+            if (bfsResult is not null)
+            {
+                var output = ToScraperOutput(bfsResult, scrapedAtUtc);
                 var newHashes = ComputeHashes(output);
-                scraperHashes[scraperKey] = newHashes;
+                scraperHashes["bfs"] = newHashes;
 
-                if (TryGetPreviousHashes(doc, scraperKey, out var prevHashes))
+                if (TryGetPreviousHashes(doc, "bfs", out var prevHashes))
                 {
                     if (prevHashes.RoutesHash == newHashes.RoutesHash && prevHashes.PropertiesHash == newHashes.PropertiesHash)
                     {
                         unchanged++;
-                        continue;
                     }
-
-                    if (prevHashes.RoutesHash == newHashes.RoutesHash)
+                    else if (prevHashes.RoutesHash == newHashes.RoutesHash)
                     {
-                        await _organizerClient.PatchScraperPropertiesAsync(organizerKey, scraperKey, output, cancellationToken);
+                        await _organizerClient.PatchScraperPropertiesAsync(organizerKey, "bfs", output, cancellationToken);
                         propsPatched++;
                         scrapersRun++;
-                        _logger.LogInformation("Scraper/{Scraper}: patched properties for {Key}", scraperKey, organizerKey);
-                        continue;
-                    }
-                }
-
-                await _organizerClient.WriteScraperOutputAsync(organizerKey, scraperKey, output, cancellationToken);
-                fullWrites++;
-                scrapersRun++;
-                _logger.LogInformation("Scraper/{Scraper}: wrote {RouteCount} routes for {Key}",
-                    scraperKey, output.Routes?.Count ?? 0, organizerKey);
-            }
-
-            // 3b. BFS scraper — scrape every general URL from the organizer doc.
-            var bfsUrls = CollectBfsUrls(doc);
-            if (bfsUrls.Count > 0)
-            {
-                _logger.LogInformation("BFS: scraping {Count} URLs for {Key}", bfsUrls.Count, organizerKey);
-                RaceScraperResult? bfsResult;
-                try
-                {
-                    bfsResult = await _bfsScraper.ScrapeAsync(bfsUrls, httpClient, cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Scraper bfs failed for {Key}", organizerKey);
-                    bfsResult = null;
-                }
-
-                if (bfsResult is not null)
-                {
-                    var output = ToScraperOutput(bfsResult, scrapedAtUtc);
-                    var newHashes = ComputeHashes(output);
-                    scraperHashes["bfs"] = newHashes;
-
-                    if (TryGetPreviousHashes(doc, "bfs", out var prevHashes))
-                    {
-                        if (prevHashes.RoutesHash == newHashes.RoutesHash && prevHashes.PropertiesHash == newHashes.PropertiesHash)
-                        {
-                            unchanged++;
-                        }
-                        else if (prevHashes.RoutesHash == newHashes.RoutesHash)
-                        {
-                            await _organizerClient.PatchScraperPropertiesAsync(organizerKey, "bfs", output, cancellationToken);
-                            propsPatched++;
-                            scrapersRun++;
-                            _logger.LogInformation("Scraper/bfs: patched properties for {Key}", organizerKey);
-                        }
-                        else
-                        {
-                            await _organizerClient.WriteScraperOutputAsync(organizerKey, "bfs", output, cancellationToken);
-                            fullWrites++;
-                            scrapersRun++;
-                            _logger.LogInformation("Scraper/bfs: wrote {RouteCount} routes for {Key}",
-                                output.Routes?.Count ?? 0, organizerKey);
-                        }
+                        _logger.LogInformation("Scraper/bfs: patched properties for {Key}", organizerKey);
                     }
                     else
                     {
@@ -191,24 +237,25 @@ public class ScrapeRaceWorker(
                             output.Routes?.Count ?? 0, organizerKey);
                     }
                 }
+                else
+                {
+                    await _organizerClient.WriteScraperOutputAsync(organizerKey, "bfs", output, cancellationToken);
+                    fullWrites++;
+                    scrapersRun++;
+                    _logger.LogInformation("Scraper/bfs: wrote {RouteCount} routes for {Key}",
+                        output.Routes?.Count ?? 0, organizerKey);
+                }
             }
-
-            if (scrapersRun == 0)
-                _logger.LogInformation("No scrapers produced output for {Key}", organizerKey);
-
-            await _organizerClient.PatchLastScrapedAsync(organizerKey, scrapedAtUtc, scraperHashes, cancellationToken);
-
-            _logger.LogInformation(
-                "Scrape writes for {Key}: {FullWrites} full writes, {PropsPatched} property-only patches, {Unchanged} unchanged/skipped",
-                organizerKey, fullWrites, propsPatched, unchanged);
-
-            await TryCompleteAsync(actions, message, cancellationToken);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
-                ex, actions, message, _serviceBusClient, ServiceBusConfig.ScrapeRace, _logger, cancellationToken);
-        }
+
+        if (scrapersRun == 0)
+            _logger.LogInformation("No scrapers produced output for {Key}", organizerKey);
+
+        await _organizerClient.PatchLastScrapedAsync(organizerKey, scrapedAtUtc, scraperHashes, cancellationToken);
+
+        _logger.LogInformation(
+            "Scrape writes for {Key}: {FullWrites} full writes, {PropsPatched} property-only patches, {Unchanged} unchanged/skipped",
+            organizerKey, fullWrites, propsPatched, unchanged);
     }
 
     // ── Settlement helpers ───────────────────────────────────────────────
