@@ -398,76 +398,320 @@ public static partial class RaceHtmlScraper
         if (string.IsNullOrWhiteSpace(html))
             return null;
 
-        // 1. Try Open Graph / Twitter meta image first — usually the hero.
-        Uri? ogCandidate = null;
+        var decoded = html.Replace("&quot;", "\"").Replace("&amp;", "&").Replace("&#039;", "'").Replace("\\/", "/");
+        var ogCandidate = ExtractOgImageCandidate(html, pageUrl);
+        if (ogCandidate is { Score: >= 0 } preferredOgCandidate)
+            return preferredOgCandidate.Uri;
+
+        return EnumerateProminentImageCandidates(decoded, pageUrl)
+            .OrderByDescending(candidate => candidate.Score)
+            .Select(candidate => candidate.Uri)
+            .FirstOrDefault()
+            ?? ogCandidate?.Uri;
+    }
+
+    private static IEnumerable<ScoredImageCandidate> EnumerateProminentImageCandidates(string html, Uri pageUrl)
+    {
+        foreach (var candidate in ExtractBackgroundImageCandidates(html, pageUrl))
+            yield return candidate;
+
+        foreach (var candidate in ExtractImgTagCandidates(html, pageUrl))
+            yield return candidate;
+
+        foreach (var candidate in ExtractAnyImageUrlCandidates(html, pageUrl))
+            yield return candidate;
+    }
+
+    private static ScoredImageCandidate? ExtractOgImageCandidate(string html, Uri pageUrl)
+    {
         foreach (Match m in OgImageRegex().Matches(html))
         {
             var content = m.Groups["url"].Value.Trim();
-            if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(content), out var uri)
-                && uri.Scheme is "http" or "https" && !IsTrackingPixel(uri))
+            if (!TryCreateScoredCandidate(pageUrl, UnescapeJsonSlash(content), position: 0, bonus: 0, out var candidate))
+                continue;
+
+            var path = candidate.Uri.AbsolutePath;
+            if (path.Contains("logo", StringComparison.OrdinalIgnoreCase)
+                || path.Contains("/elementor/thumbs/", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
             {
-                // Demote OG images that are likely logos/graphics rather than hero photos.
-                var p = uri.AbsolutePath;
-                if (p.Contains("logo", StringComparison.OrdinalIgnoreCase)
-                    || p.Contains("/elementor/thumbs/", StringComparison.OrdinalIgnoreCase)
-                    || p.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
-                    || p.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
-                {
-                    ogCandidate ??= uri;
-                    continue;
-                }
-                return uri;
+                return candidate with { Score = -3 };
+            }
+
+            return candidate;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<ScoredImageCandidate> ExtractBackgroundImageCandidates(string html, Uri pageUrl)
+    {
+        foreach (Match m in CssBackgroundImageRegex().Matches(html))
+        {
+            var rawUrl = m.Groups["url"].Value.Trim();
+            if (!HasSupportedImageExtension(rawUrl, pageUrl))
+                continue;
+
+            var position = (double)m.Index / Math.Max(html.Length, 1);
+            var bonus = 5 + GetBackgroundContextBonus(html, m.Index) + GetElementorContextBonus(GetBackgroundSelectorContext(html, m.Index));
+            if (TryCreateScoredCandidate(pageUrl, rawUrl, position, bonus, out var candidate))
+                yield return candidate;
+        }
+    }
+
+    private static IEnumerable<ScoredImageCandidate> ExtractImgTagCandidates(string html, Uri pageUrl)
+    {
+        foreach (Match m in ImgRegex().Matches(html))
+        {
+            var tag = m.Value;
+            var imageUrl = GetImgCandidateUrl(tag);
+            if (string.IsNullOrWhiteSpace(imageUrl))
+                continue;
+
+            var classValue = ImgClassRegex().Match(tag).Groups["class"].Value;
+            var bonus = (HasBackgroundClassHint(classValue) ? 4 : 0)
+                + GetImageDimensionScoreAdjustment(tag)
+                + GetElementorContextBonus(tag + " " + GetSurroundingContext(html, m.Index, 400, 0));
+            var position = (double)m.Index / Math.Max(html.Length, 1);
+            if (TryCreateScoredCandidate(pageUrl, imageUrl, position, bonus, out var candidate))
+                yield return candidate;
+        }
+    }
+
+    private static IEnumerable<ScoredImageCandidate> ExtractAnyImageUrlCandidates(string html, Uri pageUrl)
+    {
+        foreach (Match m in AnyImageUrlRegex().Matches(html))
+        {
+            if (IsInsideImgTag(html, m.Index))
+                continue;
+
+            var position = (double)m.Index / Math.Max(html.Length, 1);
+            var bonus = GetGenericImageContextBonus(html, m.Index);
+            if (TryCreateScoredCandidate(pageUrl, UnescapeJsonSlash(m.Groups["url"].Value), position, bonus, out var candidate))
+                yield return candidate;
+        }
+    }
+
+    private static bool TryCreateScoredCandidate(Uri pageUrl, string rawUrl, double position, int bonus, out ScoredImageCandidate candidate)
+    {
+        candidate = default;
+        if (!Uri.TryCreate(pageUrl, rawUrl, out var uri)
+            || uri.Scheme is not ("http" or "https")
+            || IsTrackingPixel(uri))
+        {
+            return false;
+        }
+
+        var score = ScoreImageUrl(uri) + (int)Math.Round(2 * (1 - position)) + bonus;
+        candidate = new ScoredImageCandidate(uri, score);
+        return true;
+    }
+
+    private static bool HasSupportedImageExtension(string rawUrl, Uri pageUrl)
+    {
+        if (!Uri.TryCreate(pageUrl, rawUrl, out var uri))
+            return false;
+
+        var extension = Path.GetExtension(uri.AbsolutePath);
+        return extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".webp", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".png", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".gif", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".svg", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private readonly record struct ScoredImageCandidate(Uri Uri, int Score);
+
+    private static string? GetImgCandidateUrl(string imgTag)
+    {
+        foreach (var rawValue in new[]
+        {
+            ImgSrcRegex().Match(imgTag).Groups["src"].Value,
+            ImgDataSrcRegex().Match(imgTag).Groups["src"].Value,
+            ImgDataFullImageRegex().Match(imgTag).Groups["src"].Value,
+            ImgDataLightImageRegex().Match(imgTag).Groups["src"].Value,
+        })
+        {
+            if (string.IsNullOrWhiteSpace(rawValue) || rawValue.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return UnescapeJsonSlash(rawValue);
+        }
+
+        return null;
+    }
+
+    private static bool HasBackgroundClassHint(string classValue)
+    {
+        if (string.IsNullOrWhiteSpace(classValue))
+            return false;
+
+        foreach (var token in classValue.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.Equals("bg", StringComparison.OrdinalIgnoreCase)
+                || token.Contains("background", StringComparison.OrdinalIgnoreCase)
+                || token.StartsWith("bg-", StringComparison.OrdinalIgnoreCase)
+                || token.EndsWith("-bg", StringComparison.OrdinalIgnoreCase)
+                || token.Contains("_bg", StringComparison.OrdinalIgnoreCase)
+                || token.Contains("bg_", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
             }
         }
 
-        // 2. Find ALL image URLs anywhere in the HTML (img src, background-image, data-settings JSON, style attrs, etc.)
-        //    Decode HTML entities and JSON slash escaping so all URL forms become plain https://...
-        var decoded = html.Replace("&quot;", "\"").Replace("&amp;", "&").Replace("&#039;", "'").Replace("\\/", "/");
-        Uri? best = null;
-        var bestScore = int.MinValue;
+        return false;
+    }
 
-        void Consider(Uri uri, double position, int bonus = 0)
+    private static int GetBackgroundContextBonus(string html, int matchIndex)
+    {
+        return GetClassBasedBackgroundBonus(html, matchIndex) + GetHeroContextBonus(GetBackgroundSelectorContext(html, matchIndex));
+    }
+
+    private static int GetGenericImageContextBonus(string html, int matchIndex)
+    {
+        var context = GetSurroundingContext(html, matchIndex, 240, 240);
+        var bonus = GetHeroContextBonus(context) + GetElementorContextBonus(context);
+
+        if (context.Contains("background_slideshow_gallery", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("background_background\":\"slideshow", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("elementor-background-slideshow", StringComparison.OrdinalIgnoreCase))
         {
-            if (IsTrackingPixel(uri)) return;
-            var score = ScoreImageUrl(uri) + (int)Math.Round(2 * (1 - position)) + bonus;
-            if (score > bestScore) { bestScore = score; best = uri; }
+            bonus += 10;
         }
 
-        // 2a. background-image: url(...) — can contain relative URLs, so resolve against page.
-        foreach (Match m in CssBackgroundImageRegex().Matches(decoded))
+        return bonus;
+    }
+
+    private static int GetClassBasedBackgroundBonus(string html, int matchIndex)
+    {
+        var tagContext = TryGetContainingTag(html, matchIndex);
+        var classValue = tagContext is not null
+            ? ImgClassRegex().Match(tagContext).Groups["class"].Value
+            : null;
+
+        return HasBackgroundClassHint(classValue ?? string.Empty) ? 4 : 0;
+    }
+
+    private static int GetElementorContextBonus(string context)
+    {
+        if (string.IsNullOrWhiteSpace(context))
+            return 0;
+
+        var bonus = 0;
+        if (context.Contains("elementor", StringComparison.OrdinalIgnoreCase))
+            bonus += 3;
+
+        if (context.Contains("elementor-widget-image", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("data-elementor", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("elementor-section", StringComparison.OrdinalIgnoreCase))
         {
-            var rawUrl = m.Groups["url"].Value.Trim();
-            if (!Uri.TryCreate(pageUrl, rawUrl, out var uri)
-                || uri.Scheme is not ("http" or "https"))
-                continue;
-            var ext = uri.AbsolutePath.AsSpan();
-            var dot = ext.LastIndexOf('.');
-            if (dot < 0) continue;
-            ext = ext.Slice(dot);
-            if (!ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
-                && !ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
-                && !ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)
-                && !ext.Equals(".png", StringComparison.OrdinalIgnoreCase)
-                && !ext.Equals(".gif", StringComparison.OrdinalIgnoreCase)
-                && !ext.Equals(".svg", StringComparison.OrdinalIgnoreCase))
-                continue;
-            var position = (double)m.Index / Math.Max(decoded.Length, 1);
-            // Bonus: background-image is usually a hero/banner, worth boosting.
-            Consider(uri, position, bonus: 3);
+            bonus += 2;
         }
 
-        // 2b. Absolute image URLs anywhere in the HTML (img src, JSON, style attrs, etc.)
-        foreach (Match m in AnyImageUrlRegex().Matches(decoded))
+        return bonus;
+    }
+
+    private static int GetHeroContextBonus(string context)
+    {
+        if (context.Contains("kb-bg-slide", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("kt-row-has-bg", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("kb-row-layout-wrap", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("elementor-background-slideshow", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("hero", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("banner", StringComparison.OrdinalIgnoreCase))
         {
-            var rawUrl = UnescapeJsonSlash(m.Groups["url"].Value);
-            if (!Uri.TryCreate(pageUrl, rawUrl, out var uri)
-                || uri.Scheme is not ("http" or "https"))
-                continue;
-            var position = (double)m.Index / Math.Max(decoded.Length, 1);
-            Consider(uri, position);
+            return 8;
         }
 
-        return best ?? ogCandidate;
+        return 0;
+    }
+
+    private static string? TryGetContainingTag(string html, int matchIndex)
+    {
+        var tagStart = html.LastIndexOf('<', matchIndex);
+        if (tagStart < 0)
+            return null;
+
+        var tagEnd = html.IndexOf('>', matchIndex);
+        if (tagEnd < 0 || tagEnd <= tagStart)
+            return null;
+
+        var nestedTagEnd = html.LastIndexOf('>', matchIndex);
+        if (nestedTagEnd > tagStart)
+            return null;
+
+        return html[tagStart..(tagEnd + 1)];
+    }
+
+    private static string GetBackgroundSelectorContext(string html, int matchIndex)
+    {
+        var contextStart = Math.Max(0, matchIndex - 200);
+        var context = html[contextStart..matchIndex];
+
+        var lastBrace = context.LastIndexOf('{');
+        if (lastBrace >= 0)
+            context = context[..lastBrace];
+
+        var lastCloseBrace = context.LastIndexOf('}');
+        if (lastCloseBrace >= 0 && lastCloseBrace < context.Length - 1)
+            context = context[(lastCloseBrace + 1)..];
+
+        return context;
+    }
+
+    private static string GetSurroundingContext(string html, int matchIndex, int beforeChars, int afterChars)
+    {
+        var start = Math.Max(0, matchIndex - beforeChars);
+        var length = Math.Min(html.Length - start, beforeChars + afterChars);
+        return html.Substring(start, length);
+    }
+
+    private static int GetImageDimensionScoreAdjustment(string imgTag)
+    {
+        if (string.IsNullOrWhiteSpace(imgTag))
+            return 0;
+
+        var width = TryParseAttributeDimension(ImgWidthRegex().Match(imgTag).Groups["width"].Value);
+        var height = TryParseAttributeDimension(ImgHeightRegex().Match(imgTag).Groups["height"].Value);
+
+        if (!width.HasValue || !height.HasValue)
+            return 0;
+
+        var score = 0;
+
+        if (width.Value > height.Value)
+            score += 2;
+
+        if (width.Value > 400 && height.Value > 200)
+            score += 10;
+
+        if (width.Value <= 48 && height.Value <= 48)
+            score -= 25;
+
+        if (width.Value * height.Value <= 4096)
+            score -= 15;
+
+        return score;
+    }
+
+    private static bool IsInsideImgTag(string html, int matchIndex)
+    {
+        var tag = TryGetContainingTag(html, matchIndex);
+        return tag?.StartsWith("<img", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static int? TryParseAttributeDimension(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var digitsMatch = LeadingIntegerRegex().Match(value.Trim());
+        if (!digitsMatch.Success)
+            return null;
+
+        return int.TryParse(digitsMatch.Groups["value"].Value, out var dimension) ? dimension : null;
     }
 
     /// <summary>
@@ -485,10 +729,10 @@ public static partial class RaceHtmlScraper
             var tag = m.Value;
             if (!tag.Contains("logo", StringComparison.OrdinalIgnoreCase)) continue;
 
-            var src = ImgSrcRegex().Match(tag).Groups["src"].Value;
-            if (string.IsNullOrWhiteSpace(src) || src.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            var imageUrl = GetImgCandidateUrl(tag);
+            if (string.IsNullOrWhiteSpace(imageUrl))
                 continue;
-            if (Uri.TryCreate(pageUrl, UnescapeJsonSlash(src), out var uri)
+            if (Uri.TryCreate(pageUrl, imageUrl, out var uri)
                 && uri.Scheme is "http" or "https")
                 return uri;
         }
@@ -507,8 +751,19 @@ public static partial class RaceHtmlScraper
 
     private static bool IsTrackingPixel(Uri uri)
     {
+        var host = uri.Host;
         var path = uri.AbsolutePath;
-        return path.Contains("pixel", StringComparison.OrdinalIgnoreCase)
+        return (host.Equals("www.facebook.com", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("facebook.com", StringComparison.OrdinalIgnoreCase))
+               && path.Equals("/tr", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("www.google-analytics.com", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("google-analytics.com", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("region1.google-analytics.com", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("stats.g.doubleclick.net", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("www.googletagmanager.com", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("connect.facebook.net", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("pixel.wp.com", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("pixel", StringComparison.OrdinalIgnoreCase)
             || path.Contains("tracker", StringComparison.OrdinalIgnoreCase)
             || path.Contains("spacer", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) && path.Contains("1x1", StringComparison.OrdinalIgnoreCase);
@@ -522,7 +777,7 @@ public static partial class RaceHtmlScraper
         if (path.Contains("icon") || path.Contains("avatar") || path.Contains("emoji")
             || path.Contains("spinner") || path.Contains("loading")
             || path.Contains("map") || path.Contains("karta")
-            || path.Contains("download") || path.Contains("upload"))
+            || path.Contains("download"))
             return -100;
 
         var score = 0;

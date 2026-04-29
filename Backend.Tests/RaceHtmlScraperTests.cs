@@ -410,6 +410,133 @@ public class RaceHtmlScraperTests
     }
 
     [Fact]
+    public void ExtractProminentImage_PrefersImgWithBackgroundClass()
+    {
+        const string html = """
+            <img src="/images/gallery.jpg" class="card-image" />
+            <img src="/images/hero.jpg" class="race-background hero-media" />
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/images/hero.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractProminentImage_PrefersImgWithLargeDimensions()
+    {
+        const string html = """
+            <img src="/images/gallery.jpg" width="320" height="180" />
+            <img src="/images/hero.jpg" width="1200" height="630" />
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/images/hero.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractProminentImage_PrefersKadenceBackgroundHero()
+    {
+        const string html = """
+            <img src="/images/gallery.jpg" width="1200" height="630" />
+            <style>
+                .kb-row-layout-wrap.kt-row-has-bg.kb-bg-slide {
+                    background-image: url('/images/hero-background.jpg');
+                }
+            </style>
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/images/hero-background.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractProminentImage_UsesLazyLoadedDataSrcImage()
+    {
+        const string html = """
+            <img src="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%201200%20800%22%3E%3C/svg%3E"
+                 data-src="/images/information-map.png"
+                 width="1200"
+                 height="800"
+                 class="lazyload kb-img wp-image-3174"
+                 alt="Karta tävlingsområde" />
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/information/"));
+
+        Assert.Equal("https://example.com/images/information-map.png", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractProminentImage_PrefersLandscapeImageWhenOtherwiseSimilar()
+    {
+        const string html = """
+            <img src="/images/portrait.jpg" width="700" height="900" />
+            <img src="/images/landscape.jpg" width="900" height="700" />
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/images/landscape.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractProminentImage_IgnoresFacebookTrackingPixel()
+    {
+        const string html = """
+            <img src="https://www.facebook.com/tr?id=647680993661992&ev=PageView&noscript=1" width="1200" height="630" />
+            <img src="/images/real-hero.jpg" width="1200" height="630" />
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/images/real-hero.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractProminentImage_PrefersElementorSlideshowImageOverLaterInlineImage()
+    {
+        const string html = """
+            <section data-settings='{"background_background":"slideshow","background_slideshow_gallery":[{"url":"https://example.com/images/elementor-hero.jpg"}]}'></section>
+            <img src="https://example.com/images/later-content.jpg" width="1200" height="800" />
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/images/elementor-hero.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractProminentImage_UsesElementorSlideshowImageFromEscapedDataSettings()
+    {
+        const string html = """
+            <meta property="og:image" content="https://example.com/wp-content/uploads/elementor/thumbs/race-logo.png" />
+            <section data-settings="{&quot;background_background&quot;:&quot;slideshow&quot;,&quot;background_slideshow_gallery&quot;:[{&quot;id&quot;:10371,&quot;url&quot;:&quot;https:\/\/example.com\/wp-content\/uploads\/2024\/08\/hero-1.jpg&quot;},{&quot;id&quot;:10373,&quot;url&quot;:&quot;https:\/\/example.com\/wp-content\/uploads\/2024\/08\/hero-2.jpg&quot;}],&quot;background_slideshow_slide_duration&quot;:2000}">
+                <img data-src="https://example.com/wp-content/uploads/elementor/thumbs/race-logo.png" alt="Race logo" />
+            </section>
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/wp-content/uploads/2024/08/hero-1.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
+    public void ExtractProminentImage_IgnoresTinyDecorativeImages()
+    {
+        const string html = """
+            <img src="https://example.com/images/decorative-badge.png" width="18" height="12" />
+            <img src="https://example.com/images/real-hero.jpg" width="1200" height="800" />
+            """;
+
+        var image = RaceHtmlScraper.ExtractProminentImage(html, new Uri("https://example.com/race"));
+
+        Assert.Equal("https://example.com/images/real-hero.jpg", image?.AbsoluteUri);
+    }
+
+    [Fact]
     public void ExtractLogo_FindsImageWithLogoAltText()
     {
         const string html = """

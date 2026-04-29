@@ -530,6 +530,33 @@ public static partial class RaceHtmlScraper
     [GeneratedRegex(@"src\s*=\s*[""'](?<src>[^""']+)[""']", RegexOptions.IgnoreCase)]
     private static partial Regex ImgSrcRegex();
 
+    // Extracts the data-src attribute from an <img> tag.
+    [GeneratedRegex(@"data-src\s*=\s*[""'](?<src>[^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex ImgDataSrcRegex();
+
+    // Extracts the data-full-image attribute from an <img> tag.
+    [GeneratedRegex(@"data-full-image\s*=\s*[""'](?<src>[^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex ImgDataFullImageRegex();
+
+    // Extracts the data-light-image attribute from an <img> tag.
+    [GeneratedRegex(@"data-light-image\s*=\s*[""'](?<src>[^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex ImgDataLightImageRegex();
+
+    // Extracts the class attribute from an <img> tag.
+    [GeneratedRegex(@"class\s*=\s*[""'](?<class>[^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex ImgClassRegex();
+
+    // Extracts the width attribute from an <img> tag.
+    [GeneratedRegex(@"width\s*=\s*[""'](?<width>[^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex ImgWidthRegex();
+
+    // Extracts the height attribute from an <img> tag.
+    [GeneratedRegex(@"height\s*=\s*[""'](?<height>[^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex ImgHeightRegex();
+
+    [GeneratedRegex(@"^(?<value>\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex LeadingIntegerRegex();
+
     // Matches <link rel="icon" href="..."> or <link rel="shortcut icon" href="...">.
     [GeneratedRegex(@"<link\b[^>]*rel\s*=\s*[""'](?:shortcut\s+)?icon[""'][^>]*href\s*=\s*[""'](?<href>[^""']+)[""']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex LinkIconRegex();
