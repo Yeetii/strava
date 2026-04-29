@@ -158,7 +158,9 @@ public static partial class RaceAssembler
             if (route.Coordinates is { Count: >= 2 })
             {
                 var positions = route.Coordinates
-                    .Where(c => c.Length >= 2)
+                    .Where(c => c.Length >= 2
+                        && c[0] is >= -180 and <= 180
+                        && c[1] is >= -90 and <= 90)
                     .Select(c => new Position(c[0], c[1]))
                     .ToArray();
 

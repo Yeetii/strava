@@ -1,0 +1,26 @@
+meta {
+  name: Trigger RaceDiscoveryWorker
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{backendUrl}}/admin/functions/RaceDiscoveryWorker
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "input": "{\"agent\": \"{{agent}}\", \"page\": {{page}}}"
+  }
+}
+
+vars:pre-request {
+  agent: skyrunning
+  page: 1
+}

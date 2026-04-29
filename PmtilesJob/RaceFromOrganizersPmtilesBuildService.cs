@@ -1,8 +1,6 @@
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
@@ -11,33 +9,29 @@ using Shared.Services;
 namespace PmtilesJob;
 
 /// <summary>
-/// Builds race PMTiles directly from <c>raceOrganizers</c> Cosmos documents, bypassing the
-/// <c>races</c> container. Runs assembly inline using <see cref="RaceAssembler"/>.
+/// Builds race PMTiles directly from organizer blob documents, running
+/// assembly inline using <see cref="RaceAssembler"/>.
 /// </summary>
 public class RaceFromOrganizersPmtilesBuildService
 {
-    private const string DefaultBlobContainerName = "race-tiles";
     private const string ProductionBlobName = "production/trails.pmtiles";
     private const string StagingPrefix = "staging";
 
-    private readonly CosmosClient _cosmosClient;
+    private readonly BlobOrganizerStore _organizerStore;
     private readonly BlobServiceClient _blobServiceClient;
     private readonly PmtilesUtilityService _pmtilesUtilityService;
     private readonly ILogger<RaceFromOrganizersPmtilesBuildService> _logger;
-    private readonly string _blobContainerName;
 
     public RaceFromOrganizersPmtilesBuildService(
-        CosmosClient cosmosClient,
+        BlobOrganizerStore organizerStore,
         BlobServiceClient blobServiceClient,
         PmtilesUtilityService pmtilesUtilityService,
-        ILogger<RaceFromOrganizersPmtilesBuildService> logger,
-        IConfiguration configuration)
+        ILogger<RaceFromOrganizersPmtilesBuildService> logger)
     {
-        _cosmosClient = cosmosClient;
+        _organizerStore = organizerStore;
         _blobServiceClient = blobServiceClient;
         _pmtilesUtilityService = pmtilesUtilityService;
         _logger = logger;
-        _blobContainerName = configuration.GetValue<string>(AppConfig.RaceTilesBlobContainerName) ?? DefaultBlobContainerName;
     }
 
     public async Task BuildAsync(CancellationToken cancellationToken)
@@ -70,34 +64,26 @@ public class RaceFromOrganizersPmtilesBuildService
 
     private async Task<(string GeoJsonPath, int FeatureCount)> AssembleAndExportToGeoJsonAsync(string runId, CancellationToken cancellationToken)
     {
-        var cosmosContainer = _cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.RaceOrganizersContainer);
-        var query = new QueryDefinition("SELECT * FROM c");
-        var iterator = cosmosContainer.GetItemQueryIterator<RaceOrganizerDocument>(query);
-
         var features = new List<Feature>();
         var organizerCount = 0;
 
-        while (iterator.HasMoreResults)
+        await foreach (var doc in _organizerStore.StreamAllAsync(maxConcurrency: 32, cancellationToken))
         {
-            var page = await iterator.ReadNextAsync(cancellationToken);
-            foreach (var doc in page)
+            organizerCount++;
+            var assembled = await RaceAssembler.AssembleRacesAsync(doc, geocodingService: null, cancellationToken);
+            foreach (var storedFeature in assembled)
             {
-                organizerCount++;
-                var assembled = await RaceAssembler.AssembleRacesAsync(doc, geocodingService: null, cancellationToken);
-                foreach (var storedFeature in assembled)
+                var geoJsonFeature = storedFeature.ToFeature();
+                if (geoJsonFeature.Id is not null)
                 {
-                    var geoJsonFeature = storedFeature.ToFeature();
-                    if (geoJsonFeature.Id is not null)
-                    {
-                        geoJsonFeature.Properties["featureId"] = geoJsonFeature.Id;
-                    }
-
-                    features.Add(geoJsonFeature);
+                    geoJsonFeature.Properties["featureId"] = geoJsonFeature.Id;
                 }
 
-                if (organizerCount % 500 == 0)
-                    _logger.LogInformation("Assembled {OrganizerCount} organizers so far, {FeatureCount} features...", organizerCount, features.Count);
+                features.Add(geoJsonFeature);
             }
+
+            if (organizerCount % 500 == 0)
+                _logger.LogInformation("Assembled {OrganizerCount} organizers so far, {FeatureCount} features...", organizerCount, features.Count);
         }
 
         _logger.LogInformation("Assembled {FeatureCount} race features from {OrganizerCount} organizers. Serializing GeoJSON...", features.Count, organizerCount);
@@ -142,7 +128,7 @@ public class RaceFromOrganizersPmtilesBuildService
 
     private async Task<BlobContainerClient> GetContainerAsync(CancellationToken cancellationToken)
     {
-        var container = _blobServiceClient.GetBlobContainerClient(_blobContainerName);
+        var container = _blobServiceClient.GetBlobContainerClient(BlobContainerNames.RaceTiles);
         await container.CreateIfNotExistsAsync(PublicAccessType.Blob, cancellationToken: cancellationToken);
         return container;
     }

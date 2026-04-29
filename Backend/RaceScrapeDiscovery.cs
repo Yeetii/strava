@@ -429,7 +429,7 @@ public static partial class RaceScrapeDiscovery
         if (bestUrl is not null && IsIgnoredHost(bestUrl))
             return null;
         if (bestUrl is not null)
-            return (RaceOrganizerClient.DeriveOrganizerKey(bestUrl), bestUrl.AbsoluteUri);
+            return (BlobOrganizerStore.DeriveOrganizerKey(bestUrl), bestUrl.AbsoluteUri);
 
         // No URL at all — derive from name (last resort).
         var fallbackKey = BuildFeatureId(job.Name, job.Distance);

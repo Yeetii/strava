@@ -28,27 +28,47 @@ var builder = Host.CreateDefaultBuilder(args)
         services.AddSingleton<PmtilesUtilityService>();
 
         if (command.Command is PmtilesCommandKind.BuildRaceTilesFromOrganizers
-            or PmtilesCommandKind.BuildAdminAreas)
+            or PmtilesCommandKind.BuildAdminAreas
+            or PmtilesCommandKind.ExportOrganizersToBlob)
         {
-            var cosmosConnection = configuration.GetConnectionString("CosmosDBConnection")
-                ?? configuration["CosmosDBConnection"]
-                ?? throw new InvalidOperationException("CosmosDBConnection is not configured.");
-
-            services.AddSingleton(new CosmosClient(cosmosConnection));
-
-            if (command.Command == PmtilesCommandKind.BuildRaceTilesFromOrganizers)
+            if (command.Command is PmtilesCommandKind.BuildRaceTilesFromOrganizers
+                or PmtilesCommandKind.ExportOrganizersToBlob)
             {
                 var blobConnection = configuration.GetConnectionString("BlobStorageConnection")
                     ?? configuration["BlobStorageConnection"]
                     ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
 
+                var organizersContainerName = Shared.Constants.BlobContainerNames.RaceOrganizers;
+                var organizersContainerClient = new BlobContainerClient(blobConnection, organizersContainerName);
+                services.AddSingleton(sp =>
+                    new Shared.Services.BlobOrganizerStore(organizersContainerClient, sp.GetRequiredService<ILoggerFactory>()));
+
                 services.AddSingleton(new BlobServiceClient(blobConnection));
+            }
+
+            if (command.Command == PmtilesCommandKind.BuildRaceTilesFromOrganizers)
+            {
                 services.AddSingleton<RaceFromOrganizersPmtilesBuildService>();
+            }
+
+            if (command.Command is PmtilesCommandKind.BuildAdminAreas
+                or PmtilesCommandKind.ExportOrganizersToBlob)
+            {
+                var cosmosConnection = configuration.GetConnectionString("CosmosDBConnection")
+                    ?? configuration["CosmosDBConnection"]
+                    ?? throw new InvalidOperationException("CosmosDBConnection is not configured.");
+
+                services.AddSingleton(new CosmosClient(cosmosConnection));
             }
 
             if (command.Command == PmtilesCommandKind.BuildAdminAreas)
             {
                 services.AddSingleton<AdminAreaPmtilesBuildService>();
+            }
+
+            if (command.Command == PmtilesCommandKind.ExportOrganizersToBlob)
+            {
+                services.AddSingleton<ExportOrganizersToBlobService>();
             }
         }
     })
@@ -96,6 +116,13 @@ try
         {
             var job = scope.ServiceProvider.GetRequiredService<AdminAreaPmtilesBuildService>();
             await job.BuildAdminAreasAsync(command.OutputPath!, command.AdminLevels ?? AdminAreaPmtilesBuildService.DefaultAdminLevels, CancellationToken.None);
+            return 0;
+        }
+
+        case PmtilesCommandKind.ExportOrganizersToBlob:
+        {
+            var job = scope.ServiceProvider.GetRequiredService<ExportOrganizersToBlobService>();
+            await job.ExportAsync(CancellationToken.None);
             return 0;
         }
 

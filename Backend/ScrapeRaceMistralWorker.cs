@@ -17,7 +17,7 @@ namespace Backend;
 public class ScrapeRaceMistralWorker
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly RaceOrganizerClient _organizerClient;
+    private readonly BlobOrganizerStore _organizerClient;
     private readonly ServiceBusClient _serviceBusClient;
     private readonly ServiceBusSender _assembleSender;
     private readonly ILogger<ScrapeRaceMistralWorker> _logger;
@@ -28,7 +28,7 @@ public class ScrapeRaceMistralWorker
 
     public ScrapeRaceMistralWorker(
         IHttpClientFactory httpClientFactory,
-        RaceOrganizerClient organizerClient,
+        BlobOrganizerStore organizerClient,
         ServiceBusClient serviceBusClient,
         IConfiguration configuration,
         ILogger<ScrapeRaceMistralWorker> logger)
@@ -76,7 +76,7 @@ public class ScrapeRaceMistralWorker
             return;
         }
 
-        var organizerKey = RaceOrganizerClient.DeriveOrganizerKey(url);
+        var organizerKey = BlobOrganizerStore.DeriveOrganizerKey(url);
         var discovery = new SourceDiscovery
         {
             DiscoveredAtUtc = DateTime.UtcNow.ToString("o"),

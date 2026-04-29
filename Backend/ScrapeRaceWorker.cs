@@ -18,7 +18,7 @@ namespace Backend;
 public class ScrapeRaceWorker
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly RaceOrganizerClient _organizerClient;
+    private readonly BlobOrganizerStore _organizerClient;
     private readonly ServiceBusClient _serviceBusClient;
     private readonly ILogger<ScrapeRaceWorker> _logger;
 
@@ -31,7 +31,7 @@ public class ScrapeRaceWorker
 
     public ScrapeRaceWorker(
         IHttpClientFactory httpClientFactory,
-        RaceOrganizerClient organizerClient,
+        BlobOrganizerStore organizerClient,
         ServiceBusClient serviceBusClient,
         ILogger<ScrapeRaceWorker> logger)
     {
@@ -62,9 +62,8 @@ public class ScrapeRaceWorker
             return;
         }
 
-        // 1. Fetch organizer document from Cosmos.
-        var doc = await _organizerClient.GetByIdMaybe(
-            organizerKey, new Microsoft.Azure.Cosmos.PartitionKey(organizerKey), cancellationToken);
+        // 1. Fetch organizer document from blob store.
+        var doc = await _organizerClient.GetByIdAsync(organizerKey, cancellationToken);
 
         if (doc is null)
         {

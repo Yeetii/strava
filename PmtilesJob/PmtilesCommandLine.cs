@@ -8,6 +8,7 @@ public enum PmtilesCommandKind
     BuildAdminAreas,
     FilterOutdoor,
     FilterAdminBoundaries,
+    ExportOrganizersToBlob,
 }
 
 public sealed record PmtilesCommandOptions(
@@ -92,6 +93,11 @@ public static class PmtilesCommandLine
         if (args.Length > 0 && string.Equals(args[0], "build-race-tiles-from-organizers", StringComparison.OrdinalIgnoreCase))
         {
             return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTilesFromOrganizers);
+        }
+
+        if (args.Length > 0 && string.Equals(args[0], "export-organizers-to-blob", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PmtilesCommandOptions(PmtilesCommandKind.ExportOrganizersToBlob);
         }
 
         return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTilesFromOrganizers);

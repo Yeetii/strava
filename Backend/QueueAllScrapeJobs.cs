@@ -10,7 +10,7 @@ namespace Backend;
 /// discovered by multiple sources (e.g. UTMB + ITRA + DUV) only produces a single scrape job.
 /// </summary>
 public class QueueAllScrapeJobs(
-    RaceOrganizerClient raceOrganizerClient,
+    BlobOrganizerStore raceOrganizerClient,
     RaceDiscoveryService discoveryService,
     ILogger<QueueAllScrapeJobs> logger)
 {

@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace Backend;
 
-public class RaceDiscoveryService(ServiceBusClient serviceBusClient, RaceOrganizerClient organizerClient, ILoggerFactory loggerFactory)
+public class RaceDiscoveryService(ServiceBusClient serviceBusClient, BlobOrganizerStore organizerClient, ILoggerFactory loggerFactory)
 {
     internal static readonly TimeSpan AutomaticScrapeFreshnessWindow = TimeSpan.FromDays(6);
     private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);

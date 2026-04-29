@@ -1,6 +1,5 @@
 using Azure.Storage.Blobs;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
@@ -10,19 +9,15 @@ namespace Backend;
 public class QueueRaceTileBuildJobs
 {
     private const string DirtyFlagBlobName = "dirty.flag";
-    private const string DefaultBlobContainerName = "race-tiles";
 
     private readonly BlobServiceClient _blobServiceClient;
-    private readonly IConfiguration _configuration;
     private readonly ILogger<QueueRaceTileBuildJobs> _logger;
 
     public QueueRaceTileBuildJobs(
         BlobServiceClient blobServiceClient,
-        IConfiguration configuration,
         ILogger<QueueRaceTileBuildJobs> logger)
     {
         _blobServiceClient = blobServiceClient;
-        _configuration = configuration;
         _logger = logger;
     }
 
@@ -48,12 +43,11 @@ public class QueueRaceTileBuildJobs
 
     private async Task MarkDirtyAsync(CancellationToken cancellationToken)
     {
-        var blobContainerName = _configuration.GetValue<string>(AppConfig.RaceTilesBlobContainerName) ?? DefaultBlobContainerName;
-        var container = _blobServiceClient.GetBlobContainerClient(blobContainerName);
+        var container = _blobServiceClient.GetBlobContainerClient(BlobContainerNames.RaceTiles);
         await container.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
 
         var dirtyBlob = container.GetBlobClient(DirtyFlagBlobName);
         await dirtyBlob.UploadAsync(BinaryData.FromString(DateTime.UtcNow.ToString("o")), overwrite: true, cancellationToken: cancellationToken);
-        _logger.LogInformation("Marked race tiles dirty for rebuild in container {Container}.", blobContainerName);
+        _logger.LogInformation("Marked race tiles dirty for rebuild in container {Container}.", BlobContainerNames.RaceTiles);
     }
 }

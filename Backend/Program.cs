@@ -106,10 +106,14 @@ var host = new HostBuilder()
 
         services.AddSingleton(serviceProvider =>
         {
-            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
-            var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.RaceOrganizersContainer);
+            var cfg = serviceProvider.GetRequiredService<IConfiguration>();
+            var connStr = cfg.GetValue<string>("BlobStorageConnection")
+                ?? throw new Exception("BlobStorageConnection is not configured");
+            var containerName = BlobContainerNames.RaceOrganizers;
+            var containerClient = new BlobContainerClient(connStr, containerName);
+            containerClient.CreateIfNotExists();
             var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            return new RaceOrganizerClient(container, loggerFactory);
+            return new BlobOrganizerStore(containerClient, loggerFactory);
         });
 
         services.AddSingleton<AdminBoundaryMetricsEnricher>();
