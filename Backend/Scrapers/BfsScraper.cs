@@ -351,6 +351,11 @@ internal sealed class BfsScraper(ILogger logger)
                 foreach (var slug in RaceDayMapScraper.ExtractSlugs(html))
                     raceDayMapSlugs.Add(slug);
 
+                // Garmin Connect activity/share pages do not expose a direct .gpx link in HTML,
+                // but their activity ID maps to a stable GPX export endpoint.
+                if (TryGetGarminConnectGpxDownloadUrl(pageUrl, out var garminGpxDownloadUrl))
+                    gpxUrlToPage.TryAdd(garminGpxDownloadUrl.AbsoluteUri, (html, pageUrl));
+
                 // Collect any RideWithGPS route IDs found in iframes on this page.
                 foreach (var routeId in RideWithGpsScraper.ExtractRouteIds(html))
                     rwgpsRouteIds.Add(routeId);
@@ -487,6 +492,17 @@ internal sealed class BfsScraper(ILogger logger)
 
             foreach (var (pageUri, pageHtml) in pagesToProcess)
             {
+                if (TryGetGarminConnectGpxDownloadUrl(pageUri, out var garminGpxDownloadUrl))
+                {
+                    gpxUrlToPage.TryAdd(garminGpxDownloadUrl.AbsoluteUri, (sourceHtml, sourcePageUrl));
+
+                    // Public Garmin activity pages expose enough metadata to build a fallback
+                    // route even when the export endpoint redirects to sign-in HTML.
+                    var garminCoursePage = DetectCoursePage(pageUri, pageHtml, 1);
+                    if (garminCoursePage is not null)
+                        coursePages.Add(garminCoursePage with { Url = sourcePageUrl, Html = pageHtml });
+                }
+
                 foreach (var slug in RaceDayMapScraper.ExtractSlugs(pageHtml))
                     raceDayMapSlugs.Add(slug);
                 foreach (var routeId in RideWithGpsScraper.ExtractRouteIds(pageHtml))
@@ -910,6 +926,42 @@ internal sealed class BfsScraper(ILogger logger)
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if (!m.Success) return false;
         downloadUrl = new Uri($"https://drive.google.com/uc?export=download&confirm=t&id={m.Groups[1].Value}");
+        return true;
+    }
+
+    /// <summary>
+    /// Checks whether a URL points to a Garmin Connect activity/course page and, if so,
+    /// returns the corresponding GPX export URL.
+    /// </summary>
+    private static bool TryGetGarminConnectGpxDownloadUrl(Uri uri, out Uri downloadUrl)
+    {
+        downloadUrl = null!;
+
+        var host = uri.Host;
+        var isGarminHost = host.Equals("connect.garmin.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".garmin.com", StringComparison.OrdinalIgnoreCase);
+        if (!isGarminHost)
+            return false;
+
+        var activityMatch = System.Text.RegularExpressions.Regex.Match(
+            uri.AbsolutePath,
+            @"^/(?:app|modern)/activity/(?<id>\d+)(?:/share/\d+)?/?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        if (activityMatch.Success)
+        {
+            downloadUrl = new Uri($"https://connect.garmin.com/app/proxy/download-service/export/gpx/activity/{activityMatch.Groups["id"].Value}");
+            return true;
+        }
+
+        var courseMatch = System.Text.RegularExpressions.Regex.Match(
+            uri.AbsolutePath,
+            @"^/(?:app|modern)/course/(?<id>\d+)/?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!courseMatch.Success)
+            return false;
+
+        downloadUrl = new Uri($"https://connect.garmin.com/app/proxy/course-service/course/{courseMatch.Groups["id"].Value}/download");
         return true;
     }
 

@@ -11,6 +11,13 @@ namespace Shared.Services;
 /// </summary>
 public static partial class RaceAssembler
 {
+    private sealed class LineCoverageCandidate(StoredFeature feature, List<double> distancesKm, double? approximateKm)
+    {
+        public StoredFeature Feature { get; } = feature;
+        public List<double> DistancesKm { get; } = distancesKm;
+        public double? ApproximateKm { get; } = approximateKm;
+    }
+
     /// <summary>Trailing unit when validating purely numeric multi-distance fields.</summary>
     private static readonly Regex NumericMultiTokenSuffix = new(@"(?i)\s*(km|k|mi|m)\s*$", RegexOptions.Compiled);
 
@@ -191,14 +198,11 @@ public static partial class RaceAssembler
     /// </summary>
     public static bool AssemblyAlreadyCoversRoughDistanceKm(double km, IReadOnlyList<StoredFeature> results)
     {
-        foreach (var r in results)
-        {
-            if (r.Geometry is not LineString line)
-                continue;
-            if (LineRoughlyCoversKm(line, r.Properties, km))
-                return true;
-        }
-        return false;
+        var lines = results
+            .Where(r => r.Geometry is LineString)
+            .Select(BuildLineCoverageCandidate)
+            .ToList();
+        return AnyLineRoughlyCoversKm(km, lines);
     }
 
     private static bool LineRoughlyCoversKm(LineString line, IDictionary<string, dynamic> props, double km)
@@ -218,6 +222,37 @@ public static partial class RaceAssembler
 
         var approxKm = ApproximateGreatCircleLineLengthKm(line);
         return approxKm.HasValue && DistancesRoughMatchKm(approxKm.Value, km);
+    }
+
+    private static LineCoverageCandidate BuildLineCoverageCandidate(StoredFeature line)
+    {
+        var distancesKm = GetFeatureDistancesKm(line);
+        var approximateKm = distancesKm.Count == 0 && line.Geometry is LineString geometry
+            ? ApproximateGreatCircleLineLengthKm(geometry)
+            : null;
+        return new LineCoverageCandidate(line, distancesKm, approximateKm);
+    }
+
+    private static bool AnyLineRoughlyCoversKm(double km, IReadOnlyList<LineCoverageCandidate> lines)
+    {
+        foreach (var line in lines)
+        {
+            if (LineRoughlyCoversKm(line, km))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool LineRoughlyCoversKm(LineCoverageCandidate line, double km)
+    {
+        foreach (var distanceKm in line.DistancesKm)
+        {
+            if (DistancesRoughMatchKm(distanceKm, km))
+                return true;
+        }
+
+        return line.ApproximateKm.HasValue && DistancesRoughMatchKm(line.ApproximateKm.Value, km);
     }
 
     private static double? ApproximateGreatCircleLineLengthKm(LineString line)
@@ -454,7 +489,10 @@ public static partial class RaceAssembler
         var toRemove = new HashSet<string>(StringComparer.Ordinal);
 
         // Pass 1: absorb points into same-distance linestrings.
-        var lines = results.Where(r => r.Geometry is LineString).ToList();
+        var lines = results
+            .Where(r => r.Geometry is LineString)
+            .Select(BuildLineCoverageCandidate)
+            .ToList();
         if (lines.Count > 0)
         {
             foreach (var point in results.Where(r => r.Geometry is Point))
@@ -469,19 +507,18 @@ public static partial class RaceAssembler
                 {
                     foreach (var pkm in pointKms)
                     {
-                        if (!AssemblyAlreadyCoversRoughDistanceKm(pkm, [line])) continue;
+                        if (!LineRoughlyCoversKm(line, pkm)) continue;
 
-                        var lineKms = GetFeatureDistancesKm(line);
-                        var delta = lineKms.Count > 0
-                            ? lineKms.Min(lkm => Math.Abs(lkm - pkm))
-                            : ApproximateGreatCircleLineLengthKm((LineString)line.Geometry) is { } approx
+                        var delta = line.DistancesKm.Count > 0
+                            ? line.DistancesKm.Min(lkm => Math.Abs(lkm - pkm))
+                            : line.ApproximateKm is { } approx
                                 ? Math.Abs(approx - pkm)
                                 : 0;
 
                         if (delta < bestDelta)
                         {
                             bestDelta = delta;
-                            bestLine = line;
+                            bestLine = line.Feature;
                         }
                     }
                 }

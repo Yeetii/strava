@@ -91,6 +91,7 @@ public static partial class RaceAssembler
         var dedupedRoutes = DeduplicateRoutesByDistance(allRoutes, flatDiscoveries);
 
         var results = new List<StoredFeature>();
+        var assembledLines = new List<LineCoverageCandidate>();
         var geocodedLocationCache = new Dictionary<string, (double lat, double lng)?>(StringComparer.OrdinalIgnoreCase);
 
         if (dedupedRoutes.Count == 0)
@@ -164,7 +165,9 @@ public static partial class RaceAssembler
 
                 if (positions.Length >= 2)
                 {
-                    results.Add(BuildLineFeature(featureId, positions, props));
+                    var line = BuildLineFeature(featureId, positions, props);
+                    results.Add(line);
+                    assembledLines.Add(BuildLineCoverageCandidate(line));
                     continue;
                 }
             }
@@ -174,7 +177,7 @@ public static partial class RaceAssembler
 
             if (fallbackCoords is (var lat, var lng))
             {
-                if (effectiveKm.HasValue && AssemblyAlreadyCoversRoughDistanceKm(effectiveKm.Value, results))
+                if (effectiveKm.HasValue && AnyLineRoughlyCoversKm(effectiveKm.Value, assembledLines))
                     continue;
 
                 results.Add(BuildPointFeature(featureId, lng, lat, props));
@@ -186,7 +189,7 @@ public static partial class RaceAssembler
         var unclaimed = GetUnclaimedDiscoveryDistances(flatDiscoveries, claimedKm);
         foreach (var (distKm, distLabel) in unclaimed)
         {
-            if (distKm.HasValue && AssemblyAlreadyCoversRoughDistanceKm(distKm.Value, results))
+            if (distKm.HasValue && AnyLineRoughlyCoversKm(distKm.Value, assembledLines))
                 continue;
 
             var featureId = $"{organizerKey}-{results.Count}";

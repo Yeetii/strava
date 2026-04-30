@@ -100,6 +100,174 @@ public class BfsScraperTests
         Assert.Single(result.Routes);
     }
 
+    [Fact]
+    public async Task GarminConnectActivityPage_IsConvertedToGpxExportAndParsed()
+    {
+        const string activityId = "13247673776";
+        var activityPage = "<html><body><h1>Garmin Connect</h1></body></html>";
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "connect.garmin.com"
+                && uri.AbsolutePath == $"/app/proxy/download-service/export/gpx/activity/{activityId}")
+            {
+                return GpxResponse();
+            }
+
+            if (uri.Host == "connect.garmin.com"
+                && uri.AbsolutePath == $"/app/activity/{activityId}")
+            {
+                return HtmlResponse(activityPage);
+            }
+
+            throw new InvalidOperationException($"Unexpected request for {uri}");
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri($"https://connect.garmin.com/app/activity/{activityId}")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Single(result.Routes);
+        Assert.Equal(new Uri($"https://connect.garmin.com/app/activity/{activityId}"), result.Routes[0].SourceUrl);
+        Assert.Equal(GpxSourceKind.Garmin, result.Routes[0].GpxSource);
+    }
+
+    [Fact]
+    public async Task GarminConnectActivityLinkWithoutGpxText_IsDetectedFromRacePage()
+    {
+        const string activityId = "13247673776";
+        var racePage = $"""
+            <html><body>
+              <p><a href="https://connect.garmin.com/modern/activity/{activityId}">Lank till banan via Garmin Connect.</a></p>
+            </body></html>
+            """;
+        var garminActivityPage = "<html><body><h1>Garmin Connect</h1></body></html>";
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "connect.garmin.com"
+                && uri.AbsolutePath == $"/app/proxy/download-service/export/gpx/activity/{activityId}")
+            {
+                return GpxResponse();
+            }
+
+            if (uri.Host == "connect.garmin.com"
+                && uri.AbsolutePath == $"/modern/activity/{activityId}")
+            {
+                return HtmlResponse(garminActivityPage);
+            }
+
+            if (uri.Host == "vikbovandan.se" && uri.AbsolutePath == "/about/")
+                return HtmlResponse(racePage);
+
+            throw new InvalidOperationException($"Unexpected request for {uri}");
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri("https://vikbovandan.se/about/")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Single(result.Routes);
+        Assert.Equal(new Uri("https://vikbovandan.se/about/"), result.Routes[0].SourceUrl);
+        Assert.Equal(GpxSourceKind.Garmin, result.Routes[0].GpxSource);
+    }
+
+    [Fact]
+    public async Task GarminConnectActivityLink_FallsBackToCourseMetadata_WhenExportReturnsHtml()
+    {
+        const string activityId = "13247673776";
+        var racePage = $"""
+            <html><body>
+              <p><a href="https://connect.garmin.com/modern/activity/{activityId}">Lank till banan via Garmin Connect.</a></p>
+            </body></html>
+            """;
+
+        var garminActivityPage = """
+            <html><body>
+              <div>2023-12-27</div>
+              <div>45.00 km</div>
+              <div>348 m Total Ascent</div>
+            </body></html>
+            """;
+
+        var garminDownloadHtml = "<html><body><a href=\"/signin\">Sign In</a></body></html>";
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "connect.garmin.com"
+                && uri.AbsolutePath == $"/app/proxy/download-service/export/gpx/activity/{activityId}")
+            {
+                return HtmlResponse(garminDownloadHtml);
+            }
+
+            if (uri.Host == "connect.garmin.com"
+                && uri.AbsolutePath == $"/modern/activity/{activityId}")
+            {
+                return HtmlResponse(garminActivityPage);
+            }
+
+            if (uri.Host == "vikbovandan.se" && uri.AbsolutePath == "/about/")
+                return HtmlResponse(racePage);
+
+            throw new InvalidOperationException($"Unexpected request for {uri}");
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri("https://vikbovandan.se/about/")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        var route = Assert.Single(result.Routes);
+        Assert.Equal(new Uri("https://vikbovandan.se/about/"), route.SourceUrl);
+        Assert.Null(route.GpxUrl);
+        Assert.Null(route.GpxSource);
+        Assert.Equal("45 km", route.Distance);
+        Assert.Equal(348, route.ElevationGain);
+    }
+
+    [Fact]
+    public async Task GarminConnectCoursePage_IsConvertedToDownloadAndParsed()
+    {
+        const string courseId = "372436629";
+        var coursePage = "<html><body><h1>Garmin Course</h1></body></html>";
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "connect.garmin.com"
+                && uri.AbsolutePath == $"/app/proxy/course-service/course/{courseId}/download")
+            {
+                return GpxResponse();
+            }
+
+            if (uri.Host == "connect.garmin.com"
+                && uri.AbsolutePath == $"/modern/course/{courseId}")
+            {
+                return HtmlResponse(coursePage);
+            }
+
+            throw new InvalidOperationException($"Unexpected request for {uri}");
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri($"https://connect.garmin.com/modern/course/{courseId}")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Single(result.Routes);
+        Assert.Equal(new Uri($"https://connect.garmin.com/modern/course/{courseId}"), result.Routes[0].SourceUrl);
+        Assert.Equal(GpxSourceKind.Garmin, result.Routes[0].GpxSource);
+    }
+
     /// <summary>
     /// When a Drive folder contains a subfolder whose name contains "STAGES",
     /// that subfolder must be skipped and its files must not appear in results.

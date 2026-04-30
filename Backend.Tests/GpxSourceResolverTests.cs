@@ -10,6 +10,8 @@ public class GpxSourceResolverTests
     [InlineData("https://www.dropbox.com/sh/abc/x?dl=0", GpxSourceKind.Dropbox)]
     [InlineData("https://www.dropbox.com/sh/abc/x?dl=0#tracks%2Froute.gpx", GpxSourceKind.Dropbox)]
     [InlineData("https://dl.dropboxusercontent.com/s/abc/file.gpx", GpxSourceKind.Dropbox)]
+    [InlineData("https://connect.garmin.com/app/proxy/download-service/export/gpx/activity/13247673776", GpxSourceKind.Garmin)]
+    [InlineData("https://connect.garmin.com/app/proxy/course-service/course/372436629/download", GpxSourceKind.Garmin)]
     [InlineData("https://drive.google.com/uc?export=download&id=1", GpxSourceKind.GoogleDrive)]
     [InlineData("https://mmctrail.no/files/route.gpx", GpxSourceKind.InternalGpx)]
     [InlineData("https://www.mmctrail.no/files/route.gpx", GpxSourceKind.InternalGpx)]

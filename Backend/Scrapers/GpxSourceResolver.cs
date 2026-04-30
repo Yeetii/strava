@@ -4,6 +4,7 @@ namespace Backend.Scrapers;
 public static class GpxSourceKind
 {
     public const string Dropbox = "dropbox";
+    public const string Garmin = "garmin_connect";
     public const string GoogleDrive = "google_drive";
     public const string Itra = "itra";
     public const string Utmb = "utmb";
@@ -31,6 +32,9 @@ public static class GpxSourceResolver
         if (DropboxShareParser.IsDropboxRelatedUri(gpxUrl))
             return GpxSourceKind.Dropbox;
 
+        if (IsGarminRelatedHost(gpxUrl))
+            return GpxSourceKind.Garmin;
+
         if (IsGoogleDriveRelatedHost(gpxUrl))
             return GpxSourceKind.GoogleDrive;
 
@@ -52,6 +56,13 @@ public static class GpxSourceResolver
         return h.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase)
             || h.Equals("docs.google.com", StringComparison.OrdinalIgnoreCase)
             || h.Equals("drive.usercontent.google.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGarminRelatedHost(Uri uri)
+    {
+        var h = uri.Host;
+        return h.Equals("connect.garmin.com", StringComparison.OrdinalIgnoreCase)
+            || h.EndsWith(".garmin.com", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSameRegistrableDomain(Uri candidate, Uri origin)

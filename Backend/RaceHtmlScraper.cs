@@ -375,14 +375,17 @@ public static partial class RaceHtmlScraper
                 results.Add(uri);
         }
 
-        // Cloud shared folders are often linked as "Downloads" / "download area" without "gpx" in the anchor text.
+        // Cloud shared folders and Garmin Connect route pages are often linked without "gpx"
+        // in the anchor text, but still resolve to downloadable route data.
         foreach (Match match in AnchorRegex().Matches(html))
         {
             var href = match.Groups["href"].Value;
             if (href.StartsWith('#')) continue;
             if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
             if (uri.Scheme is not ("http" or "https")) continue;
-            if (!IsGoogleDriveSharedFolder(uri) && !DropboxShareParser.IsDropboxSharedFolder(uri)) continue;
+            if (!IsGoogleDriveSharedFolder(uri)
+                && !DropboxShareParser.IsDropboxSharedFolder(uri)
+                && !IsGarminConnectRouteUrl(uri)) continue;
             if (seen.Add(uri.AbsoluteUri))
                 results.Add(uri);
         }
@@ -393,6 +396,19 @@ public static partial class RaceHtmlScraper
     private static bool IsGoogleDriveSharedFolder(Uri uri) =>
         uri.Host.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase)
         && uri.AbsolutePath.StartsWith("/drive/folders/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsGarminConnectRouteUrl(Uri uri)
+    {
+        var host = uri.Host;
+        if (!host.Equals("connect.garmin.com", StringComparison.OrdinalIgnoreCase)
+            && !host.EndsWith(".garmin.com", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return Regex.IsMatch(
+            uri.AbsolutePath,
+            @"^/(?:app|modern)/(?:activity/\d+(?:/share/\d+)?|course/\d+)/?$",
+            RegexOptions.IgnoreCase);
+    }
 
     // Extracts links whose visible anchor text contains a km distance (e.g. "25 km", "10km",
     // "5.5 km"). Such links may point to GPX files that have no ".gpx" extension and no

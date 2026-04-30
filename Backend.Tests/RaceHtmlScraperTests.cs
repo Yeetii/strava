@@ -129,6 +129,20 @@ public class RaceHtmlScraperTests
         Assert.Contains(links, u => u.Host.Contains("dropbox", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void ExtractGpxLinksFromHtml_FindsGarminConnectLink_when_anchor_has_no_gpx_word()
+    {
+        const string html = """
+            <html><body>
+              <p><a href="https://connect.garmin.com/modern/activity/13247673776">Lank till banan via Garmin Connect.</a></p>
+            </body></html>
+            """;
+
+        var links = RaceHtmlScraper.ExtractGpxLinksFromHtml(html, new Uri("https://vikbovandan.se/about/"));
+
+        Assert.Contains(links, u => u.AbsoluteUri == "https://connect.garmin.com/modern/activity/13247673776");
+    }
+
     // ── ExtractKmDistanceCandidateLinksFromHtml ───────────────────────────────
 
     [Fact]

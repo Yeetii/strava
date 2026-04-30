@@ -19,6 +19,7 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
     private const string BlobSuffix = "/organizer.json";
     private const string AssembledRaceFolder = "/races/";
     private const string MetaLastScrapedUtc = "lastscrapedutc"; // blob metadata keys are lowercase
+    private const string MetaTransparencyHash = "transparencyhash";
     private const int MaxRetries = 5;
 
     private readonly ILogger _logger = loggerFactory.CreateLogger<BlobOrganizerStore>();
@@ -27,6 +28,12 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         WriteIndented = true,
+    };
+
+    private static readonly JsonSerializerOptions TransparencyJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        WriteIndented = false,
     };
 
     // ── Static helpers (drop-in for RaceOrganizerClient static members) ──
@@ -228,7 +235,17 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         CancellationToken cancellationToken = default)
     {
         var prefix = AssembledRacePrefix(organizerKey);
-        var expected = new HashSet<string>(StringComparer.Ordinal);
+        var existing = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var uploadTasks = new List<Task>(races.Count);
+
+        await foreach (var item in container.GetBlobsAsync(
+            traits: BlobTraits.Metadata,
+            prefix: prefix,
+            cancellationToken: cancellationToken))
+        {
+            item.Metadata.TryGetValue(MetaTransparencyHash, out var hash);
+            existing[item.Name] = hash;
+        }
 
         foreach (var race in races)
         {
@@ -236,19 +253,39 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
                 ? race.FeatureId
                 : race.LogicalId;
             var blobName = AssembledRaceBlobKey(organizerKey, logicalId);
-            expected.Add(blobName);
+            existing.TryGetValue(blobName, out var existingHash);
+            existing.Remove(blobName);
 
             var marker = RaceAssembler.CreateTransparencyMarker(race);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(marker, TransparencyJsonOptions);
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant();
+
+            if (string.Equals(existingHash, hash, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             var blob = container.GetBlobClient(blobName);
-            await blob.UploadAsync(BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(marker, JsonOptions)), overwrite: true, cancellationToken);
+            uploadTasks.Add(blob.UploadAsync(
+                BinaryData.FromBytes(payload),
+                new BlobUploadOptions
+                {
+                    Metadata = new Dictionary<string, string>
+                    {
+                        [MetaTransparencyHash] = hash,
+                    },
+                },
+                cancellationToken));
         }
 
-        await foreach (var item in container.GetBlobsAsync(prefix: prefix, cancellationToken: cancellationToken))
+        if (uploadTasks.Count > 0)
         {
-            if (expected.Contains(item.Name))
-                continue;
+            await Task.WhenAll(uploadTasks);
+        }
 
-            await container.DeleteBlobIfExistsAsync(item.Name, cancellationToken: cancellationToken);
+        foreach (var staleBlobName in existing.Keys)
+        {
+            await container.DeleteBlobIfExistsAsync(staleBlobName, cancellationToken: cancellationToken);
         }
     }
 
