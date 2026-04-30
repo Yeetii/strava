@@ -9,6 +9,7 @@ namespace Backend.Scrapers;
 internal sealed class BfsScraper(ILogger logger)
 {
     private readonly RaceDayMapScraper _raceDayMap = new(logger);
+    private readonly RideWithGpsScraper _rideWithGps = new(logger);
     private const int MaxDepth = 3;
     private static readonly TimeSpan CrawlBudget = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MaxSingleRequestTimeout = TimeSpan.FromSeconds(30);
@@ -70,6 +71,34 @@ internal sealed class BfsScraper(ILogger logger)
                 var rdmDate = enriched[0].Date;
                 return new RaceScraperResult(enriched, ImageUrl: imageUrl, LogoUrl: logoUrl,
                     ExtractedName: extractedName, ExtractedDate: rdmDate,
+                    StartFee: startFee, Currency: currency);
+            }
+        }
+
+        // If any RideWithGPS embeds were found, scrape them and return the result directly.
+        if (bfsResult.RideWithGpsRouteIds.Count > 0)
+        {
+            var rwgpsRoutes = new List<ScrapedRoute>();
+            foreach (var routeId in bfsResult.RideWithGpsRouteIds)
+            {
+                var route = await _rideWithGps.ScrapeRouteAsync(routeId, startUrl, httpClient, cancellationToken);
+                if (route is not null)
+                    rwgpsRoutes.Add(route);
+            }
+
+            if (rwgpsRoutes.Count > 0)
+            {
+                var enriched = rwgpsRoutes.Select(r => r with
+                {
+                    Date = r.Date ?? startPageDate,
+                    ImageUrl = r.ImageUrl ?? imageUrl,
+                    LogoUrl = r.LogoUrl ?? logoUrl,
+                    StartFee = r.StartFee ?? startFee,
+                    Currency = r.Currency ?? currency,
+                    RaceType = r.RaceType ?? startPageRaceType,
+                }).ToList();
+                return new RaceScraperResult(enriched, ImageUrl: imageUrl, LogoUrl: logoUrl,
+                    ExtractedName: extractedName, ExtractedDate: startPageDate,
                     StartFee: startFee, Currency: currency);
             }
         }
@@ -194,7 +223,8 @@ internal sealed class BfsScraper(ILogger logger)
         string? StartPageHtml,
         IReadOnlyList<CoursePage> CoursePages,
         string? SupplementaryContent,
-        IReadOnlyList<string> RaceDayMapSlugs);
+        IReadOnlyList<string> RaceDayMapSlugs,
+        IReadOnlyList<string> RideWithGpsRouteIds);
 
     private record CoursePage(Uri Url, string Html, string? Distance, bool IsContentOnly = false);
 
@@ -278,6 +308,8 @@ internal sealed class BfsScraper(ILogger logger)
         var inlineGpxByUrl = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // RaceDayMap slugs found in iframe embeds on any visited page.
         var raceDayMapSlugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // RideWithGPS route IDs found in iframe embeds on any visited page.
+        var rwgpsRouteIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string? startPageHtml = null;
 
         // Process one depth level at a time, fetching all pages in the level concurrently.
@@ -324,6 +356,21 @@ internal sealed class BfsScraper(ILogger logger)
                 // Collect any RaceDayMap embed slugs found on this page.
                 foreach (var slug in RaceDayMapScraper.ExtractSlugs(html))
                     raceDayMapSlugs.Add(slug);
+
+                // Collect any RideWithGPS route IDs found in iframes on this page.
+                foreach (var routeId in RideWithGpsScraper.ExtractRouteIds(html))
+                    rwgpsRouteIds.Add(routeId);
+
+                // Collect external iframe src URLs — probe them for GPX the same way as other external links.
+                foreach (var iframeSrc in RaceHtmlScraper.ExtractIframeSrcLinksFromHtml(html, pageUrl))
+                {
+                    if (!IsSameDomain(iframeSrc, startUrl)
+                        && !iframeSrc.Host.Equals("ridewithgps.com", StringComparison.OrdinalIgnoreCase)
+                        && !iframeSrc.Host.Equals("app.racedaymap.com", StringComparison.OrdinalIgnoreCase)
+                        && !OrganizerUrlRules.IsBareSocialDomain(iframeSrc)
+                        && !OrganizerUrlRules.IsBlockedMediaDomain(iframeSrc))
+                        externalGpxProbes.TryAdd(iframeSrc.AbsoluteUri, (html, pageUrl));
+                }
 
                 var pageGpxLinks = RaceHtmlScraper.ExtractGpxLinksFromHtml(html, pageUrl);
                 foreach (var gpxLink in pageGpxLinks)
@@ -405,15 +452,18 @@ internal sealed class BfsScraper(ILogger logger)
         logger.LogDebug("BFS crawl done. Visited {Pages} pages, found {Gpx} GPX URLs, {ExtProbes} external probes, {Scripts} JS bundles",
             visitedPages.Count, gpxUrlToPage.Count, externalGpxProbes.Count, scriptBundleProbes.Count);
 
-        // Probe external "GPX"-labelled links: fetch the page and scrape it for GPX files.
-        // Any GPX found is attributed to the internal page that linked to the external site.
+        // Probe external links: fetch the page, then follow one level of same-domain course links.
+        // This handles embedded event platforms where the iframe root links onward to the actual
+        // route page (for example `/app` -> `/page/bana`). Any findings are attributed back to
+        // the internal page that linked to the external site.
         foreach (var (externalUrl, (sourceHtml, sourcePageUrl)) in externalGpxProbes.Take(5))
         {
             if (!HasRemainingBudget(deadlineUtc)) break;
-            logger.LogDebug("BFS: probing external GPX link {Url}", externalUrl);
+            logger.LogDebug("BFS: probing external link {Url}", externalUrl);
             if (gpxUrlToPage.ContainsKey(externalUrl)) continue;
 
-            var externalContent = await TryFetchStringAsync(httpClient, new Uri(externalUrl), deadlineUtc, cancellationToken);
+            var probeUri = new Uri(externalUrl);
+            var externalContent = await TryFetchStringAsync(httpClient, probeUri, deadlineUtc, cancellationToken);
             if (externalContent is null) continue;
 
             // If the external URL returned GPX directly, register it with the internal source page.
@@ -423,14 +473,38 @@ internal sealed class BfsScraper(ILogger logger)
                 continue;
             }
 
-            // Otherwise treat the content as HTML and look for GPX/download links within it.
-            var probeUri = new Uri(externalUrl);
-            var innerGpxLinks = RaceHtmlScraper.ExtractGpxLinksFromHtml(externalContent, probeUri)
-                .Concat(RaceHtmlScraper.ExtractDownloadLinksFromHtml(externalContent, probeUri))
-                .Take(10);
+            var pagesToProcess = new List<(Uri Url, string Html)> { (probeUri, externalContent) };
+            var subLinks = RaceHtmlScraper.ExtractCourseLinksFromHtml(externalContent, probeUri)
+                .Where(u => IsSameDomain(u, probeUri))
+                .Take(5)
+                .ToList();
 
-            foreach (var innerLink in innerGpxLinks)
-                gpxUrlToPage.TryAdd(innerLink.AbsoluteUri, (sourceHtml, sourcePageUrl));
+            if (subLinks.Count > 0)
+            {
+                logger.LogDebug("BFS: external link {Url} — fetching {Count} same-domain sub-links", externalUrl, subLinks.Count);
+                var subTasks = subLinks.Select(u => TryFetchStringAsync(httpClient, u, deadlineUtc, cancellationToken));
+                var subResults = await Task.WhenAll(subTasks);
+                for (int i = 0; i < subLinks.Count; i++)
+                {
+                    if (subResults[i] is not null)
+                        pagesToProcess.Add((subLinks[i], subResults[i]!));
+                }
+            }
+
+            foreach (var (pageUri, pageHtml) in pagesToProcess)
+            {
+                foreach (var slug in RaceDayMapScraper.ExtractSlugs(pageHtml))
+                    raceDayMapSlugs.Add(slug);
+                foreach (var routeId in RideWithGpsScraper.ExtractRouteIds(pageHtml))
+                    rwgpsRouteIds.Add(routeId);
+
+                var innerGpxLinks = RaceHtmlScraper.ExtractGpxLinksFromHtml(pageHtml, pageUri)
+                    .Concat(RaceHtmlScraper.ExtractDownloadLinksFromHtml(pageHtml, pageUri))
+                    .Take(10);
+
+                foreach (var innerLink in innerGpxLinks)
+                    gpxUrlToPage.TryAdd(innerLink.AbsoluteUri, (sourceHtml, sourcePageUrl));
+            }
         }
 
         logger.LogDebug("BFS: external probes done. Total GPX URLs: {Count}", gpxUrlToPage.Count);
@@ -510,7 +584,7 @@ internal sealed class BfsScraper(ILogger logger)
             supplementaryContent = (supplementaryContent is not null ? supplementaryContent + "\n" : "") + string.Join("\n", scriptBundleContent);
 
         if (gpxUrlToPage.Count == 0)
-            return new BfsResult([], startPageHtml, coursePages, supplementaryContent, [.. raceDayMapSlugs]);
+            return new BfsResult([], startPageHtml, coursePages, supplementaryContent, [.. raceDayMapSlugs], [.. rwgpsRouteIds]);
 
         // Fetch all GPX URLs concurrently.
         var gpxTasks = gpxUrlToPage.Keys.Select(url =>
@@ -569,7 +643,7 @@ internal sealed class BfsScraper(ILogger logger)
             visitedPages.Count,
             parsedCount,
             routes.Count);
-        return new BfsResult(routes, startPageHtml, coursePages, supplementaryContent, [.. raceDayMapSlugs]);
+        return new BfsResult(routes, startPageHtml, coursePages, supplementaryContent, [.. raceDayMapSlugs], [.. rwgpsRouteIds]);
     }
 
     private static CoursePage? DetectCoursePage(Uri pageUrl, string html, int depth)

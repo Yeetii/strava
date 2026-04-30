@@ -251,6 +251,120 @@ public class BfsScraperTests
         Assert.Single(result.Routes);
     }
 
+    /// <summary>
+    /// When the start page embeds a RideWithGPS iframe, the scraper should fetch the route JSON
+    /// and return a route with coordinates.
+    /// </summary>
+    [Fact]
+    public async Task RideWithGpsIframe_ReturnsRouteWithCoordinates()
+    {
+        const string routeId = "99887766";
+        var racePage = $"""
+            <html><body>
+              <h1>My Race</h1>
+              <iframe src="https://ridewithgps.com/embeds?type=route&id={routeId}&sampleGraph=true"></iframe>
+            </body></html>
+            """;
+
+        var routeJson = $$"""
+            {
+              "id": {{routeId}},
+              "name": "Marathon Route",
+              "elevation_gain": 350.0,
+              "track_points": [
+                {"x": 16.0, "y": 59.0, "e": 10.0, "d": 0.0},
+                {"x": 16.1, "y": 59.1, "e": 15.0, "d": 1200.0}
+              ]
+            }
+            """;
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "ridewithgps.com" && uri.AbsolutePath == $"/routes/{routeId}.json")
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(routeJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            return HtmlResponse(racePage);
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri("https://race.se/info")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Single(result.Routes);
+        var route = result.Routes[0];
+        Assert.Equal(2, route.Coordinates.Count);
+        Assert.Equal("Marathon Route", route.Name);
+        Assert.Equal(350.0, route.ElevationGain);
+        Assert.Equal("ridewithgps", route.GpxSource);
+    }
+
+    [Fact]
+    public async Task ExternalIframeRoot_FollowsOneLevelAndFindsRideWithGpsRoute()
+    {
+        const string routeId = "45032647";
+                var racePage = """
+                        <html><body>
+                            <script>
+                                Server.widgetsOnPage = [{"className":"embed","data":{"code":"<iframe src=\"https:\/\/eventplatform.example.com\/event\/17107\/app\" width=\"100%\" height=\"2200\"><\/iframe>"}}];
+                            </script>
+                        </body></html>
+                        """;
+
+        var iframeRoot = """
+            <html><body>
+              <a href="/event/17107/app/page/bana">Bana</a>
+            </body></html>
+            """;
+
+        var iframeCoursePage = $"""
+            <html><body>
+              <iframe src="https://ridewithgps.com/embeds?sampleGraph=true&type=route&id={routeId}"></iframe>
+            </body></html>
+            """;
+
+        var routeJson = $$"""
+            {
+              "id": {{routeId}},
+              "name": "Iframe Route",
+              "elevation_gain": 275.0,
+              "track_points": [
+                {"x": 16.0, "y": 59.0},
+                {"x": 16.1, "y": 59.1}
+              ]
+            }
+            """;
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "ridewithgps.com" && uri.AbsolutePath == $"/routes/{routeId}.json")
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(routeJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            if (uri.Host == "eventplatform.example.com" && uri.AbsolutePath == "/event/17107/app/page/bana")
+                return HtmlResponse(iframeCoursePage);
+            if (uri.Host == "eventplatform.example.com" && uri.AbsolutePath == "/event/17107/app")
+                return HtmlResponse(iframeRoot);
+            return HtmlResponse(racePage);
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri("https://motionsloppet.se/tidaholm-marathon/information")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Single(result.Routes);
+        Assert.Equal("Iframe Route", result.Routes[0].Name);
+        Assert.Equal("ridewithgps", result.Routes[0].GpxSource);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static HttpResponseMessage GpxResponse() =>

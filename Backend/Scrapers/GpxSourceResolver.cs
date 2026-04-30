@@ -10,6 +10,7 @@ public static class GpxSourceKind
     public const string InternalGpx = "internal_gpx";
     public const string ExternalGpx = "external_gpx";
     public const string RaceDayMap = "racedaymap";
+    public const string RideWithGps = "ridewithgps";
     public const string ManualGpx = "manual_gpx";
 }
 
@@ -35,6 +36,9 @@ public static class GpxSourceResolver
 
         if (gpxUrl.Host.Equals("app.racedaymap.com", StringComparison.OrdinalIgnoreCase))
             return GpxSourceKind.RaceDayMap;
+
+        if (gpxUrl.Host.Equals("ridewithgps.com", StringComparison.OrdinalIgnoreCase))
+            return GpxSourceKind.RideWithGps;
 
         if (IsSameRegistrableDomain(gpxUrl, crawlOrigin))
             return GpxSourceKind.InternalGpx;

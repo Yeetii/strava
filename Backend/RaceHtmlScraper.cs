@@ -245,6 +245,27 @@ public static partial class RaceHtmlScraper
         return (cleanHtml, visibleText);
     }
 
+    // Extracts <iframe src="..."> URLs from an HTML page (absolute https/http URLs only).
+    // Used to discover external pages embedded in the race organiser's site.
+    public static IReadOnlyCollection<Uri> ExtractIframeSrcLinksFromHtml(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var candidateHtml = html.Contains("\\/", StringComparison.Ordinal) || html.Contains("\\\"", StringComparison.Ordinal)
+            ? html.Replace("\\/", "/", StringComparison.Ordinal)
+                .Replace("\\\"", "\"", StringComparison.Ordinal)
+            : html;
+
+        return [.. IframeSrcRegex().Matches(candidateHtml)
+            .Select(m => m.Groups["src"].Value)
+            .Where(src => !string.IsNullOrEmpty(src))
+            .Select(src => Uri.TryCreate(pageUrl, src, out var uri) ? uri : null)
+            .Where(uri => uri is { Scheme: "http" or "https" })
+            .Cast<Uri>()
+            .Distinct()];
+    }
+
     // Extracts same-domain <script src="..."> URLs from an HTML page (for JS bundle scanning).
     public static IReadOnlyCollection<Uri> ExtractScriptSrcLinksFromHtml(string html, Uri pageUrl)
     {
@@ -492,6 +513,9 @@ public static partial class RaceHtmlScraper
 
     [GeneratedRegex("href\\s*=\\s*[\"'](?<href>[^\"']+)[\"']", RegexOptions.IgnoreCase)]
     private static partial Regex HrefRegex();
+
+    [GeneratedRegex(@"<iframe\b[^>]*\bsrc\s*=\s*[""'](?<src>https?://[^""']+)[""']", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex IframeSrcRegex();
 
     [GeneratedRegex(@"<script\b[^>]*\bsrc\s*=\s*[""'](?<src>[^""']+)[""']", RegexOptions.IgnoreCase)]
     private static partial Regex ScriptSrcRegex();
