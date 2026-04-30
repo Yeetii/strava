@@ -16,10 +16,12 @@ public static partial class RaceScrapeDiscovery
     // Marathon keywords are translated; non-parseable tokens are skipped.
     private static IReadOnlyList<(double Km, string Formatted)> ParseVerboseDistanceParts(string distanceVerbose)
     {
-        var parts = distanceVerbose
-            .Split(DistanceListSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var parts = DistanceListSeparatorRegex
+            .Split(distanceVerbose)
+            .Select(part => part.Trim())
+            .Where(part => part.Length > 0);
 
-        var result = new List<(double, string)>(parts.Length);
+        var result = new List<(double, string)>();
         foreach (var part in parts)
         {
             if (RaceDistanceKm.TryParseCommaListTokenKilometers(part, out var km))

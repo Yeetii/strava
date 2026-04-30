@@ -905,6 +905,7 @@ public class RaceScrapeDiscoveryTests
     [Theory]
     [InlineData("100K", "100 km")]
     [InlineData("100k, 50k, 25k", "100 km, 50 km, 25 km")]
+    [InlineData("0,8 km, 5,3 km, 10,6 km, 15,9 km, 21,2 km", "0.8 km, 5.3 km, 10.6 km, 15.9 km, 21.2 km")]
     [InlineData("100km", "100 km")]
     [InlineData("10.5K", "10.5 km")]
     [InlineData(null, null)]

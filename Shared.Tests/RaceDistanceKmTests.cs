@@ -21,6 +21,7 @@ public class RaceDistanceKmTests
     [Theory]
     [InlineData("33 km", 33.0)]
     [InlineData("50 km, 33 km", 50.0)]
+    [InlineData("0,8 km, 5,3 km", 0.8)]
     public void TryParsePrimarySegmentKilometers(string? input, double expected) =>
         Assert.Equal(expected, RaceDistanceKm.TryParsePrimarySegmentKilometers(input));
 
@@ -33,6 +34,13 @@ public class RaceDistanceKmTests
     {
         var list = RaceDistanceKm.ParseCommaSeparatedKilometers("50 km, 33 km, 21 km");
         Assert.Equal(new[] { 50.0, 33.0, 21.0 }, list);
+    }
+
+    [Fact]
+    public void ParseCommaSeparatedKilometers_ParsesDecimalCommas()
+    {
+        var list = RaceDistanceKm.ParseCommaSeparatedKilometers("0,8 km, 5,3 km, 10,6 km");
+        Assert.Equal(new[] { 0.8, 5.3, 10.6 }, list);
     }
 
     [Fact]

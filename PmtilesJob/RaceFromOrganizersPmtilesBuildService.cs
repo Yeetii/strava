@@ -71,6 +71,7 @@ public class RaceFromOrganizersPmtilesBuildService
         {
             organizerCount++;
             var assembled = await RaceAssembler.AssembleRacesAsync(doc, geocodingService: null, cancellationToken);
+            await _organizerStore.WriteAssembledRacesAsync(doc.Id, assembled, cancellationToken);
             foreach (var storedFeature in assembled)
             {
                 var geoJsonFeature = storedFeature.ToFeature();

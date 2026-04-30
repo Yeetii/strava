@@ -8,6 +8,7 @@ namespace Backend;
 public static partial class RaceScrapeDiscovery
 {
     private static readonly char[] DistanceListSeparators = [',', ';'];
+    private static readonly Regex DistanceListSeparatorRegex = new(@"(?<!\d),(?!\d)|;", RegexOptions.Compiled);
 
     // Hosts whose discovered events should be silently ignored (test/placeholder domains).
     private static readonly HashSet<string> IgnoredHosts = new(StringComparer.OrdinalIgnoreCase)
@@ -215,8 +216,7 @@ public static partial class RaceScrapeDiscovery
         if (string.IsNullOrWhiteSpace(distanceVerbose) || distanceKm <= 0)
             return null;
 
-        var parts = distanceVerbose
-            .Split(DistanceListSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var parts = SplitDistanceVerbose(distanceVerbose);
 
         string? bestToken = null;
         double bestDelta = double.MaxValue;
@@ -253,8 +253,7 @@ public static partial class RaceScrapeDiscovery
         if (string.IsNullOrWhiteSpace(distanceVerbose))
             return null;
 
-        var parts = distanceVerbose
-            .Split(DistanceListSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var parts = SplitDistanceVerbose(distanceVerbose);
 
         var formatted = new List<string>(parts.Length);
         foreach (var part in parts)
@@ -266,6 +265,15 @@ public static partial class RaceScrapeDiscovery
         }
 
         return string.Join(", ", formatted);
+    }
+
+    private static string[] SplitDistanceVerbose(string distanceVerbose)
+    {
+        return DistanceListSeparatorRegex
+            .Split(distanceVerbose)
+            .Select(part => part.Trim())
+            .Where(part => part.Length > 0)
+            .ToArray();
     }
 
     // Normalises a country string to an ISO 3166-1 alpha-2 code (e.g. "france" → "FR", "SWE" → "SE").

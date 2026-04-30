@@ -124,10 +124,7 @@ internal sealed class BfsScraper(ILogger logger)
             foreach (var r in routes)
             {
                 var name = (r.Name ?? "").Trim();
-                var numMatch = System.Text.RegularExpressions.Regex.Match(r.Distance ?? "", @"[\d.]+");
-                var km = numMatch.Success && double.TryParse(numMatch.Value,
-                    System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0.0;
+                var km = RaceDistanceKm.TryParsePrimarySegmentKilometers(r.Distance) ?? 0.0;
                 if (km > 0 && seen.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
                         && RaceDistanceKm.WithinRelativeOfReference(km, s.DistanceKm, 0.10)))
                 {
@@ -159,12 +156,8 @@ internal sealed class BfsScraper(ILogger logger)
             var dedupedPages = sameDomain
                 .GroupBy(cp =>
                 {
-                    if (cp.Distance is null) return 0;
-                    var numMatch = System.Text.RegularExpressions.Regex.Match(cp.Distance, @"[\d.]+");
-                    return numMatch.Success && double.TryParse(numMatch.Value,
-                        System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var km)
-                        ? (int)Math.Round(km) : 0;
+                    var km = RaceDistanceKm.TryParsePrimarySegmentKilometers(cp.Distance);
+                    return km.HasValue ? (int)Math.Round(km.Value) : 0;
                 })
                 .SelectMany(g => g.Key == 0
                     ? g.AsEnumerable()
@@ -253,8 +246,9 @@ internal sealed class BfsScraper(ILogger logger)
         }
 
         var name = RaceHtmlScraper.ExtractName(html, pageUrl, startPageName);
-        var distance = RaceHtmlScraper.ExtractDistanceFromUrl(pageUrl) ??
-                       RaceHtmlScraper.ExtractDistancesFromContent(html).FirstOrDefault();
+        var contentDistances = RaceHtmlScraper.ExtractDistancesFromContent(html);
+        var distance = RaceHtmlScraper.ExtractDistanceFromUrl(pageUrl)
+                   ?? (contentDistances.Count > 0 ? string.Join(", ", contentDistances) : null);
 
         var urlPath = pageUrl.AbsolutePath;
         var raceType = ExtractRaceType(urlPath, name);

@@ -20,7 +20,7 @@ public static partial class RaceAssembler
     /// Increment this whenever property-handling or merge logic changes so that stored
     /// <see cref="RaceSlotHashes"/> from previous assembly runs are automatically invalidated.
     /// </summary>
-    public const int AssemblyVersion = 5;
+    public const int AssemblyVersion = 7;
 
     // Discovery source priority (highest → lowest).
     public static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "lopplistan", "loppkartan"];
@@ -77,12 +77,13 @@ public static partial class RaceAssembler
         CancellationToken cancellationToken)
     {
         var organizerKey = doc.Id;
+        var assemblyDiscovery = PrepareDiscoveryForAssembly(doc.Discovery);
 
         // 1. Collect merged discovery metadata (priority-ordered per source) as fallback.
-        var mergedDiscovery = MergeDiscovery(doc.Discovery);
+        var mergedDiscovery = MergeDiscovery(assemblyDiscovery);
 
         // 1b. Flatten individual discovery entries in priority order for per-route matching.
-        var flatDiscoveries = FlattenDiscoveries(doc.Discovery);
+        var flatDiscoveries = FlattenDiscoveries(assemblyDiscovery);
         flatDiscoveries = DeduplicateDiscoveriesByDistance(flatDiscoveries);
 
         // 2. Collect all scraped routes in priority order (routes with coordinates come first).
@@ -127,7 +128,7 @@ public static partial class RaceAssembler
         string websiteUrl = scraperWebsite ?? doc.Url;
 
         // 5. Fetch first discovery entry that has coordinates for point fallback.
-        var coordsDiscovery = doc.Discovery?.Values
+        var coordsDiscovery = assemblyDiscovery?.Values
             .SelectMany(x => x)
             .FirstOrDefault(d => d.Latitude is not null && d.Longitude is not null);
 
@@ -207,6 +208,67 @@ public static partial class RaceAssembler
         var merged = MergeSameDistanceFeatures(results);
         AppendDistanceToAmbiguousNames(merged);
         return merged;
+    }
+
+    private static Dictionary<string, List<SourceDiscovery>>? PrepareDiscoveryForAssembly(
+        Dictionary<string, List<SourceDiscovery>>? discovery)
+    {
+        if (discovery is null || discovery.Count == 0)
+            return discovery;
+
+        var hasNonLoppkartanDiscovery = discovery.Keys.Any(key =>
+            !string.Equals(key, "loppkartan", StringComparison.OrdinalIgnoreCase));
+
+        if (!hasNonLoppkartanDiscovery)
+            return discovery;
+
+        var result = new Dictionary<string, List<SourceDiscovery>>(discovery.Count, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (source, entries) in discovery)
+        {
+            if (!string.Equals(source, "loppkartan", StringComparison.OrdinalIgnoreCase))
+            {
+                result[source] = entries;
+                continue;
+            }
+
+            result[source] = [.. entries.Select(CloneWithoutLocationCoordinates)];
+        }
+
+        return result;
+    }
+
+    private static SourceDiscovery CloneWithoutLocationCoordinates(SourceDiscovery entry)
+    {
+        return new SourceDiscovery
+        {
+            DiscoveredAtUtc = entry.DiscoveredAtUtc,
+            Name = entry.Name,
+            Date = entry.Date,
+            Latitude = null,
+            Longitude = null,
+            Distance = entry.Distance,
+            ElevationGain = entry.ElevationGain,
+            Country = entry.Country,
+            Location = null,
+            RaceType = entry.RaceType,
+            ImageUrl = entry.ImageUrl,
+            LogoUrl = entry.LogoUrl,
+            Organizer = entry.Organizer,
+            Description = entry.Description,
+            StartFee = entry.StartFee,
+            Currency = entry.Currency,
+            County = entry.County,
+            TypeLocal = entry.TypeLocal,
+            RegistrationOpen = entry.RegistrationOpen,
+            ExternalIds = entry.ExternalIds is null ? null : new Dictionary<string, string>(entry.ExternalIds),
+            SourceUrls = entry.SourceUrls is null ? null : [.. entry.SourceUrls],
+            ItraPoints = entry.ItraPoints,
+            ItraNationalLeague = entry.ItraNationalLeague,
+            Playgrounds = entry.Playgrounds is null ? null : [.. entry.Playgrounds],
+            RunningStones = entry.RunningStones,
+            UtmbWorldSeriesCategory = entry.UtmbWorldSeriesCategory,
+        };
     }
 
     // ── Merge helpers ────────────────────────────────────────────────────
@@ -458,7 +520,7 @@ public static partial class RaceAssembler
                 var km = ParseDistanceKm(token);
                 if (km.HasValue)
                 {
-                    if (!numeric.Contains(km.Value))
+                    if (km.Value > 0)
                         numeric.Add(km.Value);
                     continue;
                 }
@@ -468,13 +530,30 @@ public static partial class RaceAssembler
             }
         }
 
-        var parts = numeric
+        var canonicalNumeric = BuildCanonicalRouteKmMap(numeric
+                .Distinct()
+                .OrderBy(x => x)
+                .ToList())
+            .Values
+            .Distinct()
             .OrderBy(x => x)
-            .Select(x => string.Format(CultureInfo.InvariantCulture, "{0:G} km", x))
+            .ToList();
+
+        var parts = canonicalNumeric
+            .Select(FormatDistanceKm)
             .Concat(labels)
             .ToList();
 
         return parts.Count == 0 ? null : string.Join(", ", parts);
+    }
+
+    private static string FormatDistanceKm(double km)
+    {
+        var rounded = Math.Round(km);
+        if (Math.Abs(km - rounded) < 1e-9)
+            return string.Format(CultureInfo.InvariantCulture, "{0:0} km", rounded);
+
+        return string.Format(CultureInfo.InvariantCulture, "{0:0.###} km", km);
     }
 
     private static string? PickMostSpecificString(IEnumerable<string?> values)
@@ -793,6 +872,28 @@ public static partial class RaceAssembler
             Y = y,
             Zoom = RaceCollectionClient.DefaultZoom,
             Properties = props,
+        };
+    }
+
+    /// <summary>
+    /// Projects an assembled race feature to the lightweight geometry stored under each
+    /// organizer's <c>races/</c> transparency folder. Line geometries are downgraded to a
+    /// marker at their centroid while preserving ids, tile coordinates, and properties.
+    /// </summary>
+    public static StoredFeature CreateTransparencyMarker(StoredFeature race)
+    {
+        var centroid = GeometryCentroidHelper.GetCentroid(race.Geometry);
+
+        return new StoredFeature
+        {
+            Id = race.Id,
+            FeatureId = race.FeatureId,
+            Kind = race.Kind,
+            X = race.X,
+            Y = race.Y,
+            Zoom = race.Zoom,
+            Geometry = new Point(new Position(centroid.Lng, centroid.Lat)),
+            Properties = new Dictionary<string, dynamic>(race.Properties),
         };
     }
 

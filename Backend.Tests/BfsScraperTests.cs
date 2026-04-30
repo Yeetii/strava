@@ -251,6 +251,38 @@ public class BfsScraperTests
         Assert.Single(result.Routes);
     }
 
+    [Fact]
+    public async Task NoGpxCoursePage_CommaSeparatedDistances_AreNormalizedAndPreserved()
+    {
+        var startPage = """
+            <html><body>
+              <a href="/course">Course</a>
+            </body></html>
+            """;
+
+        var coursePage = """
+            <html><body>
+              <div>2026-09-14</div>
+              <div>0,8 km, 5,3 km, 10,6 km, 15,9 km, 21,2 km</div>
+            </body></html>
+            """;
+
+        var handler = new FuncHandler(uri => uri.AbsolutePath switch
+        {
+            "/course" => HtmlResponse(coursePage),
+            _ => HtmlResponse(startPage)
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri("https://race.com/start")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        var route = Assert.Single(result!.Routes);
+        Assert.Equal("0.8 km, 5.3 km, 10.6 km, 15.9 km, 21.2 km", route.Distance);
+    }
+
     /// <summary>
     /// When the start page embeds a RideWithGPS iframe, the scraper should fetch the route JSON
     /// and return a route with coordinates.

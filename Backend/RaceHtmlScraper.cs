@@ -208,9 +208,10 @@ public static partial class RaceHtmlScraper
             var num = m.Groups["num"].Value;
             var unitRaw = m.Groups["unit"].Value;
             var unit = unitRaw.ToLowerInvariant();
-            if (!double.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            var normalizedNum = num.Replace(',', '.');
+            if (!double.TryParse(normalizedNum, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
                 continue;
-            if (value < 1 || value > 500) continue; // filter out noise
+            if (value <= 0 || value > 500) continue; // filter out noise
             if (unitRaw == "M" || unit is "mi" or "miles" or "mile")
                 value *= 1.60934;
             var rounded = (int)Math.Round(value);
@@ -670,7 +671,7 @@ public static partial class RaceHtmlScraper
     private static partial Regex LinkTextDistanceRegex();
 
     // Matches distance in visible page content with named groups: "27 km", "100K", "100M", "42.195 km", "10 miles".
-    [GeneratedRegex(@"\b(?<num>\d+(?:\.\d+)?)\s*(?<unit>km|k|(?-i:M)|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(?<num>\d+(?:[.,]\d+)?)\s*(?<unit>km|k|(?-i:M)|mi(?:les?)?)\b", RegexOptions.IgnoreCase)]
     private static partial Regex ContentDistanceRegex();
 
     // Matches inline font-size declarations like "font-size: 24px" or "font-size:1.5em".

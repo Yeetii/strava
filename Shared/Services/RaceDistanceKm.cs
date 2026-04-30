@@ -16,6 +16,9 @@ public static class RaceDistanceKm
 
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
     private static readonly NumberStyles Float = NumberStyles.Float;
+    private static readonly Regex DistanceListSeparatorRegex = new(
+        @"(?<!\d),(?!\d)|;",
+        RegexOptions.Compiled);
 
     /// <summary>
     /// Trailing unit: meter(s), metre(s), miles, mi, km, k (case-insensitive). Excludes bare <c>m</c> and capital <c>M</c>
@@ -27,12 +30,12 @@ public static class RaceDistanceKm
 
     /// <summary>Statute miles when the suffix is an ASCII capital <c>M</c> after the number (e.g. <c>10M</c>).</summary>
     private static readonly Regex StatuteMilesCapitalM = new(
-        @"^(?<v>[\d.]+)\s*M\s*$",
+        @"^(?<v>\d+(?:[.,]\d+)?)\s*M\s*$",
         RegexOptions.Compiled);
 
     /// <summary>Metres when the suffix is a lowercase <c>m</c> after the number (e.g. <c>400m</c>).</summary>
     private static readonly Regex MetresLowercaseM = new(
-        @"^(?<v>[\d.]+)\s*m\s*$",
+        @"^(?<v>\d+(?:[.,]\d+)?)\s*m\s*$",
         RegexOptions.Compiled);
 
     /// <summary>
@@ -91,7 +94,8 @@ public static class RaceDistanceKm
     public static double? TryParsePrimarySegmentKilometers(string? distance)
     {
         if (string.IsNullOrWhiteSpace(distance)) return null;
-        var first = distance.Split(',')[0].Trim();
+        var first = SplitDistanceList(distance).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(first)) return null;
         return TryParseSingleDistanceTokenToKm(first, out var km) ? km : null;
     }
 
@@ -110,7 +114,7 @@ public static class RaceDistanceKm
         if (string.IsNullOrWhiteSpace(distance)) return [];
 
         var result = new List<double>();
-        foreach (var token in distance.Split(','))
+        foreach (var token in SplitDistanceList(distance))
         {
             var trimmed = token.Trim();
             if (trimmed.Length == 0) continue;
@@ -129,7 +133,7 @@ public static class RaceDistanceKm
         if (wordMatch.Success)
         {
             var stripped = WordOrCompactUnitSuffix.Replace(token, "").Trim();
-            if (!double.TryParse(stripped, Float, Inv, out var value))
+            if (!double.TryParse(NormalizeDecimalSeparator(stripped), Float, Inv, out var value))
             {
                 km = 0;
                 return false;
@@ -148,7 +152,7 @@ public static class RaceDistanceKm
         var capM = StatuteMilesCapitalM.Match(token);
         if (capM.Success)
         {
-            if (!double.TryParse(capM.Groups["v"].Value, Float, Inv, out var miles))
+            if (!double.TryParse(NormalizeDecimalSeparator(capM.Groups["v"].Value), Float, Inv, out var miles))
             {
                 km = 0;
                 return false;
@@ -161,7 +165,7 @@ public static class RaceDistanceKm
         var lowM = MetresLowercaseM.Match(token);
         if (lowM.Success)
         {
-            if (!double.TryParse(lowM.Groups["v"].Value, Float, Inv, out var metres))
+            if (!double.TryParse(NormalizeDecimalSeparator(lowM.Groups["v"].Value), Float, Inv, out var metres))
             {
                 km = 0;
                 return false;
@@ -171,6 +175,16 @@ public static class RaceDistanceKm
             return true;
         }
 
-        return double.TryParse(token.Trim(), Float, Inv, out km);
+        return double.TryParse(NormalizeDecimalSeparator(token.Trim()), Float, Inv, out km);
     }
+
+    private static IEnumerable<string> SplitDistanceList(string distance)
+    {
+        return DistanceListSeparatorRegex
+            .Split(distance)
+            .Select(token => token.Trim())
+            .Where(token => token.Length > 0);
+    }
+
+    private static string NormalizeDecimalSeparator(string token) => token.Replace(',', '.');
 }

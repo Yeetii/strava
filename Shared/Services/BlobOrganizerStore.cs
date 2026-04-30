@@ -17,6 +17,7 @@ namespace Shared.Services;
 public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory loggerFactory)
 {
     private const string BlobSuffix = "/organizer.json";
+    private const string AssembledRaceFolder = "/races/";
     private const string MetaLastScrapedUtc = "lastscrapedutc"; // blob metadata keys are lowercase
     private const int MaxRetries = 5;
 
@@ -216,6 +217,41 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         await blob.UploadAsync(BinaryData.FromBytes(gpxBytes), overwrite: true, cancellationToken);
     }
 
+    /// <summary>
+    /// Mirrors the latest assembled race output into per-organizer JSON blobs under
+    /// <c>{organizerKey}/races/</c> for inspection and debugging.
+    /// Stored geometries are marker-only to keep these transparency artifacts lightweight.
+    /// </summary>
+    public async Task WriteAssembledRacesAsync(
+        string organizerKey,
+        IReadOnlyList<StoredFeature> races,
+        CancellationToken cancellationToken = default)
+    {
+        var prefix = AssembledRacePrefix(organizerKey);
+        var expected = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var race in races)
+        {
+            var logicalId = !string.IsNullOrWhiteSpace(race.FeatureId)
+                ? race.FeatureId
+                : race.LogicalId;
+            var blobName = AssembledRaceBlobKey(organizerKey, logicalId);
+            expected.Add(blobName);
+
+            var marker = RaceAssembler.CreateTransparencyMarker(race);
+            var blob = container.GetBlobClient(blobName);
+            await blob.UploadAsync(BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(marker, JsonOptions)), overwrite: true, cancellationToken);
+        }
+
+        await foreach (var item in container.GetBlobsAsync(prefix: prefix, cancellationToken: cancellationToken))
+        {
+            if (expected.Contains(item.Name))
+                continue;
+
+            await container.DeleteBlobIfExistsAsync(item.Name, cancellationToken: cancellationToken);
+        }
+    }
+
     // ── Tile build ────────────────────────────────────────────────────────
 
     /// <summary>
@@ -312,6 +348,11 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
     }
 
     private static string BlobKey(string organizerKey) => $"{organizerKey}{BlobSuffix}";
+
+    private static string AssembledRacePrefix(string organizerKey) => $"{organizerKey}{AssembledRaceFolder}";
+
+    private static string AssembledRaceBlobKey(string organizerKey, string logicalId)
+        => $"{organizerKey}{AssembledRaceFolder}{logicalId}.json";
 
     private static string OrganizerKeyFromBlobName(string blobName)
         => blobName[..^BlobSuffix.Length];
