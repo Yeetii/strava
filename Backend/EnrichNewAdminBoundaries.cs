@@ -16,7 +16,7 @@ public class EnrichNewAdminBoundaries(
     [Function(nameof(EnrichNewAdminBoundaries))]
     public async Task Run(
         [CosmosDBTrigger(
-            databaseName: "DatabaseConfig.CosmosDb",
+            databaseName: DatabaseConfig.CosmosDb,
             containerName: DatabaseConfig.OsmFeaturesContainer,
             Connection = "CosmosDBConnection",
             LeaseContainerPrefix = "adminBoundaryMetrics",

@@ -25,8 +25,11 @@ namespace Backend
             {
                 var accessTokenResponse = await _apiClient.GetAsync($"{fetchJob.UserId}/accessToken");
                 if (!accessTokenResponse.IsSuccessStatusCode)
+                {
+                    var responseBody = await accessTokenResponse.Content.ReadAsStringAsync(cancellationToken);
                     throw new InvalidOperationException(
-                        $"Failed to get access token for user {fetchJob.UserId}: {(int)accessTokenResponse.StatusCode} {accessTokenResponse.ReasonPhrase}");
+                        $"Failed to get access token for user {fetchJob.UserId}: {(int)accessTokenResponse.StatusCode} {accessTokenResponse.ReasonPhrase}. Response body: {responseBody}");
+                }
 
                 var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
 

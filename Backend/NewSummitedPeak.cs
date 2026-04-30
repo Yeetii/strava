@@ -16,7 +16,7 @@ namespace Backend
         [Function("NewSummitedPeak")]
         [SignalROutput(HubName = "peakshunters")]
         public async Task<IEnumerable<SignalRMessageAction>> Run([CosmosDBTrigger(
-            databaseName: "DatabaseConfig.CosmosDb",
+            databaseName: DatabaseConfig.CosmosDb,
             containerName: DatabaseConfig.SummitedPeaksContainer,
             Connection = "CosmosDBConnection",
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<SummitedPeak> input)

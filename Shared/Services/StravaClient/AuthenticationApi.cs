@@ -41,9 +41,14 @@ public class AuthenticationApi(HttpClient _httpClient, IConfiguration configurat
     {
         var encodedContent = new FormUrlEncodedContent(content);
         var response = await _httpClient.PostAsync(BaseUrl, encodedContent);
-        
-        var tokenResponse = await response.Content.ReadFromJsonAsync<TokenResponse>()
-            ?? throw new JsonException("Could not parse token response");
+
+        var responseBody = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"Strava token exchange failed with {(int)response.StatusCode} {response.ReasonPhrase}. Response body: {responseBody}");
+
+        var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(responseBody)
+            ?? throw new JsonException($"Could not parse token response. Response body: {responseBody}");
 
         return tokenResponse;
     }

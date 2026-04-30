@@ -1,5 +1,7 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.Extensions.Logging;
+using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
@@ -7,7 +9,7 @@ using Shared.Services.StravaClient;
 
 namespace Backend
 {
-    public class RefreshStravaToken(AuthenticationApi _authApi, CollectionClient<User> _userCollection)
+    public class RefreshStravaToken(AuthenticationApi _authApi, CollectionClient<User> _userCollection, ILogger<RefreshStravaToken> _logger)
     {
 
         [Function("RefreshStravaToken")]
@@ -30,7 +32,16 @@ namespace Backend
                 return new ReturnType { Result = tokenStillWorksResponse };
             }
 
-            var tokenResponse = await _authApi.RefreshToken(user.RefreshToken);
+            var tokenResponse = default(Shared.Services.StravaClient.Model.TokenResponse);
+            try
+            {
+                tokenResponse = await _authApi.RefreshToken(user.RefreshToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to refresh Strava token for user {UserId}", userId);
+                throw;
+            }
 
             user.AccessToken = tokenResponse.AccessToken;
             user.TokenExpiresAt = tokenResponse.ExpiresAt;
@@ -45,7 +56,7 @@ namespace Backend
         {
             [HttpResult]
             public required HttpResponseData Result { get; set; }
-            [CosmosDBOutput("DatabaseConfig.CosmosDb", "%UsersContainer%", Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
+            [CosmosDBOutput(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer, Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
             public User? WriteToUser { get; set; }
         }
     }

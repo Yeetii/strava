@@ -6,6 +6,7 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.Mvc;
+using Shared.Constants;
 using Shared.Models;
 
 namespace API
@@ -23,8 +24,8 @@ namespace API
         [Function("GetSkiDays")]
         public IActionResult Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "{userId}/skiDays")] HttpRequestData req, string userId,
         [CosmosDBInput(
-            databaseName: "DatabaseConfig.CosmosDb",
-            containerName: "DatabaseConfig.ActivitiesContainer",
+            databaseName: DatabaseConfig.CosmosDb,
+            containerName: DatabaseConfig.ActivitiesContainer,
             Connection  = "CosmosDBConnection",
             SqlQuery = "SELECT * FROM c where c.userId = {userId}"
             )] IEnumerable<Activity> activities)

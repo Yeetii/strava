@@ -3,6 +3,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
+using Shared.Constants;
 using Shared.Models;
 
 namespace API
@@ -14,7 +15,7 @@ namespace API
         [Function(nameof(GetAllPeaksGroups))]
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaksGroups")] HttpRequestData req,
         [CosmosDBInput(
-            databaseName: "DatabaseConfig.CosmosDb",
+            databaseName: DatabaseConfig.CosmosDb,
             containerName: "%PeaksGroupsContainer%",
             Connection  = "CosmosDBConnection",
             SqlQuery = "SELECT * FROM c"

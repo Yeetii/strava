@@ -1,5 +1,6 @@
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
+using Shared.Constants;
 using Shared.Models;
 
 namespace Backend
@@ -9,15 +10,15 @@ namespace Backend
         [Function(nameof(QueueActivityJobs))]
         public async Task Run(
             [CosmosDBTrigger(
-            databaseName: "DatabaseConfig.CosmosDb",
-            containerName: "DatabaseConfig.ActivitiesContainer",
+            databaseName: DatabaseConfig.CosmosDb,
+            containerName: DatabaseConfig.ActivitiesContainer,
             Connection = "CosmosDBConnection",
             LeaseContainerPrefix = "activityJobs",
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<Activity> updatedActivities)
         {
-            var summitsSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.CalculateSummitsJobs);
-            var pathsSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs);
-            var areasSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs);
+            var summitsSender = serviceBusClient.CreateSender(ServiceBusConfig.CalculateSummitsJobs);
+            var pathsSender = serviceBusClient.CreateSender(ServiceBusConfig.CalculateVisitedPathsJobs);
+            var areasSender = serviceBusClient.CreateSender(ServiceBusConfig.CalculateVisitedAreasJobs);
 
             foreach (var activity in updatedActivities)
             {

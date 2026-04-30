@@ -31,8 +31,11 @@ namespace Backend
                 var accessTokenResponse = await _backendApiClient.GetAsync($"{fetchJob.UserId}/accessToken");
 
                 if (!accessTokenResponse.IsSuccessStatusCode)
+                {
+                    var responseBody = await accessTokenResponse.Content.ReadAsStringAsync();
                     throw new InvalidOperationException(
-                        $"Failed to get access token for user {fetchJob.UserId}, activity {fetchJob.ActivityId}: {(int)accessTokenResponse.StatusCode} {accessTokenResponse.ReasonPhrase}");
+                        $"Failed to get access token for user {fetchJob.UserId}, activity {fetchJob.ActivityId}: {(int)accessTokenResponse.StatusCode} {accessTokenResponse.ReasonPhrase}. Response body: {responseBody}");
+                }
 
                 var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
                 var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
