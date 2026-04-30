@@ -5,13 +5,14 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/manage/organizers/redirect-candidates
+  url: {{baseUrl}}/manage/organizers/redirect-candidates?testRedirects=true&autoCreateRedirects=true
+  body: none
   auth: none
 }
 
 params:query {
-  ~testRedirects: false
-  ~autoCreateRedirects: false
+  testRedirects: true
+  autoCreateRedirects: true
 }
 
 headers {

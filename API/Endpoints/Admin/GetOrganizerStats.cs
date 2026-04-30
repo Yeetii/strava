@@ -43,6 +43,7 @@ public class GetOrganizerStats(
             return req.CreateResponse(HttpStatusCode.Unauthorized);
 
         int total = 0, withAnyDiscovery = 0, withAnyScraper = 0, withBoth = 0, noDiscoveryNoScraper = 0;
+        var activeOrganizerIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var bySource = DiscoverySources.ToDictionary(
             s => s,
             _ => (count: 0, missingGeometry: 0, couldBeFilledFromLocation: 0),
@@ -53,6 +54,7 @@ public class GetOrganizerStats(
         await foreach (var doc in organizerStore.StreamAllAsync(maxConcurrency: 32))
         {
             total++;
+            activeOrganizerIds.Add(doc.Id);
             var hasDiscovery = doc.Discovery is { Count: > 0 };
             var hasScraper = doc.Scrapers is { Count: > 0 };
             if (hasDiscovery) withAnyDiscovery++;
@@ -95,15 +97,30 @@ public class GetOrganizerStats(
             }
         }
 
+        var redirectEntries = new List<OrganizerRedirectEntry>();
+        await foreach (var redirect in organizerStore.StreamRedirectsAsync(maxConcurrency: 32))
+            redirectEntries.Add(redirect);
+
+        var redirectsWithExistingTargets = redirectEntries.Count(redirect => activeOrganizerIds.Contains(redirect.TargetOrganizerKey));
+        var redirectsWithMissingTargets = redirectEntries.Count - redirectsWithExistingTargets;
+
         var body = new
         {
             overview = new
             {
                 total,
+                totalRedirects = redirectEntries.Count,
+                totalIncludingRedirects = total + redirectEntries.Count,
                 withAnyDiscovery,
                 withAnyScraper,
                 withBothDiscoveryAndScraper = withBoth,
                 noDiscoveryNoScraper,
+            },
+            redirects = new
+            {
+                total = redirectEntries.Count,
+                withExistingTarget = redirectsWithExistingTargets,
+                withMissingTarget = redirectsWithMissingTargets,
             },
             discoveryAgents = DiscoverySources.ToDictionary(
                 s => s,

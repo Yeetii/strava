@@ -85,6 +85,24 @@ public class BlobOrganizerStoreRedirectTests
     }
 
     [Fact]
+    public async Task StreamRedirectsAsync_ReturnsRedirectEntries()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var store = CreateStore(blobs);
+
+        blobs.SeedBlob("alias.example/redirect.txt", BinaryData.FromString("canonical.example\n"));
+        blobs.SeedBlob("other.example/redirect.txt", BinaryData.FromString("target.example\n"));
+
+        var redirects = new List<OrganizerRedirectEntry>();
+        await foreach (var redirect in store.StreamRedirectsAsync())
+            redirects.Add(redirect);
+
+        Assert.Equal(2, redirects.Count);
+        Assert.Contains(redirects, redirect => redirect.SourceOrganizerKey == "alias.example" && redirect.TargetOrganizerKey == "canonical.example");
+        Assert.Contains(redirects, redirect => redirect.SourceOrganizerKey == "other.example" && redirect.TargetOrganizerKey == "target.example");
+    }
+
+    [Fact]
     public async Task StreamAllAsync_SkipsBlobDeletedAfterListing()
     {
         var blobs = new InMemoryBlobContainer();
@@ -100,6 +118,24 @@ public class BlobOrganizerStoreRedirectTests
 
         Assert.Contains("stable.example", streamedIds);
         Assert.DoesNotContain("deleted.example", streamedIds);
+    }
+
+    [Fact]
+    public async Task StreamAllAsync_UsesHierarchyListingInsteadOfFlatContainerScan()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var store = CreateStore(blobs);
+
+        SeedOrganizer(blobs, "stable.example", "https://stable.example/", "2026-04-01T00:00:00Z");
+        blobs.SeedBlob("stable.example/races/slot-1.json", BinaryData.FromString("{}"));
+
+        var streamedIds = new List<string>();
+        await foreach (var doc in store.StreamAllAsync())
+            streamedIds.Add(doc.Id);
+
+        Assert.Equal(["stable.example"], streamedIds);
+        Assert.Equal(2, blobs.HierarchyListCalls);
+        Assert.Equal(0, blobs.FlatListCalls);
     }
 
         [Fact]
@@ -210,6 +246,8 @@ public class BlobOrganizerStoreRedirectTests
         private readonly Dictionary<string, Mock<BlobClient>> _clients = new(StringComparer.Ordinal);
 
         public Mock<BlobContainerClient> Client { get; } = new();
+        public int FlatListCalls { get; private set; }
+        public int HierarchyListCalls { get; private set; }
 
         public InMemoryBlobContainer()
         {
@@ -224,7 +262,9 @@ public class BlobOrganizerStoreRedirectTests
                     It.IsAny<string>(),
                     It.IsAny<CancellationToken>()))
                 .Returns((BlobTraits _, BlobStates _, string? prefix, CancellationToken __) =>
-                    AsyncPageable<BlobItem>.FromPages(
+                {
+                    FlatListCalls++;
+                    return AsyncPageable<BlobItem>.FromPages(
                     [
                         Page<BlobItem>.FromValues(
                             _blobs
@@ -234,7 +274,39 @@ public class BlobOrganizerStoreRedirectTests
                                 .ToList(),
                             continuationToken: null,
                             Mock.Of<Response>())
-                    ]));
+                    ]);
+                });
+
+            Client
+                .Setup(container => container.GetBlobsByHierarchyAsync(
+                    It.IsAny<BlobTraits>(),
+                    It.IsAny<BlobStates>(),
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns((BlobTraits _, BlobStates _, string delimiter, string? prefix, CancellationToken __) =>
+                {
+                    HierarchyListCalls++;
+                    prefix ??= string.Empty;
+
+                    var values = _blobs
+                        .Keys
+                        .Where(name => name.StartsWith(prefix, StringComparison.Ordinal))
+                        .Select(name => name[prefix.Length..])
+                        .Where(name => name.Length > 0)
+                        .Select(name =>
+                        {
+                            var delimiterIndex = name.IndexOf(delimiter, StringComparison.Ordinal);
+                            return delimiterIndex >= 0
+                                ? BlobsModelFactory.BlobHierarchyItem(prefix + name[..(delimiterIndex + delimiter.Length)], null)
+                                : BlobsModelFactory.BlobHierarchyItem(null, CreateBlobItem(prefix + name, new Dictionary<string, string>(StringComparer.Ordinal)));
+                        })
+                        .DistinctBy(item => item.IsPrefix ? item.Prefix : item.Blob.Name, StringComparer.Ordinal)
+                        .OrderBy(item => item.IsPrefix ? item.Prefix : item.Blob.Name, StringComparer.Ordinal)
+                        .ToList();
+
+                    return CreateHierarchyPageable(values);
+                });
 
             Client
                 .Setup(container => container.DeleteBlobIfExistsAsync(
@@ -339,6 +411,15 @@ public class BlobOrganizerStoreRedirectTests
                 properties: null,
                 versionId: null,
                 metadata: new Dictionary<string, string>(metadata, StringComparer.Ordinal));
+
+        private static AsyncPageable<BlobHierarchyItem> CreateHierarchyPageable(List<BlobHierarchyItem> values)
+            => AsyncPageable<BlobHierarchyItem>.FromPages(
+            [
+                Page<BlobHierarchyItem>.FromValues(
+                    values,
+                    continuationToken: null,
+                    Mock.Of<Response>())
+            ]);
 
         private static ETag CreateEtag(string blobName, int version)
             => new($"\"{blobName}:{version}\"");

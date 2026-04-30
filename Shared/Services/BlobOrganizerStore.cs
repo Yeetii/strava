@@ -419,6 +419,48 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         }
     }
 
+    public async IAsyncEnumerable<OrganizerRedirectEntry> StreamRedirectsAsync(
+        int maxConcurrency = 32,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var blobNames = new List<string>();
+        await foreach (var item in container.GetBlobsAsync(cancellationToken: cancellationToken))
+        {
+            if (item.Name.EndsWith(RedirectSuffix, StringComparison.Ordinal))
+                blobNames.Add(item.Name);
+        }
+
+        for (int i = 0; i < blobNames.Count; i += maxConcurrency)
+        {
+            var batch = blobNames.Skip(i).Take(maxConcurrency).ToList();
+            var tasks = batch.Select(async name =>
+            {
+                var blob = container.GetBlobClient(name);
+                try
+                {
+                    var result = await blob.DownloadContentAsync(cancellationToken);
+                    var target = result.Value.Content.ToString().Trim();
+                    if (string.IsNullOrWhiteSpace(target))
+                        return null;
+
+                    return new OrganizerRedirectEntry(OrganizerKeyFromRedirectBlobName(name), target);
+                }
+                catch (RequestFailedException ex) when (ex.Status == 404)
+                {
+                    _logger.LogDebug("Skipping redirect blob {BlobName} because it was deleted after listing.", name);
+                    return null;
+                }
+            }).ToList();
+
+            var redirects = await Task.WhenAll(tasks);
+            foreach (var redirect in redirects)
+            {
+                if (redirect is not null)
+                    yield return redirect;
+            }
+        }
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────
 
     private async Task ModifyAsync(
@@ -588,27 +630,44 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         [EnumeratorCancellation] CancellationToken cancellationToken)
         where T : class
     {
-        var blobNames = new List<string>();
-        var redirectedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        await foreach (var item in container.GetBlobsAsync(cancellationToken: cancellationToken))
+        var organizerKeys = new List<string>();
+        await foreach (var item in container.GetBlobsByHierarchyAsync(delimiter: "/", cancellationToken: cancellationToken))
         {
-            if (item.Name.EndsWith(RedirectSuffix, StringComparison.Ordinal))
-            {
-                redirectedKeys.Add(OrganizerKeyFromRedirectBlobName(item.Name));
+            if (!item.IsPrefix || string.IsNullOrWhiteSpace(item.Prefix))
                 continue;
-            }
 
-            if (item.Name.EndsWith(BlobSuffix, StringComparison.Ordinal))
-                blobNames.Add(item.Name);
+            organizerKeys.Add(item.Prefix.TrimEnd('/'));
         }
 
-        blobNames.RemoveAll(name => redirectedKeys.Contains(OrganizerKeyFromBlobName(name)));
-
-        for (int i = 0; i < blobNames.Count; i += maxConcurrency)
+        for (int i = 0; i < organizerKeys.Count; i += maxConcurrency)
         {
-            var batch = blobNames.Skip(i).Take(maxConcurrency).ToList();
-            var tasks = batch.Select(async name =>
+            var batch = organizerKeys.Skip(i).Take(maxConcurrency).ToList();
+            var tasks = batch.Select(async organizerKey =>
             {
+                var hasRedirect = false;
+                var hasOrganizerBlob = false;
+                await foreach (var item in container.GetBlobsByHierarchyAsync(
+                    delimiter: "/",
+                    prefix: $"{organizerKey}/",
+                    cancellationToken: cancellationToken))
+                {
+                    if (!item.IsBlob || item.Blob is null)
+                        continue;
+
+                    if (string.Equals(item.Blob.Name, RedirectBlobKey(organizerKey), StringComparison.Ordinal))
+                    {
+                        hasRedirect = true;
+                        break;
+                    }
+
+                    if (string.Equals(item.Blob.Name, BlobKey(organizerKey), StringComparison.Ordinal))
+                        hasOrganizerBlob = true;
+                }
+
+                if (hasRedirect || !hasOrganizerBlob)
+                    return null;
+
+                var name = BlobKey(organizerKey);
                 var blob = container.GetBlobClient(name);
                 try
                 {
