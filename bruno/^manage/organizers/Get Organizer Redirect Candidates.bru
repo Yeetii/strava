@@ -1,0 +1,19 @@
+meta {
+  name: Get Organizer Redirect Candidates
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/manage/organizers/redirect-candidates
+  auth: none
+}
+
+params:query {
+  ~testRedirects: false
+  ~autoCreateRedirects: false
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}

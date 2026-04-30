@@ -12,6 +12,7 @@ public static class GpxSourceKind
     public const string ExternalGpx = "external_gpx";
     public const string RaceDayMap = "racedaymap";
     public const string RideWithGps = "ridewithgps";
+    public const string PlotARoute = "plotaroute";
     public const string ManualGpx = "manual_gpx";
 }
 
@@ -43,6 +44,10 @@ public static class GpxSourceResolver
 
         if (gpxUrl.Host.Equals("ridewithgps.com", StringComparison.OrdinalIgnoreCase))
             return GpxSourceKind.RideWithGps;
+
+        if (gpxUrl.Host.Equals("www.plotaroute.com", StringComparison.OrdinalIgnoreCase)
+            || gpxUrl.Host.Equals("plotaroute.com", StringComparison.OrdinalIgnoreCase))
+            return GpxSourceKind.PlotARoute;
 
         if (IsSameRegistrableDomain(gpxUrl, crawlOrigin))
             return GpxSourceKind.InternalGpx;

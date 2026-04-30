@@ -1,0 +1,22 @@
+meta {
+  name: Add Organizer Redirect
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/manage/organizers/redirects
+  body: json
+  auth: none
+}
+
+headers {
+  x-admin-key: {{adminKey}}
+}
+
+body:json {
+  {
+    "fromUrl": "https://idrefjallmaraton.com/",
+    "toUrl": "https://idrefjallmaraton.se/"
+  }
+}

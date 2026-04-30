@@ -1,0 +1,348 @@
+using Azure;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Microsoft.Extensions.Logging;
+using Moq;
+using Shared.Models;
+using Shared.Services;
+
+namespace Shared.Tests;
+
+public class BlobOrganizerStoreRedirectTests
+{
+    [Fact]
+    public async Task SetRedirectAsync_WipesSourcePrefixAndStoresRedirectMarker()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var store = CreateStore(blobs);
+
+        blobs.SeedBlob("alias.example/organizer.json", BinaryData.FromString("{}"));
+        blobs.SeedBlob("alias.example/races/stale.json", BinaryData.FromString("{}"));
+
+        await store.SetRedirectAsync("alias.example", "canonical.example");
+
+        Assert.False(blobs.Contains("alias.example/organizer.json"));
+        Assert.False(blobs.Contains("alias.example/races/stale.json"));
+        Assert.True(blobs.Contains("alias.example/redirect.txt"));
+        Assert.Equal("canonical.example\n", blobs.GetContent("alias.example/redirect.txt"));
+    }
+
+    [Fact]
+    public async Task WriteDiscoveryAsync_UsesRedirectTargetOrganizer()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var store = CreateStore(blobs);
+        await store.SetRedirectAsync("alias.example", "canonical.example");
+
+        var discovery = new SourceDiscovery
+        {
+            DiscoveredAtUtc = "2026-04-30T12:00:00Z",
+            Name = "Redirected race",
+            SourceUrls = ["https://alias.example/race"]
+        };
+
+        await store.WriteDiscoveryAsync(
+            "alias.example",
+            "https://alias.example/",
+            "manual",
+            [discovery]);
+
+        var docByAlias = await store.GetByIdAsync("alias.example");
+        var docByTarget = await store.GetByIdAsync("canonical.example");
+
+        Assert.NotNull(docByAlias);
+        Assert.NotNull(docByTarget);
+        Assert.Equal("canonical.example", docByAlias!.Id);
+        Assert.Equal("canonical.example", docByTarget!.Id);
+        Assert.Single(docByTarget.Discovery!["manual"]);
+        Assert.False(blobs.Contains("alias.example/organizer.json"));
+        Assert.True(blobs.Contains("canonical.example/organizer.json"));
+    }
+
+    [Fact]
+    public async Task StreamAllAsync_AndDueScrape_SkipRedirectedOrganizerIds()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var store = CreateStore(blobs);
+
+        SeedOrganizer(blobs, "canonical.example", "https://canonical.example/", "2026-04-01T00:00:00Z");
+        SeedOrganizer(blobs, "alias.example", "https://alias.example/", "2026-04-01T00:00:00Z");
+        SeedOrganizer(blobs, "other.example", "https://other.example/", "2026-04-01T00:00:00Z");
+        blobs.SeedBlob("alias.example/redirect.txt", BinaryData.FromString("canonical.example\n"));
+
+        var idsDueForScrape = await store.GetIdsDueForAutomaticScrapeAsync(new DateTime(2026, 4, 10, 0, 0, 0, DateTimeKind.Utc));
+        var streamedIds = new List<string>();
+        await foreach (var doc in store.StreamAllAsync())
+            streamedIds.Add(doc.Id);
+
+        Assert.DoesNotContain("alias.example", idsDueForScrape);
+        Assert.Contains("canonical.example", idsDueForScrape);
+        Assert.Contains("other.example", idsDueForScrape);
+
+        Assert.DoesNotContain("alias.example", streamedIds);
+        Assert.Contains("canonical.example", streamedIds);
+        Assert.Contains("other.example", streamedIds);
+    }
+
+    [Fact]
+    public async Task StreamAllAsync_SkipsBlobDeletedAfterListing()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var store = CreateStore(blobs);
+
+        SeedOrganizer(blobs, "stable.example", "https://stable.example/", "2026-04-01T00:00:00Z");
+        SeedOrganizer(blobs, "deleted.example", "https://deleted.example/", "2026-04-01T00:00:00Z");
+        blobs.DeleteOnFirstDownload("deleted.example/organizer.json");
+
+        var streamedIds = new List<string>();
+        await foreach (var doc in store.StreamAllAsync())
+            streamedIds.Add(doc.Id);
+
+        Assert.Contains("stable.example", streamedIds);
+        Assert.DoesNotContain("deleted.example", streamedIds);
+    }
+
+        [Fact]
+        public async Task StreamIdentitiesAsync_ReturnsIdAndUrlOnly()
+        {
+                var blobs = new InMemoryBlobContainer();
+                var store = CreateStore(blobs);
+
+                var payload = """
+                        {
+                            "id": "identity.example",
+                            "url": "https://identity.example/",
+                            "discovery": {
+                                "manual": [
+                                    {
+                                        "discoveredAtUtc": "2026-04-30T00:00:00Z",
+                                        "sourceUrls": ["https://identity.example/race"]
+                                    }
+                                ]
+                            }
+                        }
+                        """;
+
+                blobs.SeedBlob("identity.example/organizer.json", BinaryData.FromString(payload));
+
+                var identities = new List<OrganizerBlobIdentity>();
+                await foreach (var identity in store.StreamIdentitiesAsync())
+                        identities.Add(identity);
+
+                var organizer = Assert.Single(identities);
+                Assert.Equal("identity.example", organizer.Id);
+                Assert.Equal("https://identity.example/", organizer.Url);
+        }
+
+        [Fact]
+        public async Task StreamMetadataWithoutGeometriesAsync_ReturnsMetadataWithoutCoordinates()
+        {
+                var blobs = new InMemoryBlobContainer();
+                var store = CreateStore(blobs);
+
+                var payload = """
+                        {
+                            "id": "runsignup.com~Race~TX~Longview~LongviewTrailRunsSpring",
+                            "url": "https://runsignup.com/Race/TX/Longview/LongviewTrailRunsSpring",
+                            "discovery": {
+                                "manual": [
+                                    {
+                                        "discoveredAtUtc": "2026-04-30T00:00:00Z",
+                                        "sourceUrls": [
+                                            "https://longviewtrailruns.com/",
+                                            "https://runsignup.com/Race/TX/Longview/LongviewTrailRunsSpring"
+                                        ]
+                                    }
+                                ]
+                            },
+                            "scrapers": {
+                                "bfs": {
+                                    "scrapedAtUtc": "2026-04-30T00:00:00Z",
+                                    "routes": [
+                                        {
+                                            "name": "large payload we should ignore",
+                                            "coordinates": [[1,2],[3,4]]
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                        """;
+
+                blobs.SeedBlob("runsignup.com~Race~TX~Longview~LongviewTrailRunsSpring/organizer.json", BinaryData.FromString(payload));
+
+        var metadataDocs = new List<OrganizerBlobMetadataDocument>();
+        await foreach (var metadata in store.StreamMetadataWithoutGeometriesAsync())
+            metadataDocs.Add(metadata);
+
+        var metadataDoc = Assert.Single(metadataDocs);
+        Assert.Equal("runsignup.com~Race~TX~Longview~LongviewTrailRunsSpring", metadataDoc.Id);
+        Assert.Equal("https://runsignup.com/Race/TX/Longview/LongviewTrailRunsSpring", metadataDoc.Url);
+        Assert.NotNull(metadataDoc.Discovery);
+        Assert.NotNull(metadataDoc.Scrapers);
+
+        var route = Assert.Single(metadataDoc.Scrapers!["bfs"].Routes!);
+        Assert.Equal("large payload we should ignore", route.Name);
+        Assert.Equal("https://longviewtrailruns.com/", Assert.Single(metadataDoc.Discovery!["manual"]).SourceUrls![0]);
+        }
+
+    private static BlobOrganizerStore CreateStore(InMemoryBlobContainer blobs)
+        => new(blobs.Client.Object, LoggerFactory.Create(builder => { }));
+
+    private static void SeedOrganizer(InMemoryBlobContainer blobs, string id, string url, string lastScrapedUtc)
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = id,
+            Url = url,
+            LastScrapedUtc = lastScrapedUtc,
+        };
+
+        blobs.SeedBlob(
+            $"{id}/organizer.json",
+            BinaryData.FromString(System.Text.Json.JsonSerializer.Serialize(doc)),
+            new Dictionary<string, string> { ["lastscrapedutc"] = lastScrapedUtc });
+    }
+
+    private sealed class InMemoryBlobContainer
+    {
+        private readonly Dictionary<string, BlobState> _blobs = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, Mock<BlobClient>> _clients = new(StringComparer.Ordinal);
+
+        public Mock<BlobContainerClient> Client { get; } = new();
+
+        public InMemoryBlobContainer()
+        {
+            Client
+                .Setup(container => container.GetBlobClient(It.IsAny<string>()))
+                .Returns((string blobName) => GetOrCreateBlobClient(blobName).Object);
+
+            Client
+                .Setup(container => container.GetBlobsAsync(
+                    It.IsAny<BlobTraits>(),
+                    It.IsAny<BlobStates>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns((BlobTraits _, BlobStates _, string? prefix, CancellationToken __) =>
+                    AsyncPageable<BlobItem>.FromPages(
+                    [
+                        Page<BlobItem>.FromValues(
+                            _blobs
+                                .Where(entry => prefix is null || entry.Key.StartsWith(prefix, StringComparison.Ordinal))
+                                .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                                .Select(entry => CreateBlobItem(entry.Key, entry.Value.Metadata))
+                                .ToList(),
+                            continuationToken: null,
+                            Mock.Of<Response>())
+                    ]));
+
+            Client
+                .Setup(container => container.DeleteBlobIfExistsAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<DeleteSnapshotsOption>(),
+                    It.IsAny<BlobRequestConditions>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns((string blobName, DeleteSnapshotsOption _, BlobRequestConditions? _, CancellationToken __) =>
+                {
+                    var deleted = _blobs.Remove(blobName);
+                    return Task.FromResult(Response.FromValue(deleted, Mock.Of<Response>()));
+                });
+        }
+
+        public bool Contains(string blobName) => _blobs.ContainsKey(blobName);
+
+        public string GetContent(string blobName) => _blobs[blobName].Content.ToString();
+
+        public void DeleteOnFirstDownload(string blobName)
+            => GetOrCreateBlobClient(blobName)
+                .Setup(blob => blob.DownloadContentAsync(It.IsAny<CancellationToken>()))
+                .Returns((CancellationToken _) =>
+                {
+                    _blobs.Remove(blobName);
+                    throw new RequestFailedException(404, "Blob not found");
+                });
+
+        public void SeedBlob(string blobName, BinaryData content, IDictionary<string, string>? metadata = null)
+        {
+            _blobs[blobName] = new BlobState(content, new Dictionary<string, string>(metadata ?? new Dictionary<string, string>(), StringComparer.Ordinal), CreateEtag(blobName, 0));
+        }
+
+        private Mock<BlobClient> GetOrCreateBlobClient(string blobName)
+        {
+            if (_clients.TryGetValue(blobName, out var existing))
+                return existing;
+
+            var client = new Mock<BlobClient>();
+
+            client
+                .Setup(blob => blob.DownloadContentAsync(It.IsAny<CancellationToken>()))
+                .Returns((CancellationToken _) =>
+                {
+                    if (!_blobs.TryGetValue(blobName, out var blob))
+                        throw new RequestFailedException(404, "Blob not found");
+
+                    var details = BlobsModelFactory.BlobDownloadDetails(
+                        metadata: new Dictionary<string, string>(blob.Metadata, StringComparer.Ordinal),
+                        eTag: blob.ETag);
+                    var result = BlobsModelFactory.BlobDownloadResult(blob.Content, details);
+                    return Task.FromResult(Response.FromValue(result, Mock.Of<Response>()));
+                });
+
+            client
+                .Setup(blob => blob.UploadAsync(It.IsAny<BinaryData>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .Returns((BinaryData content, bool overwrite, CancellationToken _) =>
+                {
+                    if (!overwrite && _blobs.ContainsKey(blobName))
+                        throw new RequestFailedException(409, "Blob already exists");
+
+                    PutBlob(blobName, content, metadata: null);
+                    return Task.FromResult(Response.FromValue(default(BlobContentInfo), Mock.Of<Response>()));
+                });
+
+            client
+                .Setup(blob => blob.UploadAsync(It.IsAny<BinaryData>(), It.IsAny<BlobUploadOptions>(), It.IsAny<CancellationToken>()))
+                .Returns((BinaryData content, BlobUploadOptions options, CancellationToken _) =>
+                {
+                    if (options.Conditions?.IfNoneMatch == ETag.All && _blobs.ContainsKey(blobName))
+                        throw new RequestFailedException(412, "Blob already exists");
+
+                    if (options.Conditions?.IfMatch is ETag expectedEtag
+                        && expectedEtag != default
+                        && _blobs.TryGetValue(blobName, out var existing)
+                        && existing.ETag != expectedEtag)
+                    {
+                        throw new RequestFailedException(412, "ETag mismatch");
+                    }
+
+                    PutBlob(blobName, content, options.Metadata);
+                    return Task.FromResult(Response.FromValue(default(BlobContentInfo), Mock.Of<Response>()));
+                });
+
+            _clients[blobName] = client;
+            return client;
+        }
+
+        private void PutBlob(string blobName, BinaryData content, IDictionary<string, string>? metadata)
+        {
+            var version = _blobs.TryGetValue(blobName, out var existing) ? existing.Version + 1 : 0;
+            _blobs[blobName] = new BlobState(
+                content,
+                new Dictionary<string, string>(metadata ?? new Dictionary<string, string>(), StringComparer.Ordinal),
+                CreateEtag(blobName, version),
+                version);
+        }
+
+        private static BlobItem CreateBlobItem(string blobName, IDictionary<string, string> metadata)
+            => BlobsModelFactory.BlobItem(
+                name: blobName,
+                deleted: false,
+                properties: null,
+                versionId: null,
+                metadata: new Dictionary<string, string>(metadata, StringComparer.Ordinal));
+
+        private static ETag CreateEtag(string blobName, int version)
+            => new($"\"{blobName}:{version}\"");
+
+        private sealed record BlobState(BinaryData Content, Dictionary<string, string> Metadata, ETag ETag, int Version = 0);
+    }
+}

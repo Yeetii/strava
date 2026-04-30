@@ -13,6 +13,8 @@ public class GpxSourceResolverTests
     [InlineData("https://connect.garmin.com/app/proxy/download-service/export/gpx/activity/13247673776", GpxSourceKind.Garmin)]
     [InlineData("https://connect.garmin.com/app/proxy/course-service/course/372436629/download", GpxSourceKind.Garmin)]
     [InlineData("https://drive.google.com/uc?export=download&id=1", GpxSourceKind.GoogleDrive)]
+    [InlineData("https://www.plotaroute.com/get_route.asp?RouteID=2449000", GpxSourceKind.PlotARoute)]
+    [InlineData("https://www.plotaroute.com/route/2449000?units=km", GpxSourceKind.PlotARoute)]
     [InlineData("https://mmctrail.no/files/route.gpx", GpxSourceKind.InternalGpx)]
     [InlineData("https://www.mmctrail.no/files/route.gpx", GpxSourceKind.InternalGpx)]
     [InlineData("https://tracedetrail.fr/gpx/foo.gpx", GpxSourceKind.ExternalGpx)]

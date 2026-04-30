@@ -179,6 +179,95 @@ public class BfsScraperTests
     }
 
     [Fact]
+    public async Task PlotARouteDirectUrl_ReturnsRouteWithCoordinates()
+    {
+        const string routeId = "2449000";
+        const string routeJson = """
+            {
+              "RouteData": "[{\"lat\":57.3327804,\"lng\":18.7038508},{\"lat\":57.3327413,\"lng\":18.7038334}]",
+              "RouteName": "DUBBLE 100 Miles 2024 MASTER",
+              "Distance": 161739.2,
+              "Ascent": 1173
+            }
+            """;
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "www.plotaroute.com" && uri.AbsolutePath == "/get_route.asp" && uri.Query.Contains($"RouteID={routeId}"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(routeJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+
+            throw new InvalidOperationException($"Unexpected request for {uri}");
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri($"https://www.plotaroute.com/route/{routeId}?units=km")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        var route = Assert.Single(result.Routes);
+        Assert.Equal(2, route.Coordinates.Count);
+        Assert.Equal("DUBBLE 100 Miles 2024 MASTER", route.Name);
+        Assert.Equal("161.7 km", route.Distance);
+        Assert.Equal(1173, route.ElevationGain);
+        Assert.Equal(GpxSourceKind.PlotARoute, route.GpxSource);
+    }
+
+    [Fact]
+    public async Task PlotARouteLinkWithoutGpxText_IsDetectedFromRacePage()
+    {
+        const string routeId = "2449000";
+        var racePage = $"""
+            <html><body>
+              <a href=\"https://www.plotaroute.com/route/{routeId}?units=km\">DUBBLE</a>
+            </body></html>
+            """;
+
+        const string routeJson = """
+            {
+              "RouteData": "[{\"lat\":57.3327804,\"lng\":18.7038508},{\"lat\":57.3327413,\"lng\":18.7038334}]",
+              "RouteName": "DUBBLE 100 Miles 2024 MASTER",
+              "Distance": 161739.2,
+              "Ascent": 1173
+            }
+            """;
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "www.plotaroute.com" && uri.AbsolutePath == "/get_route.asp" && uri.Query.Contains($"RouteID={routeId}"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(routeJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+
+            if (uri.Host == "runraisers.com")
+                return HtmlResponse(racePage);
+
+            throw new InvalidOperationException($"Unexpected request for {uri}");
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri("https://runraisers.com/svenska/gotrun/3-distanser.html")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        var route = Assert.Single(result.Routes);
+        Assert.Equal(new Uri("https://runraisers.com/svenska/gotrun/3-distanser.html"), route.SourceUrl);
+        Assert.Equal("DUBBLE 100 Miles 2024 MASTER", route.Name);
+        Assert.Equal(GpxSourceKind.PlotARoute, route.GpxSource);
+    }
+
+    [Fact]
     public async Task GarminConnectActivityLink_FallsBackToCourseMetadata_WhenExportReturnsHtml()
     {
         const string activityId = "13247673776";
