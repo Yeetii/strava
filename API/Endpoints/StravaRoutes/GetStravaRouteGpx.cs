@@ -38,10 +38,13 @@ public class GetStravaRouteGpx(
         if (gpxStream == null)
             return req.CreateResponse(HttpStatusCode.NotFound);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        response.Headers.Add("Content-Type", "application/gpx+xml");
-        response.Headers.Add("Content-Disposition", $"attachment; filename=\"route-{routeId}.gpx\"");
-        await gpxStream.CopyToAsync(response.Body);
-        return response;
+        await using (gpxStream)
+        {
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            response.Headers.Add("Content-Type", "application/gpx+xml");
+            response.Headers.Add("Content-Disposition", $"attachment; filename=\"route-{routeId}.gpx\"");
+            await gpxStream.CopyToAsync(response.Body);
+            return response;
+        }
     }
 }

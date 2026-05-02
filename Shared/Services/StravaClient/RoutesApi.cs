@@ -36,15 +36,15 @@ public class RoutesApi(HttpClient _stravaClient)
             Headers = { { "Authorization", $"Bearer {token}" } }
         };
 
-        var response = await _stravaClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        using var response = await _stravaClient.SendAsync(request);
         if (response.StatusCode == HttpStatusCode.NotFound)
-        {
-            response.Dispose();
             return null;
-        }
 
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStreamAsync();
+        var memoryStream = new MemoryStream();
+        await response.Content.CopyToAsync(memoryStream);
+        memoryStream.Position = 0;
+        return memoryStream;
     }
 
     public async Task<UploadStatus> UploadActivity(string token, Stream fileContent, string filename, string name, string dataType, string? description = null)
