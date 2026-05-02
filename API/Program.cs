@@ -85,6 +85,17 @@ var host = new HostBuilder()
             var httpClient = serviceProvider.GetRequiredService<HttpClient>();
             return new AuthenticationApi(httpClient, configuration);
         });
+        services.AddHttpClient("stravaClient", client =>
+        {
+            client.BaseAddress = new Uri("https://www.strava.com/api/v3/");
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+            var stravaClient = httpClientFactory.CreateClient("stravaClient");
+            return new RoutesApi(stravaClient);
+        });
+        services.AddScoped<StravaTokenService>();
         services.AddHttpClient<OverpassClient>(
             client =>
             {

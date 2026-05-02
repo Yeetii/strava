@@ -1,0 +1,20 @@
+meta {
+  name: Post Route to Strava
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/strava/routes?name=My+Route
+  body: text
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+  Content-Type: application/octet-stream
+}
+
+body:text {
+  <!-- paste raw GPX content here -->
+}
