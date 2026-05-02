@@ -1,6 +1,7 @@
 using System.Net;
 using Shared.Models;
 using Microsoft.Azure.Functions.Worker;
+using System.Text.Json.Serialization;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
@@ -15,7 +16,7 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
 {
     [OpenApiOperation(tags: ["User management"])]
     [OpenApiParameter(name: "authCode", In = ParameterLocation.Path)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "text/plain", bodyType: typeof(string), Description = "The OK response")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(PostLoginResponse), Description = "The login response containing the username")]
     [Function(nameof(PostLogin))]
     public async Task<ReturnBindings> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "{authCode}/login")] HttpRequestData req, string authCode)
     {
@@ -81,7 +82,26 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
             UserId = userId
         };
 
+        await response.WriteAsJsonAsync(new PostLoginResponse
+        {
+            Username = tokenResponse.Athlete.Username,
+            FirstName = tokenResponse.Athlete.Firstname,
+            LastName = tokenResponse.Athlete.Lastname
+        });
+
         return outputs;
+    }
+
+    public class PostLoginResponse
+    {
+        [JsonPropertyName("username")]
+        public string? Username { get; set; }
+
+        [JsonPropertyName("firstName")]
+        public string? FirstName { get; set; }
+
+        [JsonPropertyName("lastName")]
+        public string? LastName { get; set; }
     }
 
     public class ReturnBindings

@@ -12,5 +12,6 @@ namespace Shared.Constants
         public const string RaceDiscoveryJobs = "raceDiscoveryJobs";
         public const string MistralScrapeJobs = "mistralScrape";
         public const string EnrichAdminBoundaryJobs = "enrichAdminBoundaryJobs";
+        public const string AccountDeleteJobs = "accountDeleteJobs";
     }
 }
