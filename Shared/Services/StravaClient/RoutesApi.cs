@@ -47,21 +47,22 @@ public class RoutesApi(HttpClient _stravaClient)
         return memoryStream;
     }
 
-    public async Task<UploadStatus> UploadActivity(string token, Stream fileContent, string filename, string name, string dataType, string? description = null)
+    public async Task<StravaRoute> CreateRoute(string token, Stream fileContent, string filename, string name, int type, int subType, string? description = null)
     {
         using var content = new MultipartFormDataContent();
         var streamContent = new StreamContent(fileContent);
         streamContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         content.Add(streamContent, "file", filename);
         content.Add(new StringContent(name), "name");
-        content.Add(new StringContent(dataType), "data_type");
+        content.Add(new StringContent(type.ToString()), "type");
+        content.Add(new StringContent(subType.ToString()), "sub_type");
         if (!string.IsNullOrEmpty(description))
             content.Add(new StringContent(description), "description");
 
         var request = new HttpRequestMessage
         {
             Method = HttpMethod.Post,
-            RequestUri = new Uri(_stravaClient.BaseAddress + "uploads"),
+            RequestUri = new Uri(_stravaClient.BaseAddress + "routes"),
             Headers = { { "Authorization", $"Bearer {token}" } },
             Content = content
         };
@@ -69,7 +70,7 @@ public class RoutesApi(HttpClient _stravaClient)
         using var response = await _stravaClient.SendAsync(request);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync();
-        return JsonSerializer.Deserialize<UploadStatus>(body)
-            ?? throw new JsonException($"Could not parse upload response. Body: {body}");
+        return JsonSerializer.Deserialize<StravaRoute>(body)
+            ?? throw new JsonException($"Could not parse create route response. Body: {body}");
     }
 }

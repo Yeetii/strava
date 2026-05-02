@@ -14,19 +14,21 @@ public class PostRouteToStrava(
     StravaTokenService _stravaTokenService,
     RoutesApi _routesApi)
 {
-    [OpenApiOperation(tags: ["Strava Routes"], Summary = "Upload a GPX route to Strava as an activity.",
-        Description = "Send a GPX file in the request body. Provide 'name' (required) and optionally 'description' as query parameters.")]
+    [OpenApiOperation(tags: ["Strava Routes"], Summary = "Create a Strava route from a GPX file.",
+        Description = "Send a GPX file in the request body. Provide 'name' (required), 'type' (1=Ride, 2=Run, default 2), 'subType' (1=Road, 2=MTB, 3=Cross, 4=Trail, 5=Mixed, default 4) and optionally 'description' as query parameters.")]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "name", In = ParameterLocation.Query, Type = typeof(string), Required = true,
-        Description = "Name for the activity on Strava.")]
+        Description = "Name for the route on Strava.")]
+    [OpenApiParameter(name: "type", In = ParameterLocation.Query, Type = typeof(int), Required = false,
+        Description = "Route type: 1 = Ride, 2 = Run. Defaults to 2 (Run).")]
+    [OpenApiParameter(name: "subType", In = ParameterLocation.Query, Type = typeof(int), Required = false,
+        Description = "Route sub-type: 1 = Road, 2 = MTB, 3 = Cross, 4 = Trail, 5 = Mixed. Defaults to 4 (Trail).")]
     [OpenApiParameter(name: "description", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Optional description for the activity.")]
-    [OpenApiParameter(name: "filename", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Filename hint including extension (e.g. 'my-route.gpx'). Determines the data_type sent to Strava. Defaults to 'route.gpx'.")]
+        Description = "Optional description for the route.")]
     [OpenApiRequestBody(contentType: "application/octet-stream", bodyType: typeof(string),
-        Description = "Raw GPX (or TCX/FIT) file content.")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(UploadStatus),
-        Description = "The Strava upload status object.")]
+        Description = "Raw GPX file content.")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(StravaRoute),
+        Description = "The created Strava route.")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "text/plain", bodyType: typeof(string),
         Description = "Missing required query parameters.")]
@@ -53,14 +55,15 @@ public class PostRouteToStrava(
         }
 
         var description = query["description"];
-        var filename = query["filename"] ?? "route.gpx";
-        var extension = Path.GetExtension(filename).TrimStart('.').ToLowerInvariant();
-        var dataType = extension is "gpx" or "gpx.gz" or "tcx" or "tcx.gz" or "fit" or "fit.gz" ? extension : "gpx";
+        var type = int.TryParse(query["type"], out var parsedType) ? parsedType : 2;
+        var subType = int.TryParse(query["subType"], out var parsedSubType) ? parsedSubType : 4;
 
-        var uploadStatus = await _routesApi.UploadActivity(token, req.Body, filename, name, dataType, description);
+        var filename = query["filename"] ?? "route.gpx";
+
+        var route = await _routesApi.CreateRoute(token, req.Body, filename, name, type, subType, description);
 
         var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(uploadStatus);
+        await response.WriteAsJsonAsync(route);
         return response;
     }
 }
