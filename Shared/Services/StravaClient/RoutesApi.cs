@@ -26,7 +26,7 @@ public class RoutesApi(HttpClient _stravaClient)
         return JsonSerializer.Deserialize<List<StravaRoute>>(body);
     }
 
-    public async Task<Stream?> GetRouteGpx(string token, long routeId)
+    public async Task<Stream?> GetRouteGpx(string token, string routeId)
     {
         var requestUri = $"routes/{routeId}/export_gpx";
         var request = new HttpRequestMessage

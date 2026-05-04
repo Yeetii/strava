@@ -15,7 +15,7 @@ public class GetStravaRouteGpx(
 {
     [OpenApiOperation(tags: ["Strava Routes"], Summary = "Export a Strava route as a GPX file.")]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "routeId", In = ParameterLocation.Path, Type = typeof(long), Required = true)]
+    [OpenApiParameter(name: "routeId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/gpx+xml", bodyType: typeof(string),
         Description = "The route as a GPX file.")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
@@ -23,7 +23,7 @@ public class GetStravaRouteGpx(
     [Function(nameof(GetStravaRouteGpx))]
     public async Task<HttpResponseData> Run(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "strava/routes/{routeId}/gpx")] HttpRequestData req,
-        long routeId)
+        string routeId)
     {
         string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
         var user = await _userAuthService.GetUserFromSessionId(sessionId);

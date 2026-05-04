@@ -16,6 +16,7 @@ public record StravaRoute(
     [property: JsonPropertyName("timestamp")] long? Timestamp,
     [property: JsonPropertyName("created_at")] DateTime? CreatedAt,
     [property: JsonPropertyName("updated_at")] DateTime? UpdatedAt,
+    [property: JsonPropertyName("segments")] IReadOnlyList<Segment>? Segments,
     [property: JsonPropertyName("map")] Map? Map,
     [property: JsonPropertyName("athlete")] Metadata? Athlete
 );

@@ -22,7 +22,11 @@ public class GetStravaRoutes(
         float? DistanceMeters,
         float? ElevationGain,
         string ActivityType,
-        DateTime? CreatedAt);
+        DateTime? CreatedAt,
+        DateTime? UpdatedAt,
+        bool? Private,
+        bool? Starred,
+        string? SummaryPolyline);
 
     [OpenApiOperation(tags: ["Strava Routes"], Summary = "List the authenticated user's Strava routes.")]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
@@ -56,18 +60,35 @@ public class GetStravaRoutes(
             r.Description,
             r.Distance,
             r.ElevationGain,
-            MapActivityType(r.Type),
-            r.CreatedAt));
+            MapActivityType(r),
+            r.CreatedAt,
+            r.UpdatedAt,
+            r.Private,
+            r.Starred,
+            r.Map?.SummaryPolyline));
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(dtos);
         return response;
     }
 
-    private static string MapActivityType(int? type) => type switch
+    private static string MapActivityType(StravaRoute route)
     {
-        1 => "Ride",
-        2 => "Run",
-        _ => "Other"
-    };
+        if (route.Segments?.Any(segment => string.Equals(segment.ActivityType, "Run", StringComparison.OrdinalIgnoreCase)) == true)
+            return "Run/hike";
+
+        return (route.Type, route.SubType) switch
+        {
+            (1, 1) => "Road bike",
+            (1, 2) => "Mountain bike",
+            (1, 3) => "Gravel bike",
+            (1, 4) => "Mountain bike",
+            (1, 5) => "Bike",
+            (2, _) => "Run/hike",
+            (5, _) => "Run/hike",
+            (6, _) => "Gravel bike",
+            (1, _) => "Bike",
+            _ => "Run/hike"
+        };
+    }
 }
