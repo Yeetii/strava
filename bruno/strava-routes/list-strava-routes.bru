@@ -1,0 +1,15 @@
+meta {
+  name: List Strava Routes
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/strava/routes
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}
