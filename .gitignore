@@ -268,3 +268,5 @@ __pycache__/
 __*
 
 **.gpkg
+
+**.DS_Store

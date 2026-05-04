@@ -1,6 +1,7 @@
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using BAMCIS.GeoJSON;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Shared.Models;
@@ -138,6 +139,78 @@ public class BlobOrganizerStoreRedirectTests
         Assert.Equal(0, blobs.FlatListCalls);
     }
 
+    [Fact]
+    public async Task StreamAllAsync_ReusesLocalCacheWhenOrganizerBlobEtagIsUnchanged()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var cacheRoot = Path.Combine(Path.GetTempPath(), nameof(BlobOrganizerStoreRedirectTests), Guid.NewGuid().ToString("N"));
+        var store = CreateStore(blobs, cacheRoot);
+
+        SeedOrganizer(blobs, "stable.example", "https://stable.example/", "2026-04-01T00:00:00Z");
+
+        var firstPassIds = new List<string>();
+        await foreach (var doc in store.StreamAllAsync())
+            firstPassIds.Add(doc.Id);
+
+        var secondPassIds = new List<string>();
+        await foreach (var doc in store.StreamAllAsync())
+            secondPassIds.Add(doc.Id);
+
+        Assert.Equal(["stable.example"], firstPassIds);
+        Assert.Equal(["stable.example"], secondPassIds);
+        Assert.Equal(1, blobs.GetDownloadCount("stable.example/organizer.json"));
+    }
+
+    [Fact]
+    public async Task StreamAllWithSourceAsync_ReturnsCacheSourceOnSecondPass()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var cacheRoot = Path.Combine(Path.GetTempPath(), nameof(BlobOrganizerStoreRedirectTests), Guid.NewGuid().ToString("N"));
+        var store = CreateStore(blobs, cacheRoot);
+
+        SeedOrganizer(blobs, "stable.example", "https://stable.example/", "2026-04-01T00:00:00Z");
+
+        var firstPass = new List<BlobOrganizerStore.OrganizerDocumentStreamItem>();
+        await foreach (var item in store.StreamAllWithSourceAsync())
+            firstPass.Add(item);
+
+        var secondPass = new List<BlobOrganizerStore.OrganizerDocumentStreamItem>();
+        await foreach (var item in store.StreamAllWithSourceAsync())
+            secondPass.Add(item);
+
+        Assert.Equal(BlobOrganizerStore.OrganizerDocumentSource.Blob, Assert.Single(firstPass).Source);
+        Assert.Equal(BlobOrganizerStore.OrganizerDocumentSource.Cache, Assert.Single(secondPass).Source);
+    }
+
+    [Fact]
+    public async Task WriteAssembledRacesAsync_ReusesLocalTransparencyManifestOnSecondRun()
+    {
+        var blobs = new InMemoryBlobContainer();
+        var cacheRoot = Path.Combine(Path.GetTempPath(), nameof(BlobOrganizerStoreRedirectTests), Guid.NewGuid().ToString("N"));
+        var store = CreateStore(blobs, cacheRoot);
+        var races = new List<StoredFeature>
+        {
+            new()
+            {
+                Id = "race:stable.example-0",
+                FeatureId = "stable.example-0",
+                Kind = FeatureKinds.Race,
+                X = 1,
+                Y = 2,
+                Zoom = RaceCollectionClient.DefaultZoom,
+                Geometry = new Point(new Position(12, 34)),
+                Properties = new Dictionary<string, dynamic> { ["name"] = "Stable race" },
+            }
+        };
+
+        await store.WriteAssembledRacesAsync("stable.example", races);
+        var flatListCallsAfterFirstWrite = blobs.FlatListCalls;
+
+        await store.WriteAssembledRacesAsync("stable.example", races);
+
+        Assert.Equal(flatListCallsAfterFirstWrite, blobs.FlatListCalls);
+    }
+
         [Fact]
         public async Task StreamIdentitiesAsync_ReturnsIdAndUrlOnly()
         {
@@ -222,8 +295,11 @@ public class BlobOrganizerStoreRedirectTests
         Assert.Equal("https://longviewtrailruns.com/", Assert.Single(metadataDoc.Discovery!["manual"]).SourceUrls![0]);
         }
 
-    private static BlobOrganizerStore CreateStore(InMemoryBlobContainer blobs)
-        => new(blobs.Client.Object, LoggerFactory.Create(builder => { }));
+    private static BlobOrganizerStore CreateStore(InMemoryBlobContainer blobs, string? cacheRoot = null)
+        => new(
+            blobs.Client.Object,
+            LoggerFactory.Create(builder => { }),
+            cacheRoot ?? Path.Combine(Path.GetTempPath(), nameof(BlobOrganizerStoreRedirectTests), Guid.NewGuid().ToString("N")));
 
     private static void SeedOrganizer(InMemoryBlobContainer blobs, string id, string url, string lastScrapedUtc)
     {
@@ -244,6 +320,7 @@ public class BlobOrganizerStoreRedirectTests
     {
         private readonly Dictionary<string, BlobState> _blobs = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Mock<BlobClient>> _clients = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _downloadCounts = new(StringComparer.Ordinal);
 
         public Mock<BlobContainerClient> Client { get; } = new();
         public int FlatListCalls { get; private set; }
@@ -325,6 +402,9 @@ public class BlobOrganizerStoreRedirectTests
 
         public string GetContent(string blobName) => _blobs[blobName].Content.ToString();
 
+        public int GetDownloadCount(string blobName)
+            => _downloadCounts.TryGetValue(blobName, out var count) ? count : 0;
+
         public void DeleteOnFirstDownload(string blobName)
             => GetOrCreateBlobClient(blobName)
                 .Setup(blob => blob.DownloadContentAsync(It.IsAny<CancellationToken>()))
@@ -353,11 +433,26 @@ public class BlobOrganizerStoreRedirectTests
                     if (!_blobs.TryGetValue(blobName, out var blob))
                         throw new RequestFailedException(404, "Blob not found");
 
+                    _downloadCounts[blobName] = GetDownloadCount(blobName) + 1;
+
                     var details = BlobsModelFactory.BlobDownloadDetails(
                         metadata: new Dictionary<string, string>(blob.Metadata, StringComparer.Ordinal),
                         eTag: blob.ETag);
                     var result = BlobsModelFactory.BlobDownloadResult(blob.Content, details);
                     return Task.FromResult(Response.FromValue(result, Mock.Of<Response>()));
+                });
+
+            client
+                .Setup(blob => blob.GetPropertiesAsync(
+                    It.IsAny<BlobRequestConditions>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns((BlobRequestConditions _, CancellationToken _) =>
+                {
+                    if (!_blobs.TryGetValue(blobName, out var blob))
+                        throw new RequestFailedException(404, "Blob not found");
+
+                    var properties = BlobsModelFactory.BlobProperties(eTag: blob.ETag);
+                    return Task.FromResult(Response.FromValue(properties, Mock.Of<Response>()));
                 });
 
             client
@@ -404,11 +499,11 @@ public class BlobOrganizerStoreRedirectTests
                 version);
         }
 
-        private static BlobItem CreateBlobItem(string blobName, IDictionary<string, string> metadata)
+        private static BlobItem CreateBlobItem(string blobName, IDictionary<string, string> metadata, ETag? etag = null)
             => BlobsModelFactory.BlobItem(
                 name: blobName,
                 deleted: false,
-                properties: null,
+            properties: null,
                 versionId: null,
                 metadata: new Dictionary<string, string>(metadata, StringComparer.Ordinal));
 

@@ -1,0 +1,181 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "name": "title",
+      "content": {
+        "json": "# Azure Functions Cost Allocation\nEstimate cost per Azure Function by allocating actual Function App cost across function execution duration. Includes Cosmos dependency and RU investigation panels."
+      }
+    },
+    {
+      "type": 9,
+      "name": "parameters",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "timerange-param",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": {
+              "durationMs": 2592000000
+            },
+            "timeContext": {
+              "durationMs": 2592000000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 21600000
+                },
+                {
+                  "durationMs": 43200000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 1209600000
+                },
+                {
+                  "durationMs": 2592000000
+                },
+                {
+                  "durationMs": 7776000000
+                }
+              ]
+            },
+            "isRequired": true
+          },
+          {
+            "id": "appcost-param",
+            "version": "KqlParameterItem/1.0",
+            "name": "AppCostUsd",
+            "type": 1,
+            "value": "0",
+            "isRequired": true
+          },
+          {
+            "id": "topn-param",
+            "version": "KqlParameterItem/1.0",
+            "name": "TopN",
+            "type": 1,
+            "value": "10",
+            "isRequired": true
+          }
+        ],
+        "style": "above"
+      }
+    },
+    {
+      "type": 3,
+      "name": "estimatedCostTable",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let appCostUsd = todouble('{AppCostUsd}');\nlet functionUsage =\n    AppRequests\n    | where TimeGenerated {TimeRange}\n    | extend FunctionName = tostring(coalesce(\n        Properties['FunctionName'],\n        Properties['AzureFunctions_FunctionName'],\n        OperationName,\n        Name))\n    | where isnotempty(FunctionName)\n    | extend SampleWeight = tolong(iif(isnull(ItemCount) or ItemCount < 1, 1, ItemCount))\n    | extend WeightedDurationMs = todouble(DurationMs) * todouble(SampleWeight)\n    | summarize\n        Executions = sum(SampleWeight),\n        Failures = sumif(SampleWeight, Success == false),\n        TotalDurationMs = sum(WeightedDurationMs)\n      by FunctionName;\nlet totalDurationMs = toscalar(functionUsage | summarize sum(TotalDurationMs));\nfunctionUsage\n| extend DurationShare = iff(totalDurationMs == 0.0, 0.0, TotalDurationMs / totalDurationMs)\n| extend EstimatedCostUsd = round(appCostUsd * DurationShare, 2)\n| extend EstimatedCostPer1kExecUsd = round(1000.0 * EstimatedCostUsd / iff(Executions == 0, 1.0, todouble(Executions)), 2)\n| extend FailureRatePct = round(100.0 * todouble(Failures) / iff(Executions == 0, 1.0, todouble(Executions)), 2)\n| top toint('{TopN}') by EstimatedCostUsd desc\n| project FunctionName, EstimatedCostUsd, EstimatedCostPer1kExecUsd, Executions, Failures, FailureRatePct, DurationShare",
+        "title": "Estimated Cost By Function",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "showAnalytics": true,
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 3,
+      "name": "summaryTable",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| extend FunctionName = tostring(coalesce(\n    Properties['FunctionName'],\n    Properties['AzureFunctions_FunctionName'],\n    OperationName,\n    Name))\n| where isnotempty(FunctionName)\n| extend SampleWeight = tolong(iif(isnull(ItemCount) or ItemCount < 1, 1, ItemCount))\n| extend WeightedDurationMs = todouble(DurationMs) * todouble(SampleWeight)\n| summarize\n    Executions = sum(SampleWeight),\n    Failures = sumif(SampleWeight, Success == false),\n    FailureRatePct = round(100.0 * todouble(sumif(SampleWeight, Success == false)) / todouble(sum(SampleWeight)), 2),\n    AvgDurationMs = round(sum(WeightedDurationMs) / todouble(sum(SampleWeight)), 2),\n    P95DurationMs = round(percentile(DurationMs, 95), 2),\n    TotalDurationMs = round(sum(WeightedDurationMs), 2)\n  by FunctionName\n| order by TotalDurationMs desc",
+        "title": "Execution And Latency Summary",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "showAnalytics": true,
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 3,
+      "name": "dailyTrend",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| extend FunctionName = tostring(coalesce(\n    Properties['FunctionName'],\n    Properties['AzureFunctions_FunctionName'],\n    OperationName,\n    Name))\n| where isnotempty(FunctionName)\n| extend SampleWeight = tolong(iif(isnull(ItemCount) or ItemCount < 1, 1, ItemCount))\n| extend WeightedDurationMs = todouble(DurationMs) * todouble(SampleWeight)\n| summarize\n    Executions = sum(SampleWeight),\n    Failures = sumif(SampleWeight, Success == false),\n    TotalDurationMs = sum(WeightedDurationMs)\n  by bin(TimeGenerated, 1d), FunctionName\n| order by TimeGenerated asc",
+        "title": "Daily Trend",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart",
+        "showAnalytics": true,
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 3,
+      "name": "cosmosRuFieldDiscovery",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppDependencies\n| where TimeGenerated {TimeRange}\n| where tolower(Type) has 'cosmos' or tolower(Target) has 'cosmos'\n| project TimeGenerated, OperationName, Name, Type, Target, Data, Properties, Measurements\n| take 50",
+        "title": "Cosmos RU Field Discovery",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "showAnalytics": true,
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 3,
+      "name": "cosmosRuByFunction",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppDependencies\n| where TimeGenerated {TimeRange}\n| where tolower(Type) has 'cosmos' or tolower(Target) has 'cosmos'\n| extend FunctionName = tostring(coalesce(\n    Properties['FunctionName'],\n    Properties['AzureFunctions_FunctionName'],\n    OperationName))\n| extend SampleWeight = tolong(iif(isnull(ItemCount) or ItemCount < 1, 1, ItemCount))\n| extend RequestCharge = todouble(coalesce(\n    Measurements['RequestCharge'],\n    Measurements['requestCharge'],\n    Properties['RequestCharge'],\n    Properties['requestCharge'],\n    Properties['x-ms-request-charge']))\n| where isnotempty(FunctionName)\n| summarize\n    DependencyCalls = sum(SampleWeight),\n    TotalRu = sum(RequestCharge * todouble(SampleWeight)),\n    AvgRuPerCall = avg(RequestCharge),\n    AvgDurationMs = avg(DurationMs),\n    P95DurationMs = percentile(DurationMs, 95)\n  by FunctionName\n| order by TotalRu desc",
+        "title": "Cosmos RU By Function",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "showAnalytics": true,
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 3,
+      "name": "cosmosRuTrend",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppDependencies\n| where TimeGenerated {TimeRange}\n| where tolower(Type) has 'cosmos' or tolower(Target) has 'cosmos'\n| extend FunctionName = tostring(coalesce(\n    Properties['FunctionName'],\n    Properties['AzureFunctions_FunctionName'],\n    OperationName))\n| extend RequestCharge = todouble(coalesce(\n    Measurements['RequestCharge'],\n    Measurements['requestCharge'],\n    Properties['RequestCharge'],\n    Properties['requestCharge'],\n    Properties['x-ms-request-charge']))\n| where isnotempty(FunctionName)\n| summarize TotalRu = sum(RequestCharge) by bin(TimeGenerated, 1d), FunctionName\n| order by TimeGenerated asc",
+        "title": "Cosmos RU Trend",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart",
+        "showAnalytics": true,
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 3,
+      "name": "cosmosDependencyUsageByFunction",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppDependencies\n| where TimeGenerated {TimeRange}\n| where tolower(Type) has 'cosmos' or tolower(Target) has 'cosmos'\n| extend FunctionName = tostring(coalesce(\n    Properties['FunctionName'],\n    Properties['AzureFunctions_FunctionName'],\n    OperationName))\n| extend SampleWeight = tolong(iif(isnull(ItemCount) or ItemCount < 1, 1, ItemCount))\n| extend WeightedDurationMs = todouble(DurationMs) * todouble(SampleWeight)\n| where isnotempty(FunctionName)\n| summarize\n    DependencyCalls = sum(SampleWeight),\n    Failures = sumif(SampleWeight, Success == false),\n    AvgDurationMs = round(sum(WeightedDurationMs) / todouble(sum(SampleWeight)), 2),\n    P95DurationMs = round(percentile(DurationMs, 95), 2),\n    TotalDurationMs = round(sum(WeightedDurationMs), 2)\n  by FunctionName, Target, Name\n| order by TotalDurationMs desc",
+        "title": "Cosmos Dependency Usage By Function",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "showAnalytics": true,
+        "showExportToExcel": true
+      }
+    }
+  ],
+  "isLocked": false,
+  "fallbackResourceIds": [
+    "/subscriptions/e14bd6ed-3e02-43cb-b5d3-a0ce2ceb1c27/resourceGroups/DefaultResourceGroup-SEC/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-e14bd6ed-3e02-43cb-b5d3-a0ce2ceb1c27-SEC"
+  ]
+}

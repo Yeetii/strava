@@ -14,7 +14,7 @@ namespace Shared.Services;
 /// Each organizer is stored as a single JSON blob at <c>{organizerKey}/organizer.json</c>.
 /// Concurrent modifications use ETag-based optimistic concurrency with a short retry loop.
 /// </summary>
-public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory loggerFactory)
+public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory loggerFactory, string? localCacheRoot = null)
 {
     private const string BlobSuffix = "/organizer.json";
     private const string RedirectSuffix = "/redirect.txt";
@@ -23,8 +23,25 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
     private const string MetaTransparencyHash = "transparencyhash";
     private const int MaxRetries = 5;
     private const int MaxRedirectDepth = 8;
+    private const int ReadProgressLogInterval = 500;
+    private static readonly TimeSpan RecentCacheTrustWindow = ResolveRecentCacheTrustWindow();
+    private static readonly bool UseAnsiColors = !Console.IsOutputRedirected && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NO_COLOR"));
 
     private readonly ILogger _logger = loggerFactory.CreateLogger<BlobOrganizerStore>();
+    private readonly string? _localCacheRoot = localCacheRoot ?? ResolveLocalCacheRoot();
+
+    public enum OrganizerDocumentSource
+    {
+        Cache,
+        Blob,
+    }
+
+    public readonly record struct TransparencyWriteStats(int OrganizerWrites, int RaceUploads, int RaceDeletes, int RaceUnchanged);
+
+    public sealed record OrganizerDocumentStreamItem(RaceOrganizerDocument Document, OrganizerDocumentSource Source);
+
+    private readonly record struct OrganizerReadResult(BinaryData Content, OrganizerDocumentSource Source, int ByteCount);
+    private sealed record StreamReadResult<TDocument>(TDocument Document, OrganizerReadResult ReadResult) where TDocument : class;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -49,11 +66,22 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         CancellationToken cancellationToken = default)
     {
         organizerKey = await ResolveOrganizerKeyAsync(organizerKey, cancellationToken);
-        var blob = container.GetBlobClient(BlobKey(organizerKey));
+        var blobName = BlobKey(organizerKey);
+        var blob = container.GetBlobClient(blobName);
         try
         {
-            var result = await blob.DownloadContentAsync(cancellationToken);
-            return Deserialize(result.Value.Content);
+            var result = await DownloadOrganizerContentAsync(blob, blobName, knownEtag: null, cancellationToken);
+            _logger.LogDebug(
+                "Loaded organizer {OrganizerKey} from {Source} ({ByteCount} bytes).",
+                organizerKey,
+                result.Source,
+                result.ByteCount);
+            return await DeserializeWithCacheFallbackAsync(
+                static content => Deserialize(content),
+                blob,
+                blobName,
+                result,
+                cancellationToken);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -68,8 +96,12 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         CancellationToken cancellationToken = default)
     {
         doc.Id = await ResolveOrganizerKeyAsync(doc.Id, cancellationToken);
-        var blob = container.GetBlobClient(BlobKey(doc.Id));
-        await blob.UploadAsync(Serialize(doc), overwrite: true, cancellationToken);
+        var blobName = BlobKey(doc.Id);
+        var blob = container.GetBlobClient(blobName);
+        var payload = Serialize(doc);
+        var response = await blob.UploadAsync(payload, overwrite: true, cancellationToken);
+        if (response.Value is not null)
+            TryWriteLocalCache(blobName, response.Value.ETag, payload);
     }
 
     public async Task<string> ResolveOrganizerKeyAsync(
@@ -314,24 +346,19 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
     /// <c>{organizerKey}/races/</c> for inspection and debugging.
     /// Stored geometries are marker-only to keep these transparency artifacts lightweight.
     /// </summary>
-    public async Task WriteAssembledRacesAsync(
+    public async Task<TransparencyWriteStats> WriteAssembledRacesAsync(
         string organizerKey,
         IReadOnlyList<StoredFeature> races,
         CancellationToken cancellationToken = default)
     {
         organizerKey = await ResolveOrganizerKeyAsync(organizerKey, cancellationToken);
-        var prefix = AssembledRacePrefix(organizerKey);
-        var existing = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var existing = TryReadLocalTransparencyManifest(organizerKey, out var cachedTransparencyHashes)
+            ? cachedTransparencyHashes
+            : new Dictionary<string, string>(StringComparer.Ordinal);
         var uploadTasks = new List<Task>(races.Count);
-
-        await foreach (var item in container.GetBlobsAsync(
-            traits: BlobTraits.Metadata,
-            prefix: prefix,
-            cancellationToken: cancellationToken))
-        {
-            item.Metadata.TryGetValue(MetaTransparencyHash, out var hash);
-            existing[item.Name] = hash;
-        }
+        var finalHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        var raceUploads = 0;
+        var raceUnchanged = 0;
 
         foreach (var race in races)
         {
@@ -345,13 +372,16 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
             var marker = RaceAssembler.CreateTransparencyMarker(race);
             var payload = JsonSerializer.SerializeToUtf8Bytes(marker, TransparencyJsonOptions);
             var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant();
+            finalHashes[blobName] = hash;
 
             if (string.Equals(existingHash, hash, StringComparison.Ordinal))
             {
+                raceUnchanged++;
                 continue;
             }
 
             var blob = container.GetBlobClient(blobName);
+            raceUploads++;
             uploadTasks.Add(blob.UploadAsync(
                 BinaryData.FromBytes(payload),
                 new BlobUploadOptions
@@ -369,10 +399,16 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
             await Task.WhenAll(uploadTasks);
         }
 
-        foreach (var staleBlobName in existing.Keys)
+        var deleteTasks = existing.Keys
+            .Select(staleBlobName => container.DeleteBlobIfExistsAsync(staleBlobName, cancellationToken: cancellationToken))
+            .ToList();
+        if (deleteTasks.Count > 0)
         {
-            await container.DeleteBlobIfExistsAsync(staleBlobName, cancellationToken: cancellationToken);
+            await Task.WhenAll(deleteTasks);
         }
+
+        TryWriteLocalTransparencyManifest(organizerKey, finalHashes);
+        return new TransparencyWriteStats(1, raceUploads, deleteTasks.Count, raceUnchanged);
     }
 
     // ── Tile build ────────────────────────────────────────────────────────
@@ -384,12 +420,22 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         int maxConcurrency = 32,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (var doc in StreamOrganizerBlobsAsync(
+        await foreach (var item in StreamAllWithSourceAsync(maxConcurrency, cancellationToken))
+        {
+            yield return item.Document;
+        }
+    }
+
+    public async IAsyncEnumerable<OrganizerDocumentStreamItem> StreamAllWithSourceAsync(
+        int maxConcurrency = 32,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var item in StreamOrganizerBlobsAsync(
             maxConcurrency,
             static content => Deserialize(content),
             cancellationToken))
         {
-            yield return doc;
+            yield return new OrganizerDocumentStreamItem(item.Document, item.ReadResult.Source);
         }
     }
 
@@ -402,7 +448,7 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
             static content => DeserializeIdentity(content),
             cancellationToken))
         {
-            yield return input;
+            yield return input.Document;
         }
     }
 
@@ -415,7 +461,7 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
             static content => DeserializeMetadataWithoutGeometries(content),
             cancellationToken))
         {
-            yield return input;
+            yield return input.Document;
         }
     }
 
@@ -505,7 +551,10 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
 
             try
             {
-                await blob.UploadAsync(Serialize(doc), uploadOptions, cancellationToken);
+                var payload = Serialize(doc);
+                var response = await blob.UploadAsync(payload, uploadOptions, cancellationToken);
+                if (response.Value is not null)
+                    TryWriteLocalCache(BlobKey(organizerKey), response.Value.ETag, payload);
                 return; // success
             }
             catch (RequestFailedException ex) when (ex.Status is 409 or 412)
@@ -624,13 +673,18 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         };
     }
 
-    private async IAsyncEnumerable<T> StreamOrganizerBlobsAsync<T>(
+    private async IAsyncEnumerable<StreamReadResult<T>> StreamOrganizerBlobsAsync<T>(
         int maxConcurrency,
         Func<BinaryData, T?> deserialize,
         [EnumeratorCancellation] CancellationToken cancellationToken)
         where T : class
     {
         var organizerKeys = new List<string>();
+        var streamedDocuments = 0;
+        var cacheHits = 0;
+        var blobDownloads = 0;
+        long cachedBytes = 0;
+        long downloadedBytes = 0;
         await foreach (var item in container.GetBlobsByHierarchyAsync(delimiter: "/", cancellationToken: cancellationToken))
         {
             if (!item.IsPrefix || string.IsNullOrWhiteSpace(item.Prefix))
@@ -646,6 +700,7 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
             {
                 var hasRedirect = false;
                 var hasOrganizerBlob = false;
+                ETag? organizerBlobEtag = null;
                 await foreach (var item in container.GetBlobsByHierarchyAsync(
                     delimiter: "/",
                     prefix: $"{organizerKey}/",
@@ -661,7 +716,10 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
                     }
 
                     if (string.Equals(item.Blob.Name, BlobKey(organizerKey), StringComparison.Ordinal))
+                    {
                         hasOrganizerBlob = true;
+                        organizerBlobEtag = item.Blob.Properties?.ETag;
+                    }
                 }
 
                 if (hasRedirect || !hasOrganizerBlob)
@@ -671,8 +729,9 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
                 var blob = container.GetBlobClient(name);
                 try
                 {
-                    var result = await blob.DownloadContentAsync(cancellationToken);
-                    return deserialize(result.Value.Content);
+                    var result = await DownloadOrganizerContentAsync(blob, name, organizerBlobEtag, cancellationToken);
+                    var document = await DeserializeWithCacheFallbackAsync(deserialize, blob, name, result, cancellationToken);
+                    return document is null ? null : new StreamReadResult<T>(document, result);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404)
                 {
@@ -682,12 +741,57 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
             }).ToList();
 
             var docs = await Task.WhenAll(tasks);
-            foreach (var doc in docs)
+            foreach (var item in docs)
             {
-                if (doc is not null)
-                    yield return doc;
+                if (item is null)
+                    continue;
+
+                if (item.ReadResult.Source == OrganizerDocumentSource.Cache)
+                {
+                    cacheHits++;
+                    cachedBytes += item.ReadResult.ByteCount;
+                }
+                else
+                {
+                    blobDownloads++;
+                    downloadedBytes += item.ReadResult.ByteCount;
+                }
+
+                streamedDocuments++;
+                if (streamedDocuments % ReadProgressLogInterval == 0)
+                {
+                    LogReadSummary(
+                        streamedDocuments,
+                        cacheHits,
+                        cachedBytes,
+                        blobDownloads,
+                        downloadedBytes);
+                }
+
+                yield return item;
             }
         }
+
+        if (cacheHits > 0 || blobDownloads > 0)
+        {
+            LogReadSummary(
+                streamedDocuments,
+                cacheHits,
+                cachedBytes,
+                blobDownloads,
+                downloadedBytes);
+        }
+    }
+
+    private void LogReadSummary(
+        int streamedDocuments,
+        int cacheHits,
+        long cachedBytes,
+        int blobDownloads,
+        long downloadedBytes)
+    {
+        var summary = $"Organizer reads: {AccentCount(streamedDocuments)} docs | cache {AccentCache(cacheHits)} ({AccentBytes(FormatByteCount(cachedBytes))}) | blob {AccentBlob(blobDownloads)} ({AccentBytes(FormatByteCount(downloadedBytes))})";
+        _logger.LogInformation("{ReadSummary}", summary);
     }
 
     private async Task<string?> GetRedirectTargetAsync(string organizerKey, CancellationToken cancellationToken)
@@ -708,6 +812,312 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
     private async Task DeletePrefixAsync(string prefix, CancellationToken cancellationToken)
     {
         await foreach (var item in container.GetBlobsAsync(prefix: prefix, cancellationToken: cancellationToken))
+        {
             await container.DeleteBlobIfExistsAsync(item.Name, cancellationToken: cancellationToken);
+            TryDeleteLocalCache(item.Name);
+        }
+
+        var organizerKey = prefix.TrimEnd('/');
+        if (!string.IsNullOrWhiteSpace(organizerKey) && !organizerKey.Contains('/'))
+            TryDeleteLocalTransparencyManifest(organizerKey);
+    }
+
+    private async Task<OrganizerReadResult> DownloadOrganizerContentAsync(
+        BlobClient blob,
+        string blobName,
+        ETag? knownEtag,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(_localCacheRoot))
+        {
+            if (TryReadRecentlyWrittenLocalCache(blobName, out var recentCachedContent))
+                return new OrganizerReadResult(recentCachedContent, OrganizerDocumentSource.Cache, GetByteCount(recentCachedContent));
+
+            var etag = knownEtag;
+            if (etag is null)
+            {
+                var properties = await blob.GetPropertiesAsync(cancellationToken: cancellationToken);
+                etag = properties.Value.ETag;
+            }
+
+            if (etag is not null && TryReadLocalCache(blobName, etag.Value, out var cachedContent))
+                return new OrganizerReadResult(cachedContent, OrganizerDocumentSource.Cache, GetByteCount(cachedContent));
+        }
+
+        return await DownloadOrganizerContentFromBlobAsync(blob, blobName, cancellationToken);
+    }
+
+    private async Task<OrganizerReadResult> DownloadOrganizerContentFromBlobAsync(
+        BlobClient blob,
+        string blobName,
+        CancellationToken cancellationToken)
+    {
+        var result = await blob.DownloadContentAsync(cancellationToken);
+        TryWriteLocalCache(blobName, result.Value.Details.ETag, result.Value.Content);
+        return new OrganizerReadResult(result.Value.Content, OrganizerDocumentSource.Blob, GetByteCount(result.Value.Content));
+    }
+
+    private async Task<T?> DeserializeWithCacheFallbackAsync<T>(
+        Func<BinaryData, T?> deserialize,
+        BlobClient blob,
+        string blobName,
+        OrganizerReadResult result,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        try
+        {
+            return deserialize(result.Content);
+        }
+        catch (JsonException ex) when (result.Source == OrganizerDocumentSource.Cache)
+        {
+            _logger.LogWarning(ex, "Discarding corrupt organizer cache entry {BlobName} and refetching from blob.", blobName);
+            TryDeleteLocalCache(blobName);
+            var fresh = await DownloadOrganizerContentFromBlobAsync(blob, blobName, cancellationToken);
+            return deserialize(fresh.Content);
+        }
+    }
+
+    private bool TryReadRecentlyWrittenLocalCache(string blobName, out BinaryData content)
+    {
+        content = default;
+
+        if (string.IsNullOrWhiteSpace(_localCacheRoot) || RecentCacheTrustWindow <= TimeSpan.Zero)
+            return false;
+
+        var contentPath = GetLocalCacheContentPath(blobName);
+        var etagPath = GetLocalCacheEtagPath(blobName);
+        if (!File.Exists(contentPath) || !File.Exists(etagPath))
+            return false;
+
+        try
+        {
+            var age = DateTimeOffset.UtcNow - File.GetLastWriteTimeUtc(contentPath);
+            if (age > RecentCacheTrustWindow)
+                return false;
+
+            content = BinaryData.FromBytes(File.ReadAllBytes(contentPath));
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Ignoring unreadable recent organizer cache entry for {BlobName}.", blobName);
+            return false;
+        }
+    }
+
+    private bool TryReadLocalCache(string blobName, ETag etag, out BinaryData content)
+    {
+        content = default;
+
+        if (string.IsNullOrWhiteSpace(_localCacheRoot))
+            return false;
+
+        var contentPath = GetLocalCacheContentPath(blobName);
+        var etagPath = GetLocalCacheEtagPath(blobName);
+        if (!File.Exists(contentPath) || !File.Exists(etagPath))
+            return false;
+
+        try
+        {
+            var cachedEtag = File.ReadAllText(etagPath).Trim();
+            if (!string.Equals(cachedEtag, etag.ToString(), StringComparison.Ordinal))
+                return false;
+
+            content = BinaryData.FromBytes(File.ReadAllBytes(contentPath));
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Ignoring unreadable organizer cache entry for {BlobName}.", blobName);
+            return false;
+        }
+    }
+
+    private void TryWriteLocalCache(string blobName, ETag etag, BinaryData content)
+    {
+        if (string.IsNullOrWhiteSpace(_localCacheRoot))
+            return;
+
+        var contentPath = GetLocalCacheContentPath(blobName);
+        var etagPath = GetLocalCacheEtagPath(blobName);
+
+        try
+        {
+            var directory = Path.GetDirectoryName(contentPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            WriteFileAtomically(contentPath, content.ToArray());
+            WriteFileAtomically(etagPath, etag.ToString());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Ignoring organizer cache write failure for {BlobName}.", blobName);
+        }
+    }
+
+    private void TryDeleteLocalCache(string blobName)
+    {
+        if (string.IsNullOrWhiteSpace(_localCacheRoot))
+            return;
+
+        TryDeleteFile(GetLocalCacheContentPath(blobName));
+        TryDeleteFile(GetLocalCacheEtagPath(blobName));
+    }
+
+    private void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Ignoring organizer cache delete failure for {Path}.", path);
+        }
+    }
+
+    private string GetLocalCacheContentPath(string blobName)
+        => Path.Combine(_localCacheRoot!, blobName.Replace('/', Path.DirectorySeparatorChar));
+
+    private string GetLocalCacheEtagPath(string blobName)
+        => GetLocalCacheContentPath(blobName) + ".etag";
+
+    private bool TryReadLocalTransparencyManifest(string organizerKey, out Dictionary<string, string> hashes)
+    {
+        hashes = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (string.IsNullOrWhiteSpace(_localCacheRoot) || RecentCacheTrustWindow <= TimeSpan.Zero)
+            return false;
+
+        var manifestPath = GetLocalTransparencyManifestPath(organizerKey);
+        if (!File.Exists(manifestPath))
+            return false;
+
+        try
+        {
+            var age = DateTimeOffset.UtcNow - File.GetLastWriteTimeUtc(manifestPath);
+            if (age > RecentCacheTrustWindow)
+                return false;
+
+            var json = File.ReadAllText(manifestPath);
+            var manifest = JsonSerializer.Deserialize<Dictionary<string, string>>(json, JsonOptions);
+            if (manifest is null)
+                return false;
+
+            hashes = new Dictionary<string, string>(manifest, StringComparer.Ordinal);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            _logger.LogDebug(ex, "Ignoring unreadable local transparency manifest for {OrganizerKey}.", organizerKey);
+            return false;
+        }
+    }
+
+    private void TryWriteLocalTransparencyManifest(string organizerKey, IReadOnlyDictionary<string, string> hashes)
+    {
+        if (string.IsNullOrWhiteSpace(_localCacheRoot))
+            return;
+
+        var manifestPath = GetLocalTransparencyManifestPath(organizerKey);
+
+        try
+        {
+            var directory = Path.GetDirectoryName(manifestPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            WriteFileAtomically(manifestPath, JsonSerializer.Serialize(hashes, JsonOptions));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Ignoring local transparency manifest write failure for {OrganizerKey}.", organizerKey);
+        }
+    }
+
+    private void TryDeleteLocalTransparencyManifest(string organizerKey)
+        => TryDeleteFile(GetLocalTransparencyManifestPath(organizerKey));
+
+    private string GetLocalTransparencyManifestPath(string organizerKey)
+        => Path.Combine(_localCacheRoot!, "__transparency", organizerKey.Replace('/', Path.DirectorySeparatorChar), "manifest.json");
+
+    private static int GetByteCount(BinaryData content)
+        => content.ToMemory().Length;
+
+    private static string FormatByteCount(long byteCount)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        double value = byteCount;
+        var suffixIndex = 0;
+        while (value >= 1024 && suffixIndex < suffixes.Length - 1)
+        {
+            value /= 1024;
+            suffixIndex++;
+        }
+
+        var format = suffixIndex == 0 ? "0" : "0.##";
+        return string.Format(System.Globalization.CultureInfo.InvariantCulture, $"{{0:{format}}} {{1}}", value, suffixes[suffixIndex]);
+    }
+
+    private static string AccentCount(int value) => Colorize(value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture), "1;36");
+
+    private static string AccentCache(int value) => Colorize(value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture), "1;32");
+
+    private static string AccentBlob(int value) => Colorize(value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture), "1;33");
+
+    private static string AccentBytes(string value) => Colorize(value, "0;37");
+
+    private static string Colorize(string value, string ansiCode)
+        => UseAnsiColors ? $"\u001b[{ansiCode}m{value}\u001b[0m" : value;
+
+    private static void WriteFileAtomically(string path, byte[] bytes)
+    {
+        var tempPath = path + ".tmp";
+        File.WriteAllBytes(tempPath, bytes);
+        File.Move(tempPath, path, overwrite: true);
+    }
+
+    private static void WriteFileAtomically(string path, string content)
+    {
+        var tempPath = path + ".tmp";
+        File.WriteAllText(tempPath, content);
+        File.Move(tempPath, path, overwrite: true);
+    }
+
+    private static TimeSpan ResolveRecentCacheTrustWindow()
+    {
+        var configuredMinutes = Environment.GetEnvironmentVariable("STRAVA_ORGANIZER_CACHE_TRUST_MINUTES");
+        if (double.TryParse(configuredMinutes, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var minutes)
+            && minutes >= 0)
+        {
+            return TimeSpan.FromMinutes(minutes);
+        }
+
+        return TimeSpan.FromHours(24);
+    }
+
+    private static string? ResolveLocalCacheRoot()
+    {
+        var configured = Environment.GetEnvironmentVariable("STRAVA_ORGANIZER_CACHE_DIR");
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured;
+
+        var disabled = Environment.GetEnvironmentVariable("STRAVA_ORGANIZER_CACHE_DISABLED");
+        if (string.Equals(disabled, "1", StringComparison.Ordinal)
+            || bool.TryParse(disabled, out var cacheDisabled) && cacheDisabled)
+        {
+            return null;
+        }
+
+        var basePath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(basePath))
+            basePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        return string.IsNullOrWhiteSpace(basePath)
+            ? null
+            : Path.Combine(basePath, "strava", "organizer-cache");
     }
 }
