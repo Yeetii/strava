@@ -1,4 +1,5 @@
 using System.Net;
+using API.Utils;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -32,23 +33,43 @@ public class GetStravaRoutes(
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<RouteSummaryDto>),
         Description = "A list of the user's Strava routes.")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
     [Function(nameof(GetStravaRoutes))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "strava/routes")] HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "strava/routes")] HttpRequestData req)
     {
+        if (CorsHeaders.IsOptions(req))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
+            CorsHeaders.Add(req, optionsResponse, "GET, OPTIONS");
+            return optionsResponse;
+        }
+
+        var response = req.CreateResponse();
+        CorsHeaders.Add(req, response, "GET, OPTIONS");
+
         string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
         var user = await _userAuthService.GetUserFromSessionId(sessionId);
         if (user == null)
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        {
+            response.StatusCode = HttpStatusCode.Unauthorized;
+            return response;
+        }
 
         var token = await _stravaTokenService.GetValidAccessToken(user);
         if (token == null)
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        {
+            response.StatusCode = HttpStatusCode.Unauthorized;
+            return response;
+        }
 
         var routes = await _routesApi.GetAthleteRoutes(token, user.Id);
         if (routes == null)
-            return req.CreateResponse(HttpStatusCode.NotFound);
+        {
+            response.StatusCode = HttpStatusCode.NotFound;
+            return response;
+        }
 
         var dtos = routes.Select(r => new RouteSummaryDto(
             r.Id,
@@ -64,7 +85,7 @@ public class GetStravaRoutes(
             r.Starred,
             r.Map?.SummaryPolyline));
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
+        response.StatusCode = HttpStatusCode.OK;
         await response.WriteAsJsonAsync(dtos);
         return response;
     }

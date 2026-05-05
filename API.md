@@ -519,6 +519,100 @@ Queue a manual scrape job using the Mistral Studio Agent API. The worker writes 
 
 ---
 
+## Strava Routes
+
+### `GET /strava/routes`
+
+🔒 Authenticated (session cookie)
+
+List the authenticated user's Strava routes.
+
+**Response** `200 OK` `application/json`
+```ts
+Array<{
+  id: number
+  idStr: string
+  name: string
+  description: string | null
+  distanceMeters: number | null
+  elevationGain: number | null
+  activityType: string        // e.g. "Run/hike", "Road bike", "Mountain bike", "Gravel bike", "Bike"
+  createdAt: string | null    // ISO 8601
+  updatedAt: string | null    // ISO 8601
+  private: boolean | null
+  starred: boolean | null
+  summaryPolyline: string | null
+}>
+```
+
+**Errors**
+- `401` — Missing or invalid session
+
+---
+
+### `POST /strava/routes`
+
+🔒 Authenticated (session cookie)
+
+Create a Strava route by uploading a GPX file.
+
+**Query params**
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | ✅ | Name for the route on Strava |
+| `type` | number | — | `1` = Ride, `2` = Run. Defaults to `2` |
+| `subType` | number | — | `1` = Road, `2` = MTB, `3` = Cross, `4` = Trail, `5` = Mixed. Defaults to `4` |
+| `description` | string | — | Optional route description |
+| `filename` | string | — | Filename for the GPX upload. Defaults to `route.gpx` |
+
+**Request body** `application/octet-stream` — raw GPX file content
+
+**Response** `200 OK` `application/json` — the created Strava route object
+
+**Errors**
+- `400` — `name` query parameter is missing
+- `401` — Missing or invalid session
+
+---
+
+### `GET /strava/routes/{routeId}/gpx`
+
+🔒 Authenticated (session cookie)
+
+Export a Strava route as a GPX file.
+
+**Path params**
+| Param | Type | Description |
+|---|---|---|
+| `routeId` | string | Strava route ID |
+
+**Response** `200 OK` `application/gpx+xml` — GPX file download (`Content-Disposition: attachment`)
+
+**Errors**
+- `401` — Missing or invalid session
+- `404` — Route not found
+
+---
+
+### `DELETE /strava/routes/{routeId}`
+
+🔒 Authenticated (session cookie)
+
+Delete a Strava route by ID.
+
+**Path params**
+| Param | Type | Description |
+|---|---|---|
+| `routeId` | string | Strava route ID |
+
+**Response** `204 No Content`
+
+**Errors**
+- `401` — Missing or invalid session
+- `404` — Route not found
+
+---
+
 ## Assemble Race Jobs
 
 ### `POST /manage/races/assemble`
