@@ -1,4 +1,5 @@
 using System.Net;
+using API.Utils;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -29,29 +30,46 @@ public class PostRouteToStrava(
         Description = "Raw GPX file content.")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(StravaRoute),
         Description = "The created Strava route.")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "text/plain", bodyType: typeof(string),
         Description = "Missing required query parameters.")]
     [Function(nameof(PostRouteToStrava))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "strava/routes")] HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "strava/routes")] HttpRequestData req)
     {
+        if (CorsHeaders.IsOptions(req))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
+            CorsHeaders.Add(req, optionsResponse, "POST, OPTIONS");
+            return optionsResponse;
+        }
+
+        var response = req.CreateResponse();
+        CorsHeaders.Add(req, response, "POST, OPTIONS");
+
         string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
         var user = await _userAuthService.GetUserFromSessionId(sessionId);
         if (user == null)
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        {
+            response.StatusCode = HttpStatusCode.Unauthorized;
+            return response;
+        }
 
         var token = await _stravaTokenService.GetValidAccessToken(user);
         if (token == null)
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        {
+            response.StatusCode = HttpStatusCode.Unauthorized;
+            return response;
+        }
 
         var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
         var name = query["name"];
         if (string.IsNullOrWhiteSpace(name))
         {
-            var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badRequest.WriteStringAsync("Query parameter 'name' is required");
-            return badRequest;
+            response.StatusCode = HttpStatusCode.BadRequest;
+            await response.WriteStringAsync("Query parameter 'name' is required");
+            return response;
         }
 
         var description = query["description"];
@@ -62,7 +80,7 @@ public class PostRouteToStrava(
 
         var route = await _routesApi.CreateRoute(token, req.Body, filename, name, type, subType, description);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
+        response.StatusCode = HttpStatusCode.OK;
         await response.WriteAsJsonAsync(route);
         return response;
     }
