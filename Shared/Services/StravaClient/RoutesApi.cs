@@ -73,4 +73,21 @@ public class RoutesApi(HttpClient _stravaClient)
         return JsonSerializer.Deserialize<StravaRoute>(body)
             ?? throw new JsonException($"Could not parse create route response. Body: {body}");
     }
+
+    public async Task<bool> DeleteRoute(string token, string routeId)
+    {
+        var request = new HttpRequestMessage
+        {
+            Method = HttpMethod.Delete,
+            RequestUri = new Uri(_stravaClient.BaseAddress + $"routes/{routeId}"),
+            Headers = { { "Authorization", $"Bearer {token}" } }
+        };
+
+        using var response = await _stravaClient.SendAsync(request);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return false;
+
+        response.EnsureSuccessStatusCode();
+        return true;
+    }
 }
