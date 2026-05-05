@@ -1,0 +1,20 @@
+meta {
+  name: Upload Garmin Course
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/garmin/courses?filename={{filename}}
+  body: file
+  auth: none
+}
+
+body:file {
+  file: ./course.gpx
+}
+
+headers {
+  Content-Type: application/gpx+xml
+  Cookie: session={{sessionId}}
+}

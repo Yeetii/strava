@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.GarminClient;
 using Shared.Services.StravaClient;
 using Shared.Constants;
 using System.Net.Http.Headers;
@@ -89,11 +90,23 @@ var host = new HostBuilder()
         {
             client.BaseAddress = new Uri("https://www.strava.com/api/v3/");
         });
+        services.AddHttpClient("garminProxyClient", client =>
+        {
+            var garminProxyBaseUrl = configuration.GetValue<string>("GarminProxyBaseUrl")
+                ?? "http://localhost:7073/api/";
+            client.BaseAddress = new Uri(garminProxyBaseUrl);
+        });
         services.AddSingleton(serviceProvider =>
         {
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             var stravaClient = httpClientFactory.CreateClient("stravaClient");
             return new RoutesApi(stravaClient);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+            var garminProxyClient = httpClientFactory.CreateClient("garminProxyClient");
+            return new GarminCoursesApi(garminProxyClient, configuration);
         });
         services.AddScoped<StravaTokenService>();
         services.AddHttpClient<OverpassClient>(

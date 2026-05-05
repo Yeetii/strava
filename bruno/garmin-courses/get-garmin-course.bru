@@ -1,0 +1,15 @@
+meta {
+  name: Get Garmin Course
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/garmin/courses/{{courseId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}

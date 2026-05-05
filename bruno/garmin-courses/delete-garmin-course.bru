@@ -1,0 +1,15 @@
+meta {
+  name: Delete Garmin Course
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/garmin/courses/{{courseId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}

@@ -67,7 +67,7 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
 
         outputs.User = new Shared.Models.User
         {
-            Id = tokenResponse.Athlete.Id.ToString(),
+            Id = userId,
             UserName = tokenResponse.Athlete.Username,
             FirstName = tokenResponse.Athlete.Firstname,
             LastName = tokenResponse.Athlete.Lastname,
@@ -84,6 +84,7 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
 
         await response.WriteAsJsonAsync(new PostLoginResponse
         {
+            UserId = tokenResponse.Athlete.Id.ToString(),
             Username = tokenResponse.Athlete.Username,
             FirstName = tokenResponse.Athlete.Firstname,
             LastName = tokenResponse.Athlete.Lastname
@@ -94,6 +95,8 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
 
     public class PostLoginResponse
     {
+        [JsonPropertyName("userId")]
+        public required string UserId { get; set; }
         [JsonPropertyName("username")]
         public string? Username { get; set; }
 

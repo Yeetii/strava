@@ -1,0 +1,15 @@
+meta {
+  name: Get Garmin Course GPX
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/garmin/courses/{{courseId}}/gpx
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}
