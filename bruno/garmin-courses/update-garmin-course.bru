@@ -1,0 +1,20 @@
+meta {
+  name: Update Garmin Course
+  type: http
+  seq: 6
+}
+
+put {
+  url: {{baseUrl}}/garmin/courses/{{courseId}}?filename={{filename}}
+  body: file
+  auth: none
+}
+
+body:file {
+  file: ./course.gpx
+}
+
+headers {
+  Content-Type: application/gpx+xml
+  Cookie: session={{sessionId}}
+}

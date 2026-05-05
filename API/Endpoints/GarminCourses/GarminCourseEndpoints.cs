@@ -189,16 +189,54 @@ public class DeleteGarminCourse(
         if (CorsHeaders.IsOptions(req))
         {
             var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            CorsHeaders.Add(req, optionsResponse, "DELETE, OPTIONS");
+            CorsHeaders.Add(req, optionsResponse, "DELETE, PUT, OPTIONS");
             return optionsResponse;
         }
 
-        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "DELETE, OPTIONS");
+        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "DELETE, PUT, OPTIONS");
         if (authFailure is not null)
             return authFailure;
 
         using var upstreamResponse = await garminCoursesApi.DeleteCourse(courseId, cancellationToken);
-        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, OPTIONS");
+        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, PUT, OPTIONS");
+    }
+}
+
+public class PutGarminCourse(
+    UserAuthenticationService userAuthService,
+    GarminCoursesApi garminCoursesApi)
+{
+    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Replace a Garmin course's route with new GPX via the configured Garmin proxy service.")]
+    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
+    [OpenApiParameter(name: "courseId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
+    [OpenApiParameter(name: "filename", In = ParameterLocation.Query, Type = typeof(string), Required = false)]
+    [OpenApiRequestBody(contentType: "application/gpx+xml", bodyType: typeof(string), Required = true)]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Garmin course update response.")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest, Description = "GPX payload missing")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
+    [Function(nameof(PutGarminCourse))]
+    public async Task<HttpResponseData> Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "garmin/courses/{courseId}")] HttpRequestData req,
+        string courseId,
+        CancellationToken cancellationToken)
+    {
+        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "DELETE, PUT, OPTIONS");
+        if (authFailure is not null)
+            return authFailure;
+
+        await using var buffer = new MemoryStream();
+        await req.Body.CopyToAsync(buffer, cancellationToken);
+        var gpxBytes = buffer.ToArray();
+        if (gpxBytes.Length == 0)
+            return GetGarminCourses.CreateBadRequest(req, "Request body must contain GPX data", "DELETE, PUT, OPTIONS");
+
+        var fileName = req.Query["filename"];
+        if (string.IsNullOrWhiteSpace(fileName))
+            fileName = "course.gpx";
+
+        using var upstreamResponse = await garminCoursesApi.UpdateCourse(courseId, gpxBytes, fileName, cancellationToken);
+        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, PUT, OPTIONS");
     }
 }
 

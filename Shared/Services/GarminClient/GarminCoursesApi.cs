@@ -31,6 +31,18 @@ public class GarminCoursesApi(HttpClient garminProxyClient, IConfiguration confi
     public Task<HttpResponseMessage> DeleteCourse(string courseId, CancellationToken cancellationToken)
         => SendAsync(HttpMethod.Delete, $"garmin/courses/{Uri.EscapeDataString(courseId)}", cancellationToken: cancellationToken);
 
+    public Task<HttpResponseMessage> UpdateCourse(string courseId, byte[] gpxBytes, string fileName, CancellationToken cancellationToken)
+    {
+        var content = new ByteArrayContent(gpxBytes);
+        content.Headers.ContentType = MediaTypeHeaderValue.Parse("application/gpx+xml");
+
+        return SendAsync(
+            HttpMethod.Put,
+            $"garmin/courses/{Uri.EscapeDataString(courseId)}?filename={Uri.EscapeDataString(fileName)}",
+            content,
+            cancellationToken);
+    }
+
     public Task<HttpResponseMessage> UploadCourse(byte[] gpxBytes, string fileName, CancellationToken cancellationToken)
     {
         var content = new ByteArrayContent(gpxBytes);
