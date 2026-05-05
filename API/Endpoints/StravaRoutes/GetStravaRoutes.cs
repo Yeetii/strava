@@ -48,10 +48,7 @@ public class GetStravaRoutes(
 
         var routes = await _routesApi.GetAthleteRoutes(token, user.Id);
         if (routes == null)
-        {
-            var notFound = req.CreateResponse(HttpStatusCode.NotFound);
-            return notFound;
-        }
+            return req.CreateResponse(HttpStatusCode.NotFound);
 
         var dtos = routes.Select(r => new RouteSummaryDto(
             r.Id,

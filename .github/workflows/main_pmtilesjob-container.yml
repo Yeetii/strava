@@ -1,20 +1,6 @@
 name: Build and deploy PmtilesJob container
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'PmtilesJob/**'
-      - 'Shared/**'
-      - '.dockerignore'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'PmtilesJob/**'
-      - 'Shared/**'
-      - '.dockerignore'
   workflow_dispatch:
 
 env:
