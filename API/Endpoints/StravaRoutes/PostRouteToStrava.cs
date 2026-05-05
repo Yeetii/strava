@@ -15,21 +15,19 @@ public class PostRouteToStrava(
     StravaTokenService _stravaTokenService,
     RoutesApi _routesApi)
 {
-    [OpenApiOperation(tags: ["Strava Routes"], Summary = "Create a Strava route from a GPX file.",
-        Description = "Send a GPX file in the request body. Provide 'name' (required), 'type' (1=Ride, 2=Run, default 2), 'subType' (1=Road, 2=MTB, 3=Cross, 4=Trail, 5=Mixed, default 4) and optionally 'description' as query parameters.")]
+    [OpenApiOperation(tags: ["Strava Routes"], Summary = "Upload a GPX file to Strava as an activity.",
+        Description = "Strava's public API does not support creating planned routes from GPX. This endpoint uploads the GPX to Strava's uploads API. Provide 'name' (required) and optionally 'description' and 'filename' as query parameters.")]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "name", In = ParameterLocation.Query, Type = typeof(string), Required = true,
-        Description = "Name for the route on Strava.")]
-    [OpenApiParameter(name: "type", In = ParameterLocation.Query, Type = typeof(int), Required = false,
-        Description = "Route type: 1 = Ride, 2 = Run. Defaults to 2 (Run).")]
-    [OpenApiParameter(name: "subType", In = ParameterLocation.Query, Type = typeof(int), Required = false,
-        Description = "Route sub-type: 1 = Road, 2 = MTB, 3 = Cross, 4 = Trail, 5 = Mixed. Defaults to 4 (Trail).")]
+        Description = "Name for the resulting Strava activity.")]
     [OpenApiParameter(name: "description", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Optional description for the route.")]
+        Description = "Optional description for the resulting Strava activity.")]
+    [OpenApiParameter(name: "filename", In = ParameterLocation.Query, Type = typeof(string), Required = false,
+        Description = "Optional filename used for the uploaded GPX.")]
     [OpenApiRequestBody(contentType: "application/octet-stream", bodyType: typeof(string),
         Description = "Raw GPX file content.")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(StravaRoute),
-        Description = "The created Strava route.")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(StravaUpload),
+        Description = "The Strava upload resource.")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "text/plain", bodyType: typeof(string),
@@ -39,7 +37,7 @@ public class PostRouteToStrava(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "strava/routes")] HttpRequestData req)
     {
         var response = req.CreateResponse();
-        CorsHeaders.Add(req, response, "GET, POST, OPTIONS");
+        CorsHeaders.Add(req, response, "POST, OPTIONS");
 
         string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
         var user = await _userAuthService.GetUserFromSessionId(sessionId);
@@ -66,15 +64,17 @@ public class PostRouteToStrava(
         }
 
         var description = query["description"];
-        var type = int.TryParse(query["type"], out var parsedType) ? parsedType : 2;
-        var subType = int.TryParse(query["subType"], out var parsedSubType) ? parsedSubType : 4;
-
         var filename = query["filename"] ?? "route.gpx";
 
-        var route = await _routesApi.CreateRoute(token, req.Body, filename, name, type, subType, description);
+        var uploadResult = await _routesApi.UploadGpxActivity(token, req.Body, filename, name, description);
+        if (uploadResult.Unauthorized)
+        {
+            response.StatusCode = HttpStatusCode.Unauthorized;
+            return response;
+        }
 
         response.StatusCode = HttpStatusCode.OK;
-        await response.WriteAsJsonAsync(route);
+        await response.WriteAsJsonAsync(uploadResult.Upload);
         return response;
     }
 }

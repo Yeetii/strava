@@ -5,6 +5,15 @@ using Shared.Services.StravaClient.Model;
 
 namespace Shared.Services.StravaClient;
 
+public enum DeleteRouteResult
+{
+    Deleted,
+    NotFound,
+    Unauthorized
+}
+
+public sealed record CreateUploadResult(StravaUpload? Upload, bool Unauthorized);
+
 public class RoutesApi(HttpClient _stravaClient)
 {
     public async Task<IReadOnlyList<StravaRoute>?> GetAthleteRoutes(string token, string athleteId, int page = 1, int perPage = 200)
@@ -47,34 +56,39 @@ public class RoutesApi(HttpClient _stravaClient)
         return memoryStream;
     }
 
-    public async Task<StravaRoute> CreateRoute(string token, Stream fileContent, string filename, string name, int type, int subType, string? description = null)
+    public async Task<CreateUploadResult> UploadGpxActivity(string token, Stream fileContent, string filename, string name, string? description = null)
     {
         using var content = new MultipartFormDataContent();
         var streamContent = new StreamContent(fileContent);
         streamContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         content.Add(streamContent, "file", filename);
+        content.Add(new StringContent("gpx"), "data_type");
         content.Add(new StringContent(name), "name");
-        content.Add(new StringContent(type.ToString()), "type");
-        content.Add(new StringContent(subType.ToString()), "sub_type");
         if (!string.IsNullOrEmpty(description))
             content.Add(new StringContent(description), "description");
+        content.Add(new StringContent(filename), "external_id");
 
         var request = new HttpRequestMessage
         {
             Method = HttpMethod.Post,
-            RequestUri = new Uri(_stravaClient.BaseAddress + "routes"),
+            RequestUri = new Uri(_stravaClient.BaseAddress + "uploads"),
             Headers = { { "Authorization", $"Bearer {token}" } },
             Content = content
         };
 
         using var response = await _stravaClient.SendAsync(request);
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+            return new CreateUploadResult(null, true);
+
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync();
-        return JsonSerializer.Deserialize<StravaRoute>(body)
-            ?? throw new JsonException($"Could not parse create route response. Body: {body}");
+        return new CreateUploadResult(
+            JsonSerializer.Deserialize<StravaUpload>(body)
+                ?? throw new JsonException($"Could not parse create route response. Body: {body}"),
+            false);
     }
 
-    public async Task<bool> DeleteRoute(string token, string routeId)
+    public async Task<DeleteRouteResult> DeleteRoute(string token, string routeId)
     {
         var request = new HttpRequestMessage
         {
@@ -85,9 +99,12 @@ public class RoutesApi(HttpClient _stravaClient)
 
         using var response = await _stravaClient.SendAsync(request);
         if (response.StatusCode == HttpStatusCode.NotFound)
-            return false;
+            return DeleteRouteResult.NotFound;
+
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+            return DeleteRouteResult.Unauthorized;
 
         response.EnsureSuccessStatusCode();
-        return true;
+        return DeleteRouteResult.Deleted;
     }
 }
