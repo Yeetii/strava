@@ -36,17 +36,10 @@ public class PostRouteToStrava(
         Description = "Missing required query parameters.")]
     [Function(nameof(PostRouteToStrava))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "strava/routes")] HttpRequestData req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "strava/routes")] HttpRequestData req)
     {
-        if (CorsHeaders.IsOptions(req))
-        {
-            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            CorsHeaders.Add(req, optionsResponse, "POST, OPTIONS");
-            return optionsResponse;
-        }
-
         var response = req.CreateResponse();
-        CorsHeaders.Add(req, response, "POST, OPTIONS");
+        CorsHeaders.Add(req, response, "GET, POST, OPTIONS");
 
         string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
         var user = await _userAuthService.GetUserFromSessionId(sessionId);

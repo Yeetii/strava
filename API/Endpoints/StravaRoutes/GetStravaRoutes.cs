@@ -42,12 +42,12 @@ public class GetStravaRoutes(
         if (CorsHeaders.IsOptions(req))
         {
             var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            CorsHeaders.Add(req, optionsResponse, "GET, OPTIONS");
+            CorsHeaders.Add(req, optionsResponse, "GET, POST, OPTIONS");
             return optionsResponse;
         }
 
         var response = req.CreateResponse();
-        CorsHeaders.Add(req, response, "GET, OPTIONS");
+        CorsHeaders.Add(req, response, "GET, POST, OPTIONS");
 
         string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
         var user = await _userAuthService.GetUserFromSessionId(sessionId);
