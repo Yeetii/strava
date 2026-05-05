@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Shared.Services.StravaClient.Model;
 
@@ -11,8 +10,6 @@ public enum DeleteRouteResult
     NotFound,
     Unauthorized
 }
-
-public sealed record CreateUploadResult(StravaUpload? Upload, bool Unauthorized);
 
 public class RoutesApi(HttpClient _stravaClient)
 {
@@ -54,38 +51,6 @@ public class RoutesApi(HttpClient _stravaClient)
         await response.Content.CopyToAsync(memoryStream);
         memoryStream.Position = 0;
         return memoryStream;
-    }
-
-    public async Task<CreateUploadResult> UploadGpxActivity(string token, Stream fileContent, string filename, string name, string? description = null)
-    {
-        using var content = new MultipartFormDataContent();
-        var streamContent = new StreamContent(fileContent);
-        streamContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        content.Add(streamContent, "file", filename);
-        content.Add(new StringContent("gpx"), "data_type");
-        content.Add(new StringContent(name), "name");
-        if (!string.IsNullOrEmpty(description))
-            content.Add(new StringContent(description), "description");
-        content.Add(new StringContent(filename), "external_id");
-
-        var request = new HttpRequestMessage
-        {
-            Method = HttpMethod.Post,
-            RequestUri = new Uri(_stravaClient.BaseAddress + "uploads"),
-            Headers = { { "Authorization", $"Bearer {token}" } },
-            Content = content
-        };
-
-        using var response = await _stravaClient.SendAsync(request);
-        if (response.StatusCode == HttpStatusCode.Unauthorized)
-            return new CreateUploadResult(null, true);
-
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadAsStringAsync();
-        return new CreateUploadResult(
-            JsonSerializer.Deserialize<StravaUpload>(body)
-                ?? throw new JsonException($"Could not parse create route response. Body: {body}"),
-            false);
     }
 
     public async Task<DeleteRouteResult> DeleteRoute(string token, string routeId)
