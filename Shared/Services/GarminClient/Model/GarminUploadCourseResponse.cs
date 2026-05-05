@@ -11,6 +11,11 @@ public record GarminUploadCourseResult(
     [property: JsonPropertyName("detailedImportResult")] GarminDetailedImportResult? DetailedImportResult
 );
 
+public record GarminUploadSuccess(
+    [property: JsonPropertyName("internalId")] long InternalId,
+    [property: JsonPropertyName("externalId")] string? ExternalId
+);
+
 public record GarminDetailedImportResult(
     [property: JsonPropertyName("uploadId")] long UploadId,
     [property: JsonPropertyName("uploadUuid")] GarminUploadUuid? UploadUuid,
@@ -21,7 +26,7 @@ public record GarminDetailedImportResult(
     [property: JsonPropertyName("ipAddress")] string? IpAddress,
     [property: JsonPropertyName("fileName")] string? FileName,
     [property: JsonPropertyName("report")] object? Report,
-    [property: JsonPropertyName("successes")] IReadOnlyList<object>? Successes,
+    [property: JsonPropertyName("successes")] IReadOnlyList<GarminUploadSuccess>? Successes,
     [property: JsonPropertyName("failures")] IReadOnlyList<object>? Failures
 );
 
