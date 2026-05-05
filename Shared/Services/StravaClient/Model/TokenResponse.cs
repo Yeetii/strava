@@ -19,6 +19,6 @@ public class TokenResponse
     public required string AccessToken { get; set; }
 
     [JsonPropertyName("athlete")]
-    public required Athlete Athlete { get; set; }
+    public Athlete? Athlete { get; set; }
 }
 
