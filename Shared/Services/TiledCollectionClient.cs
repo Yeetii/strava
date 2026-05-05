@@ -36,6 +36,27 @@ public class TiledCollectionClient(
         int? zoom = null,
         bool followPointers = false,
         CancellationToken cancellationToken = default)
+        => await FetchByTilesCore(keys, filter, filterParameters, zoom, followPointers, null, cancellationToken);
+
+    public async Task<MeasuredResult<IEnumerable<StoredFeature>>> FetchByTilesMeasured(
+        IEnumerable<(int x, int y)> keys,
+        int? zoom = null,
+        bool followPointers = false,
+        CancellationToken cancellationToken = default)
+    {
+        var requestChargeAccumulator = new RequestChargeAccumulator();
+        var features = await FetchByTilesCore(keys, null, null, zoom, followPointers, requestChargeAccumulator, cancellationToken);
+        return new MeasuredResult<IEnumerable<StoredFeature>>(features, requestChargeAccumulator.TotalRequestCharge);
+    }
+
+    private async Task<IEnumerable<StoredFeature>> FetchByTilesCore(
+        IEnumerable<(int x, int y)> keys,
+        string? filter,
+        IReadOnlyDictionary<string, object?>? filterParameters,
+        int? zoom,
+        bool followPointers,
+        RequestChargeAccumulator? requestChargeAccumulator,
+        CancellationToken cancellationToken = default)
     {
         if (!keys.Any())
             return [];
@@ -46,9 +67,9 @@ public class TiledCollectionClient(
             .ToList();
 
         var storageKeys = GetStorageKeysForRequestedTiles(requestedKeys, requestedZoom);
-        var canonicalDocs = (await QueryByListOfKeys(storageKeys, _storeZoom, filter, filterParameters, cancellationToken)).ToList();
+        var canonicalDocs = (await QueryByListOfKeys(storageKeys, _storeZoom, filter, filterParameters, requestChargeAccumulator, cancellationToken)).ToList();
         var exactRequestedDocs = requestedZoom != _storeZoom
-            ? [.. await QueryByListOfKeys(requestedKeys, requestedZoom, filter, filterParameters, cancellationToken)]
+            ? [.. await QueryByListOfKeys(requestedKeys, requestedZoom, filter, filterParameters, requestChargeAccumulator, cancellationToken)]
             : Enumerable.Empty<StoredFeature>();
 
         var missingStorageTiles = GetMissingTiles(canonicalDocs, storageKeys);
@@ -79,6 +100,7 @@ public class TiledCollectionClient(
         int zoom,
         string? additionalFilter = null,
         IReadOnlyDictionary<string, object?>? additionalParameters = null,
+        RequestChargeAccumulator? requestChargeAccumulator = null,
         CancellationToken cancellationToken = default)
     {
         var keyList = keys.Distinct().ToList();
@@ -110,7 +132,7 @@ public class TiledCollectionClient(
                 .WithParameter($"@y{index}", y);
             index++;
         }
-        return await ExecuteQueryAsync<StoredFeature>(queryDefinition, cancellationToken: cancellationToken);
+        return await ExecuteQueryAsync<StoredFeature>(queryDefinition, null, requestChargeAccumulator, cancellationToken);
     }
 
     protected static IEnumerable<(int x, int y)> GetMissingTiles(IEnumerable<StoredFeature> documents, IEnumerable<(int x, int y)> keys)
@@ -266,11 +288,11 @@ public class TiledCollectionClient(
         var spatialParameters = WithinParameters(point);
 
         var matches = await QueryAtTileWithSpatialPredicate<StoredFeature>(
-            tile, "*", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+            tile, "*", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, null, cancellationToken);
 
-        var pointerStoredIds = await GetPointerStoredIdsAtTile(tile, additionalFilter, additionalParameters, cancellationToken);
+        var pointerStoredIds = await GetPointerStoredIdsAtTile(tile, additionalFilter, additionalParameters, null, cancellationToken);
         var resolved = await ResolveStoredIdsWithSpatialPredicate<StoredFeature>(
-            pointerStoredIds, "*", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+            pointerStoredIds, "*", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, null, cancellationToken);
 
         return matches
             .Concat(resolved)
@@ -297,11 +319,11 @@ public class TiledCollectionClient(
         var spatialParameters = WithinParameters(point);
 
         var matchIds = await QueryAtTileWithSpatialPredicate<string>(
-            tile, "VALUE c.id", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+            tile, "VALUE c.id", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, null, cancellationToken);
 
-        var pointerStoredIds = await GetPointerStoredIdsAtTile(tile, additionalFilter, additionalParameters, cancellationToken);
+        var pointerStoredIds = await GetPointerStoredIdsAtTile(tile, additionalFilter, additionalParameters, null, cancellationToken);
         var resolvedIds = await ResolveStoredIdsWithSpatialPredicate<string>(
-            pointerStoredIds, "VALUE c.id", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+            pointerStoredIds, "VALUE c.id", WithinPredicate, spatialParameters, additionalFilter, additionalParameters, null, cancellationToken);
 
         return matchIds.Concat(resolvedIds).Distinct(StringComparer.Ordinal);
     }
@@ -335,7 +357,7 @@ public class TiledCollectionClient(
         foreach (var tileGroup in pointsByTile)
         {
             var pointerStoredIds = (await GetPointerStoredIdsAtTile(
-                tileGroup.Key, additionalFilter, additionalParameters, cancellationToken)).ToList();
+                tileGroup.Key, additionalFilter, additionalParameters, null, cancellationToken)).ToList();
 
             foreach (var pointBatch in tileGroup.Chunk(MaxPointsPerContainmentQuery))
             {
@@ -349,6 +371,7 @@ public class TiledCollectionClient(
                     spatialParameters,
                     additionalFilter,
                     additionalParameters,
+                    null,
                     cancellationToken);
                 results.AddRange(matches);
 
@@ -359,6 +382,7 @@ public class TiledCollectionClient(
                     spatialParameters,
                     additionalFilter,
                     additionalParameters,
+                    null,
                     cancellationToken);
                 results.AddRange(resolved);
             }
@@ -385,16 +409,35 @@ public class TiledCollectionClient(
         string? additionalFilter,
         IReadOnlyDictionary<string, object?>? additionalParameters,
         CancellationToken cancellationToken = default)
+        => await FindFeaturesWithinRadiusCore(point, radiusMeters, additionalFilter, additionalParameters, null, cancellationToken);
+
+    public async Task<MeasuredResult<IEnumerable<StoredFeature>>> FindFeaturesWithinRadiusMeasured(
+        Coordinate point,
+        int radiusMeters,
+        CancellationToken cancellationToken = default)
+    {
+        var requestChargeAccumulator = new RequestChargeAccumulator();
+        var features = await FindFeaturesWithinRadiusCore(point, radiusMeters, null, null, requestChargeAccumulator, cancellationToken);
+        return new MeasuredResult<IEnumerable<StoredFeature>>(features, requestChargeAccumulator.TotalRequestCharge);
+    }
+
+    private async Task<IEnumerable<StoredFeature>> FindFeaturesWithinRadiusCore(
+        Coordinate point,
+        int radiusMeters,
+        string? additionalFilter,
+        IReadOnlyDictionary<string, object?>? additionalParameters,
+        RequestChargeAccumulator? requestChargeAccumulator,
+        CancellationToken cancellationToken = default)
     {
         var tiles = GetTilesCoveringRadius(point, radiusMeters);
         var spatialParameters = WithinRadiusParameters(point, radiusMeters);
 
         var matches = await QueryAtTilesWithSpatialPredicate<StoredFeature>(
-            tiles, "*", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+            tiles, "*", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, requestChargeAccumulator, cancellationToken);
 
-        var pointerStoredIds = await GetPointerStoredIdsAtTiles(tiles, additionalFilter, additionalParameters, cancellationToken);
+        var pointerStoredIds = await GetPointerStoredIdsAtTiles(tiles, additionalFilter, additionalParameters, requestChargeAccumulator, cancellationToken);
         var resolved = await ResolveStoredIdsWithSpatialPredicate<StoredFeature>(
-            pointerStoredIds, "*", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+            pointerStoredIds, "*", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, requestChargeAccumulator, cancellationToken);
 
         return matches
             .Concat(resolved)
@@ -422,11 +465,11 @@ public class TiledCollectionClient(
         var spatialParameters = WithinRadiusParameters(point, radiusMeters);
 
         var matchIds = await QueryAtTilesWithSpatialPredicate<string>(
-            tiles, "VALUE c.id", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+            tiles, "VALUE c.id", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, null, cancellationToken);
 
-        var pointerStoredIds = await GetPointerStoredIdsAtTiles(tiles, additionalFilter, additionalParameters, cancellationToken);
+        var pointerStoredIds = await GetPointerStoredIdsAtTiles(tiles, additionalFilter, additionalParameters, null, cancellationToken);
         var resolvedIds = await ResolveStoredIdsWithSpatialPredicate<string>(
-            pointerStoredIds, "VALUE c.id", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+            pointerStoredIds, "VALUE c.id", WithinRadiusPredicate, spatialParameters, additionalFilter, additionalParameters, null, cancellationToken);
 
         return matchIds.Concat(resolvedIds).Distinct(StringComparer.Ordinal);
     }
@@ -499,6 +542,7 @@ public class TiledCollectionClient(
         IReadOnlyDictionary<string, object?> spatialParameters,
         string? additionalFilter,
         IReadOnlyDictionary<string, object?>? additionalParameters,
+        RequestChargeAccumulator? requestChargeAccumulator,
         CancellationToken cancellationToken)
     {
         var queryText = $"SELECT {projection} FROM c " +
@@ -519,7 +563,7 @@ public class TiledCollectionClient(
         {
             PartitionKey = new PartitionKeyBuilder().Add((double)tile.x).Add((double)tile.y).Build()
         };
-        return await ExecuteQueryAsync<T>(queryDefinition, requestOptions, cancellationToken);
+        return await ExecuteQueryAsync<T>(queryDefinition, requestOptions, requestChargeAccumulator, cancellationToken);
     }
 
     private async Task<IEnumerable<T>> QueryAtTilesWithSpatialPredicate<T>(
@@ -529,6 +573,7 @@ public class TiledCollectionClient(
         IReadOnlyDictionary<string, object?> spatialParameters,
         string? additionalFilter,
         IReadOnlyDictionary<string, object?>? additionalParameters,
+        RequestChargeAccumulator? requestChargeAccumulator,
         CancellationToken cancellationToken)
     {
         if (tiles.Count == 0)
@@ -536,7 +581,7 @@ public class TiledCollectionClient(
 
         if (tiles.Count == 1)
             return await QueryAtTileWithSpatialPredicate<T>(
-                tiles[0], projection, spatialPredicate, spatialParameters, additionalFilter, additionalParameters, cancellationToken);
+                tiles[0], projection, spatialPredicate, spatialParameters, additionalFilter, additionalParameters, requestChargeAccumulator, cancellationToken);
 
         var keyConditions = string.Join(" OR ", tiles.Select((_, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
         var queryText = $"SELECT {projection} FROM c " +
@@ -557,20 +602,22 @@ public class TiledCollectionClient(
         ApplyParameters(queryDefinition, spatialParameters);
         ApplyParameters(queryDefinition, additionalParameters);
 
-        return await ExecuteQueryAsync<T>(queryDefinition, cancellationToken: cancellationToken);
+        return await ExecuteQueryAsync<T>(queryDefinition, null, requestChargeAccumulator, cancellationToken);
     }
 
     private Task<IEnumerable<string>> GetPointerStoredIdsAtTile(
         (int x, int y) tile,
         string? additionalFilter,
         IReadOnlyDictionary<string, object?>? additionalParameters,
+        RequestChargeAccumulator? requestChargeAccumulator,
         CancellationToken cancellationToken)
-        => GetPointerStoredIdsAtTiles(new[] { tile }, additionalFilter, additionalParameters, cancellationToken);
+        => GetPointerStoredIdsAtTiles(new[] { tile }, additionalFilter, additionalParameters, requestChargeAccumulator, cancellationToken);
 
     private async Task<IEnumerable<string>> GetPointerStoredIdsAtTiles(
         IReadOnlyList<(int x, int y)> tiles,
         string? additionalFilter,
         IReadOnlyDictionary<string, object?>? additionalParameters,
+        RequestChargeAccumulator? requestChargeAccumulator,
         CancellationToken cancellationToken)
     {
         if (tiles.Count == 0)
@@ -601,7 +648,7 @@ public class TiledCollectionClient(
             };
         }
 
-        var ids = await ExecuteQueryAsync<string>(queryDefinition, requestOptions, cancellationToken);
+        var ids = await ExecuteQueryAsync<string>(queryDefinition, requestOptions, requestChargeAccumulator, cancellationToken);
         return ids
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Distinct(StringComparer.Ordinal);
@@ -614,6 +661,7 @@ public class TiledCollectionClient(
         IReadOnlyDictionary<string, object?> spatialParameters,
         string? additionalFilter,
         IReadOnlyDictionary<string, object?>? additionalParameters,
+        RequestChargeAccumulator? requestChargeAccumulator,
         CancellationToken cancellationToken)
     {
         var idList = storedIds.ToList();
@@ -640,7 +688,7 @@ public class TiledCollectionClient(
             ApplyParameters(queryDefinition, spatialParameters);
             ApplyParameters(queryDefinition, additionalParameters);
 
-            results.AddRange(await ExecuteQueryAsync<T>(queryDefinition, cancellationToken: cancellationToken));
+            results.AddRange(await ExecuteQueryAsync<T>(queryDefinition, null, requestChargeAccumulator, cancellationToken));
         }
         return results;
     }

@@ -20,12 +20,28 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 {
     private readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
 
+    public sealed class RequestChargeAccumulator
+    {
+        public double TotalRequestCharge { get; private set; }
+
+        internal void Add(double requestCharge) => TotalRequestCharge += requestCharge;
+    }
+
+    public sealed record MeasuredResult<TValue>(TValue Value, double RequestCharge);
+
     public async Task<IEnumerable<T>> FetchWholeCollection(CancellationToken cancellationToken = default)
     {
         return await ExecuteQueryAsync<T>(new QueryDefinition("SELECT * FROM p"), cancellationToken: cancellationToken);
     }
 
     public async Task<IEnumerable<S>> ExecuteQueryAsync<S>(QueryDefinition queryDefinition, QueryRequestOptions? requestOptions = null, CancellationToken cancellationToken = default)
+        => await ExecuteQueryAsync<S>(queryDefinition, requestOptions, null, cancellationToken);
+
+    protected async Task<IEnumerable<S>> ExecuteQueryAsync<S>(
+        QueryDefinition queryDefinition,
+        QueryRequestOptions? requestOptions,
+        RequestChargeAccumulator? requestChargeAccumulator,
+        CancellationToken cancellationToken = default)
     {
         var documents = new List<S>();
 
@@ -34,6 +50,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             while (feedIterator.HasMoreResults)
             {
                 var response = await feedIterator.ReadNextAsync(cancellationToken);
+                requestChargeAccumulator?.Add(response.RequestCharge);
                 documents.AddRange(response);
             }
         }
