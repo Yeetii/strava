@@ -24,9 +24,16 @@ public class GetGarminCourses(
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
     [Function(nameof(GetGarminCourses))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "garmin/courses")] HttpRequestData req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "garmin/courses")] HttpRequestData req,
         CancellationToken cancellationToken)
     {
+        if (CorsHeaders.IsOptions(req))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
+            CorsHeaders.Add(req, optionsResponse, "GET, POST, OPTIONS");
+            return optionsResponse;
+        }
+
         var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService);
         if (authFailure is not null)
             return authFailure;
@@ -277,16 +284,9 @@ public class PostGarminCourse(
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
     [Function(nameof(PostGarminCourse))]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "garmin/courses")] HttpRequestData req,
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "garmin/courses")] HttpRequestData req,
         CancellationToken cancellationToken)
     {
-        if (CorsHeaders.IsOptions(req))
-        {
-            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            CorsHeaders.Add(req, optionsResponse, "GET, POST, OPTIONS");
-            return optionsResponse;
-        }
-
         var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService);
         if (authFailure is not null)
             return authFailure;
