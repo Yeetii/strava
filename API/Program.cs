@@ -16,7 +16,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 var host = new HostBuilder()
-    .ConfigureFunctionsWorkerDefaults()
+    .ConfigureFunctionsWorkerDefaults(worker =>
+    {
+        worker.UseMiddleware<API.Utils.CorsMiddleware>();
+    })
     .ConfigureServices((hostingContext, services) =>
     {
         var configuration = hostingContext.Configuration;
