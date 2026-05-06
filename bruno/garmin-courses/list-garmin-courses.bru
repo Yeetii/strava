@@ -5,9 +5,14 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/garmin/courses?start=0&limit=50
+  url: {{baseUrl}}/garmin/courses
   body: none
   auth: none
+}
+
+params:query {
+  ~start: 
+  ~limit: 
 }
 
 headers {

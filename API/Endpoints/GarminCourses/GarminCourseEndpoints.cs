@@ -41,13 +41,11 @@ public class GetGarminCourses(
         if (!TryParsePagination(req, out var start, out var limit, out var badRequest))
             return badRequest!;
 
-        using var upstreamResponse = await garminCoursesApi.GetCourses(
-            req.Query["type"],
-            start,
-            limit,
-            cancellationToken);
-
-        return await ProxyResponseAsync(req, upstreamResponse, cancellationToken, "GET, POST, OPTIONS");
+        return await ProxyUpstreamAsync(
+            req,
+            () => garminCoursesApi.GetCourses(req.Query["type"], start, limit, cancellationToken),
+            cancellationToken,
+            "GET, POST, OPTIONS");
     }
 
     internal static bool TryParsePagination(HttpRequestData req, out int start, out int limit, out HttpResponseData? badRequest)
@@ -79,6 +77,25 @@ public class GetGarminCourses(
         CorsHeaders.Add(req, response, methods);
         response.WriteString(message);
         return response;
+    }
+
+    internal static async Task<HttpResponseData> ProxyUpstreamAsync(
+        HttpRequestData req,
+        Func<Task<HttpResponseMessage>> upstreamCall,
+        CancellationToken cancellationToken,
+        string methods)
+    {
+        try
+        {
+            using var upstreamResponse = await upstreamCall();
+            return await ProxyResponseAsync(req, upstreamResponse, cancellationToken, methods);
+        }
+        catch (HttpRequestException)
+        {
+            var response = req.CreateResponse(HttpStatusCode.BadGateway);
+            CorsHeaders.Add(req, response, methods);
+            return response;
+        }
     }
 
     internal static async Task<HttpResponseData> ProxyResponseAsync(
@@ -142,8 +159,11 @@ public class GetGarminCourse(
         if (authFailure is not null)
             return authFailure;
 
-        using var upstreamResponse = await garminCoursesApi.GetCourse(courseId, cancellationToken);
-        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "GET, OPTIONS");
+        return await GetGarminCourses.ProxyUpstreamAsync(
+            req,
+            () => garminCoursesApi.GetCourse(courseId, cancellationToken),
+            cancellationToken,
+            "GET, OPTIONS");
     }
 }
 
@@ -166,8 +186,11 @@ public class GetGarminCourseGpx(
         if (authFailure is not null)
             return authFailure;
 
-        using var upstreamResponse = await garminCoursesApi.DownloadCourseGpx(courseId, cancellationToken);
-        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "GET, OPTIONS");
+        return await GetGarminCourses.ProxyUpstreamAsync(
+            req,
+            () => garminCoursesApi.DownloadCourseGpx(courseId, cancellationToken),
+            cancellationToken,
+            "GET, OPTIONS");
     }
 }
 
@@ -197,8 +220,11 @@ public class DeleteGarminCourse(
         if (authFailure is not null)
             return authFailure;
 
-        using var upstreamResponse = await garminCoursesApi.DeleteCourse(courseId, cancellationToken);
-        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, PUT, OPTIONS");
+        return await GetGarminCourses.ProxyUpstreamAsync(
+            req,
+            () => garminCoursesApi.DeleteCourse(courseId, cancellationToken),
+            cancellationToken,
+            "DELETE, PUT, OPTIONS");
     }
 }
 
@@ -235,8 +261,11 @@ public class PutGarminCourse(
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
-        using var upstreamResponse = await garminCoursesApi.UpdateCourse(courseId, gpxBytes, fileName, cancellationToken);
-        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, PUT, OPTIONS");
+        return await GetGarminCourses.ProxyUpstreamAsync(
+            req,
+            () => garminCoursesApi.UpdateCourse(courseId, gpxBytes, fileName, cancellationToken),
+            cancellationToken,
+            "DELETE, PUT, OPTIONS");
     }
 }
 
@@ -271,7 +300,10 @@ public class PostGarminCourse(
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
-        using var upstreamResponse = await garminCoursesApi.UploadCourse(gpxBytes, fileName, cancellationToken);
-        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "GET, POST, OPTIONS");
+        return await GetGarminCourses.ProxyUpstreamAsync(
+            req,
+            () => garminCoursesApi.UploadCourse(gpxBytes, fileName, cancellationToken),
+            cancellationToken,
+            "GET, POST, OPTIONS");
     }
 }

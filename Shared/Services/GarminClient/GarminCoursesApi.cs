@@ -1,12 +1,9 @@
 using System.Net.Http.Headers;
-using Microsoft.Extensions.Configuration;
 
 namespace Shared.Services.GarminClient;
 
-public class GarminCoursesApi(HttpClient garminProxyClient, IConfiguration configuration)
+public class GarminCoursesApi(HttpClient garminProxyClient)
 {
-    private const string FunctionsKeyHeaderName = "x-functions-key";
-    private readonly string? _functionsKey = configuration.GetValue<string>("LIFEDASH_FUNCTIONS_KEY");
 
     public Task<HttpResponseMessage> GetCourses(string? activityType, int start, int limit, CancellationToken cancellationToken)
     {
@@ -65,9 +62,6 @@ public class GarminCoursesApi(HttpClient garminProxyClient, IConfiguration confi
         {
             Content = content
         };
-
-        if (!string.IsNullOrWhiteSpace(_functionsKey))
-            request.Headers.TryAddWithoutValidation(FunctionsKeyHeaderName, _functionsKey);
 
         return garminProxyClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
     }

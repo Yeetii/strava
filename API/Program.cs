@@ -95,6 +95,9 @@ var host = new HostBuilder()
             var garminProxyBaseUrl = configuration.GetValue<string>("GarminProxyBaseUrl")
                 ?? "http://localhost:7073/api/";
             client.BaseAddress = new Uri(garminProxyBaseUrl);
+            var functionsKey = configuration.GetValue<string>("LIFEDASH_FUNCTIONS_KEY");
+            if (!string.IsNullOrWhiteSpace(functionsKey))
+                client.DefaultRequestHeaders.TryAddWithoutValidation("x-functions-key", functionsKey);
         });
         services.AddSingleton(serviceProvider =>
         {
@@ -106,7 +109,7 @@ var host = new HostBuilder()
         {
             var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             var garminProxyClient = httpClientFactory.CreateClient("garminProxyClient");
-            return new GarminCoursesApi(garminProxyClient, configuration);
+            return new GarminCoursesApi(garminProxyClient);
         });
         services.AddScoped<StravaTokenService>();
         services.AddHttpClient<OverpassClient>(
