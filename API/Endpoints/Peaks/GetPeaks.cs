@@ -40,7 +40,6 @@ namespace API
                 var featureCollection = new FeatureCollection(features);
 
                 var response = req.CreateResponse(HttpStatusCode.OK);
-                response.Headers.Add("Access-Control-Allow-Credentials", "true");
                 await response.WriteAsJsonAsync(featureCollection);
                 return response;
             }

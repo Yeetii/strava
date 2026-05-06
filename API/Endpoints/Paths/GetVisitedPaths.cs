@@ -30,7 +30,6 @@ public class GetVisitedPaths(
     public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "visitedPaths")] HttpRequestData req)
     {
         var response = req.CreateResponse();
-        response.Headers.Add("Access-Control-Allow-Credentials", "true");
 
         string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
         var user = await userAuthService.GetUserFromSessionId(sessionId);

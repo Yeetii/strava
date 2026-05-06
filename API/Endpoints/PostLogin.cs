@@ -22,7 +22,6 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
     {
         var isLocal = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT")); // set to "Development" locally
         var response = req.CreateResponse();
-        response.Headers.Add("Access-Control-Allow-Credentials", "true");
         var outputs = new ReturnBindings() { Response = response };
 
         if (string.IsNullOrEmpty(authCode))

@@ -14,7 +14,6 @@ public class PostLogout
     {
         var isLocal = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT"));
         var response = req.CreateResponse();
-        response.Headers.Add("Access-Control-Allow-Credentials", "true");
 
         var cookie = new HttpCookie("session", string.Empty)
         {

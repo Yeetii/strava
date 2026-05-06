@@ -13,7 +13,7 @@ public class CorsMiddleware : IFunctionsWorkerMiddleware
         if (response is null)
             return;
 
-        // Skip if app-level CORS already handled this response
+        // Skip if origin header is already set
         if (response.Headers.Contains("Access-Control-Allow-Origin"))
             return;
 
@@ -21,6 +21,16 @@ public class CorsMiddleware : IFunctionsWorkerMiddleware
         if (request is null)
             return;
 
-        CorsHeaders.Add(request, response, "GET, OPTIONS");
+        // Only inject the origin header — leave credentials/methods/etc. to the endpoint
+        var origin = request.Headers.TryGetValues("Origin", out var origins)
+            ? origins.FirstOrDefault()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(origin))
+            return;
+
+        response.Headers.Add("Access-Control-Allow-Origin", origin);
+        response.Headers.Add("Access-Control-Allow-Credentials", "true");
+        response.Headers.Add("Vary", "Origin");
     }
 }

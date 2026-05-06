@@ -36,8 +36,6 @@ namespace API.Endpoints.Aggregates
         public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "summitsStats")] HttpRequestData req)
         {
             var response = req.CreateResponse();
-            // Probably won't need this in production if I move the API to the same domain as the frontend
-            response.Headers.Add("Access-Control-Allow-Credentials", "true");
             string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
 
             var user = await _userAuthService.GetUserFromSessionId(sessionId);

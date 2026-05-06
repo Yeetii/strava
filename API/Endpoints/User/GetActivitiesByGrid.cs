@@ -28,7 +28,6 @@ public class GetActivitiesByGrid([FromKeyedServices(FeatureKinds.Path)] TiledCol
             var activities = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
             var featureCollection = new FeatureCollection(activities.Select(a => a.ToFeature()));
             var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Access-Control-Allow-Credentials", "true");
             await response.WriteAsJsonAsync(featureCollection);
             return response;
         }

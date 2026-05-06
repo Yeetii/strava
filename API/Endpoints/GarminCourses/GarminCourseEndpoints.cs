@@ -129,7 +129,8 @@ public class GetGarminCourses(
             || headerName.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
             || headerName.Equals("TE", StringComparison.OrdinalIgnoreCase)
             || headerName.Equals("Trailer", StringComparison.OrdinalIgnoreCase)
-            || headerName.Equals("Upgrade", StringComparison.OrdinalIgnoreCase);
+            || headerName.Equals("Upgrade", StringComparison.OrdinalIgnoreCase)
+            || headerName.StartsWith("Access-Control-", StringComparison.OrdinalIgnoreCase);
     }
 }
 
