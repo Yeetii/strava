@@ -1,0 +1,31 @@
+meta {
+  name: Send Garmin Device Messages
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/garmin/device-messages
+  body: json
+  auth: none
+}
+
+body:json {
+  [
+    {
+      "deviceId": 3616062752,
+      "messageUrl": "course-service/course/fit/{{courseId}}/3616062752?elevation=true",
+      "messageType": "courses",
+      "messageName": "My Course",
+      "groupName": null,
+      "priority": 0,
+      "fileType": "FIT",
+      "metaDataId": {{courseId}}
+    }
+  ]
+}
+
+headers {
+  Content-Type: application/json
+  Cookie: session={{sessionId}}
+}

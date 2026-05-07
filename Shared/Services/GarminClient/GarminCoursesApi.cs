@@ -52,6 +52,16 @@ public class GarminCoursesApi(HttpClient garminProxyClient)
             cancellationToken);
     }
 
+    public Task<HttpResponseMessage> SendDeviceMessages(IEnumerable<object> messages, CancellationToken cancellationToken)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(messages);
+        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        return SendAsync(HttpMethod.Post, "garmin/device-messages", content, cancellationToken);
+    }
+
+    public Task<HttpResponseMessage> SendDeviceMessagesRaw(HttpContent content, CancellationToken cancellationToken)
+        => SendAsync(HttpMethod.Post, "garmin/device-messages", content, cancellationToken);
+
     private Task<HttpResponseMessage> SendAsync(
         HttpMethod method,
         string relativePath,

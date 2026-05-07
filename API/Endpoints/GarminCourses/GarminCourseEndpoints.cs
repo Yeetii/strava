@@ -233,6 +233,8 @@ public class PutGarminCourse(
     UserAuthenticationService userAuthService,
     GarminCoursesApi garminCoursesApi)
 {
+    internal const long HardcodedDeviceId = 3616062752L;
+
     [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Replace a Garmin course's route with new GPX via the configured Garmin proxy service.")]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "courseId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
@@ -262,11 +264,34 @@ public class PutGarminCourse(
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
-        return await GetGarminCourses.ProxyUpstreamAsync(
-            req,
-            () => garminCoursesApi.UpdateCourse(courseId, gpxBytes, fileName, cancellationToken),
-            cancellationToken,
-            "DELETE, PUT, OPTIONS");
+        using var upstreamResponse = await garminCoursesApi.UpdateCourse(courseId, gpxBytes, fileName, cancellationToken);
+
+        if (upstreamResponse.IsSuccessStatusCode)
+        {
+            if (long.TryParse(courseId, out long courseIdLong))
+            {
+                var courseName = System.IO.Path.GetFileNameWithoutExtension(fileName);
+                var messages = new[]
+                {
+                    new
+                    {
+                        deviceId = HardcodedDeviceId,
+                        messageUrl = $"course-service/course/fit/{courseIdLong}/{HardcodedDeviceId}?elevation=true",
+                        messageType = "courses",
+                        messageName = courseName,
+                        groupName = (string?)null,
+                        priority = 0,
+                        fileType = "FIT",
+                        metaDataId = courseIdLong,
+                        wifiSetup = true
+                    }
+                };
+
+                _ = garminCoursesApi.SendDeviceMessages(messages, cancellationToken);
+            }
+        }
+
+        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, PUT, OPTIONS");
     }
 }
 
@@ -301,10 +326,104 @@ public class PostGarminCourse(
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
+        using var upstreamResponse = await garminCoursesApi.UploadCourse(gpxBytes, fileName, cancellationToken);
+
+        if (upstreamResponse.IsSuccessStatusCode)
+        {
+            var responseBody = await upstreamResponse.Content.ReadAsByteArrayAsync(cancellationToken);
+
+            if (TryExtractCourseId(responseBody, out var courseIdLong))
+            {
+                var courseName = Path.GetFileNameWithoutExtension(fileName);
+                var messages = new[]
+                {
+                    new
+                    {
+                        deviceId = PutGarminCourse.HardcodedDeviceId,
+                        messageUrl = $"course-service/course/fit/{courseIdLong}/{PutGarminCourse.HardcodedDeviceId}?elevation=true",
+                        messageType = "courses",
+                        messageName = courseName,
+                        groupName = (string?)null,
+                        priority = 0,
+                        fileType = "FIT",
+                        metaDataId = courseIdLong,
+                        wifiSetup = true
+                    }
+                };
+
+                _ = garminCoursesApi.SendDeviceMessages(messages, cancellationToken);
+            }
+
+            // Re-build response from buffered body since the stream is consumed
+            var proxyResponse = req.CreateResponse(upstreamResponse.StatusCode);
+            CorsHeaders.Add(req, proxyResponse, "GET, POST, OPTIONS");
+            foreach (var header in upstreamResponse.Content.Headers)
+                proxyResponse.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            await proxyResponse.Body.WriteAsync(responseBody, cancellationToken);
+            return proxyResponse;
+        }
+
+        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "GET, POST, OPTIONS");
+    }
+
+    private static bool TryExtractCourseId(byte[] responseBody, out long courseId)
+    {
+        courseId = 0;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+            foreach (var name in new[] { "courseId", "id", "metaDataId" })
+            {
+                if (root.TryGetProperty(name, out var prop) && prop.TryGetInt64(out courseId))
+                    return true;
+            }
+        }
+        catch (System.Text.Json.JsonException) { }
+        return false;
+    }
+}
+
+public class PostGarminDeviceMessages(
+    UserAuthenticationService userAuthService,
+    GarminCoursesApi garminCoursesApi)
+{
+    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Send device messages to a Garmin device via the configured Garmin proxy service.")]
+    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
+    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(object[]), Required = true, Description = "Array of device message objects.")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Device messages response.")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest, Description = "Body missing or not a JSON array")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
+    [Function(nameof(PostGarminDeviceMessages))]
+    public async Task<HttpResponseData> Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "garmin/device-messages")] HttpRequestData req,
+        CancellationToken cancellationToken)
+    {
+        if (CorsHeaders.IsOptions(req))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
+            CorsHeaders.Add(req, optionsResponse, "POST, OPTIONS");
+            return optionsResponse;
+        }
+
+        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "POST, OPTIONS");
+        if (authFailure is not null)
+            return authFailure;
+
+        await using var buffer = new MemoryStream();
+        await req.Body.CopyToAsync(buffer, cancellationToken);
+        var bodyBytes = buffer.ToArray();
+        if (bodyBytes.Length == 0)
+            return GetGarminCourses.CreateBadRequest(req, "Request body must contain a JSON array of device messages", "POST, OPTIONS");
+
+        var content = new System.Net.Http.ByteArrayContent(bodyBytes);
+        content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse("application/json");
+
         return await GetGarminCourses.ProxyUpstreamAsync(
             req,
-            () => garminCoursesApi.UploadCourse(gpxBytes, fileName, cancellationToken),
+            () => garminCoursesApi.SendDeviceMessagesRaw(content, cancellationToken),
             cancellationToken,
-            "GET, POST, OPTIONS");
+            "POST, OPTIONS");
     }
 }
