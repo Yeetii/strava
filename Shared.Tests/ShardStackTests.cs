@@ -20,9 +20,10 @@ public class ShardStackTests
         var decoded = PackedGeometryCodec.Decode(type, bytes);
 
         var decodedLine = Assert.IsType<LineString>(decoded);
-        Assert.Equal(3, decodedLine.Coordinates.Count);
-        Assert.Equal(11.1234567, decodedLine.Coordinates[0].Longitude, 6);
-        Assert.Equal(59.3234567, decodedLine.Coordinates[2].Latitude, 6);
+        var coordinates = decodedLine.Coordinates.ToList();
+        Assert.Equal(3, coordinates.Count);
+        Assert.Equal(11.1234567, coordinates[0].Longitude, 6);
+        Assert.Equal(59.3234567, coordinates[2].Latitude, 6);
     }
 
     [Fact]
