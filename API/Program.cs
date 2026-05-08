@@ -91,12 +91,12 @@ var host = new HostBuilder()
                 ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
             var containerClient = new BlobContainerClient(blobConnection, BlobContainerNames.HighwaysShards);
             containerClient.CreateIfNotExists();
-            return containerClient;
+            return new HighwaysShardContainer(containerClient);
         });
         services.AddSingleton<IShardRepository>(serviceProvider =>
         {
             var repositoryLogger = serviceProvider.GetRequiredService<ILogger<BlobShardRepository>>();
-            var containerClient = serviceProvider.GetRequiredService<BlobContainerClient>();
+            var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
             var overpass = serviceProvider.GetRequiredService<OverpassClient>();
             var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
             var shardBufferMeters = configuration.GetValue<int?>(AppConfig.BlobShardBufferMeters) ?? 200;

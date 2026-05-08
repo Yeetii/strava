@@ -72,7 +72,7 @@ public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZ
     private static Feature ToFeature(ShardFeature feature)
     {
         var geometry = PackedGeometryCodec.Decode(feature.Type, feature.Geometry);
-        var properties = feature.Tags.ToDictionary(tag => $"k{tag.KeyId}", tag => (dynamic)$"v{tag.ValueId}");
+        var properties = new Dictionary<string, dynamic>();
         return new Feature(geometry, properties, null, new FeatureId(feature.Id.ToString()));
     }
 }
