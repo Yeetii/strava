@@ -1,0 +1,17 @@
+meta {
+  name: Get Tile PBF
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/tiles/{{z}}/{{x}}/{{y}}.pbf
+  body: none
+  auth: none
+}
+
+params:path {
+  z: 12
+  x: 2201
+  y: 1344
+}

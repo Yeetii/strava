@@ -1,0 +1,8 @@
+using Shared.Models;
+
+namespace Shared.Services.Shards;
+
+public interface IShardRepository
+{
+    Task<Shard> GetShardAsync(int z, int x, int y, CancellationToken cancellationToken = default);
+}

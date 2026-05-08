@@ -14,6 +14,8 @@ using Shared.Constants;
 using System.Net.Http.Headers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Azure.Storage.Blobs;
+using Shared.Services.Shards;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults(worker =>
@@ -78,10 +80,39 @@ var host = new HostBuilder()
         {
             var blobConnection = configuration.GetValue<string>("BlobStorageConnection")
                 ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
-            var containerClient = new Azure.Storage.Blobs.BlobContainerClient(blobConnection, BlobContainerNames.RaceOrganizers);
+            var containerClient = new BlobContainerClient(blobConnection, BlobContainerNames.RaceOrganizers);
             containerClient.CreateIfNotExists();
             var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
             return new BlobOrganizerStore(containerClient, loggerFactory);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var blobConnection = configuration.GetValue<string>("BlobStorageConnection")
+                ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
+            var containerClient = new BlobContainerClient(blobConnection, BlobContainerNames.HighwaysShards);
+            containerClient.CreateIfNotExists();
+            return containerClient;
+        });
+        services.AddSingleton<IShardRepository>(serviceProvider =>
+        {
+            var repositoryLogger = serviceProvider.GetRequiredService<ILogger<BlobShardRepository>>();
+            var containerClient = serviceProvider.GetRequiredService<BlobContainerClient>();
+            var overpass = serviceProvider.GetRequiredService<OverpassClient>();
+            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
+            var shardBufferMeters = configuration.GetValue<int?>(AppConfig.BlobShardBufferMeters) ?? 200;
+            return new BlobShardRepository(containerClient, repositoryLogger, overpass.GetPaths, shardZoom, shardBufferMeters);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
+            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
+            return new ShardFeatureClient(shardRepository, shardZoom);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var featureClient = serviceProvider.GetRequiredService<ShardFeatureClient>();
+            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
+            return new BlobTileService(featureClient, shardZoom);
         });
 
         services.AddScoped(serviceProvider =>
