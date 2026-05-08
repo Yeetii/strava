@@ -68,7 +68,7 @@ internal static class ProtoWire
                 return;
             case 2:
                 var length = (int)ReadVarint(stream);
-                if (length < 0 || stream.Position + length > stream.Length)
+                if (length < 0 || stream.Position + (long)length > stream.Length)
                     throw new EndOfStreamException("Length-delimited field exceeds stream bounds.");
                 stream.Seek(length, SeekOrigin.Current);
                 return;

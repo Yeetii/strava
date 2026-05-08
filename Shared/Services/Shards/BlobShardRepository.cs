@@ -97,7 +97,7 @@ public class BlobShardRepository(
             var localIndex = ownerLocalIndex.TryGetValue((candidate.OwnerX, candidate.OwnerY), out var localIndices)
                 && localIndices.TryGetValue(candidate.LogicalId, out var found)
                 ? found
-                : 0u;
+                : uint.MaxValue;
 
             shard.Pointers.Add(new FeaturePointer
             {

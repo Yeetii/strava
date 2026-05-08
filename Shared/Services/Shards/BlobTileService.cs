@@ -7,6 +7,7 @@ public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 1
 {
     private readonly ShardFeatureClient _featureClient = featureClient;
     private readonly int _shardZoom = shardZoom;
+    private const double ClipTolerance = 1e-10;
 
     public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
@@ -110,7 +111,7 @@ public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 1
             double y;
             if ((outCode & 8) != 0)
             {
-                if (Math.Abs(y1 - y0) < double.Epsilon)
+                if (Math.Abs(y1 - y0) < ClipTolerance)
                 {
                     c0 = default!;
                     c1 = default!;
@@ -121,7 +122,7 @@ public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 1
             }
             else if ((outCode & 4) != 0)
             {
-                if (Math.Abs(y1 - y0) < double.Epsilon)
+                if (Math.Abs(y1 - y0) < ClipTolerance)
                 {
                     c0 = default!;
                     c1 = default!;
@@ -132,7 +133,7 @@ public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 1
             }
             else if ((outCode & 2) != 0)
             {
-                if (Math.Abs(x1 - x0) < double.Epsilon)
+                if (Math.Abs(x1 - x0) < ClipTolerance)
                 {
                     c0 = default!;
                     c1 = default!;
@@ -143,7 +144,7 @@ public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 1
             }
             else
             {
-                if (Math.Abs(x1 - x0) < double.Epsilon)
+                if (Math.Abs(x1 - x0) < ClipTolerance)
                 {
                     c0 = default!;
                     c1 = default!;
