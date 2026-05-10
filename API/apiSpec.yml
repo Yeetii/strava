@@ -129,6 +129,8 @@ components:
     skiDays:
       type: object
       properties:
+        isWinterSeason:
+          type: boolean
         alpineSkiDays:
           type: integer
         backcountrySkiDays:

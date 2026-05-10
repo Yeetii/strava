@@ -30,6 +30,10 @@ namespace API
             SqlQuery = "SELECT * FROM c where c.userId = {userId}"
             )] IEnumerable<Activity> activities)
         {
+            var isWinterSeason = WinterSeason.IsInSeason(DateTime.UtcNow);
+            if (!isWinterSeason)
+                return new JsonResult(new SkiDays { IsWinterSeason = false });
+
             var before = req.Query["before"];
             var after = req.Query["after"];
 
@@ -40,6 +44,7 @@ namespace API
                 activities = activities.Where(b => b.StartDate > DateTime.Parse(after));
 
             var skiDays = CalculateSkiDays(activities);
+            skiDays.IsWinterSeason = true;
             return new JsonResult(skiDays);
             
         }

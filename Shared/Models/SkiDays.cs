@@ -2,6 +2,7 @@ namespace Shared.Models;
 
 public class SkiDays 
 {
+    public bool IsWinterSeason { get; set; }
     public int AlpineSkiDays { get; set; }
     public int BackcountrySkiDays { get; set; }
     public int NordicSkiDays { get; set; }
