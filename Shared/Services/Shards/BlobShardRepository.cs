@@ -42,6 +42,15 @@ public class BlobShardRepository(
         }
     }
 
+    public async Task DeleteShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    {
+        if (z != _canonicalZoom)
+            throw new ArgumentOutOfRangeException(nameof(z), $"Only z{_canonicalZoom} shards are supported.");
+
+        var blob = _container.GetBlobClient(GetBlobPath(z, x, y));
+        await blob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
+    }
+
     internal static string GetBlobPath(int z, int x, int y) => $"{z}/{x}/{y}.pbf";
 
     private async Task<Shard> BuildShardAsync(int x, int y, CancellationToken cancellationToken)
@@ -51,77 +60,36 @@ public class BlobShardRepository(
         var bufferedNorthEast = GeoSpatialFunctions.ShiftCoordinate(northEast, _overlapBufferMeters, _overlapBufferMeters);
         var fetched = (await _fetchFeatures(bufferedSouthWest, bufferedNorthEast, cancellationToken)).ToList();
 
-        var featuresByOwner = fetched
-            .Select(feature =>
-            {
-                var id = feature.Id.Value?.ToString() ?? string.Empty;
-                var centroid = GeometryCentroidHelper.GetCentroid(feature.Geometry);
-                var owner = SlippyTileCalculator.WGS84ToTileIndex(centroid, _canonicalZoom);
-                var touches = FeatureTouchesTiles(feature.Geometry, _canonicalZoom);
-                return new CandidateFeature(id, owner.x, owner.y, feature, touches);
-            })
-            .Where(candidate => candidate.TouchingTiles.Contains((x, y)))
-            .ToList();
-
-        var ownerLocalIndex = featuresByOwner
-            .GroupBy(candidate => (candidate.OwnerX, candidate.OwnerY))
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderBy(candidate => candidate.LogicalId, StringComparer.Ordinal)
-                    .Select((candidate, index) => new KeyValuePair<string, uint>(candidate.LogicalId, (uint)index))
-                    .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal));
+        var clippedFeatures = BlobTileService.ClipToTileBounds(fetched, _canonicalZoom, x, y).ToList();
 
         var shard = new Shard();
-        foreach (var candidate in featuresByOwner)
+        foreach (var feature in clippedFeatures)
         {
-            var featureId = ShardEncodingIds.FeatureIdFromString(candidate.LogicalId);
-            if (candidate.OwnerX == x && candidate.OwnerY == y)
+            var logicalId = feature.Id.Value?.ToString() ?? Guid.NewGuid().ToString("N");
+            var (featureType, geometryBytes) = PackedGeometryCodec.Encode(feature.Geometry);
+            shard.Owned.Add(new ShardFeature
             {
-                var (featureType, geometryBytes) = PackedGeometryCodec.Encode(candidate.Feature.Geometry);
-                shard.Owned.Add(new ShardFeature
-                {
-                    Id = featureId,
-                    Type = featureType,
-                    Geometry = geometryBytes,
-                    Tags = candidate.Feature.Properties
-                        .Select(property => new ShardTag
-                        {
-                            KeyId = ShardEncodingIds.TagIdFromString(property.Key),
-                            ValueId = ShardEncodingIds.TagIdFromString(property.Value?.ToString() ?? string.Empty)
-                        })
-                        .ToList()
-                });
-                continue;
-            }
-
-            var localIndex = ownerLocalIndex.TryGetValue((candidate.OwnerX, candidate.OwnerY), out var localIndices)
-                && localIndices.TryGetValue(candidate.LogicalId, out var found)
-                ? found
-                : uint.MaxValue;
-
-            shard.Pointers.Add(new FeaturePointer
-            {
-                FeatureId = featureId,
-                OwnerX = (uint)candidate.OwnerX,
-                OwnerY = (uint)candidate.OwnerY,
-                LocalIndex = localIndex
+                Id = CreateTileScopedFeatureId(logicalId, x, y),
+                OsmId = logicalId,
+                Name = feature.Properties.TryGetValue("name", out var rawName)
+                    ? rawName?.ToString()
+                    : null,
+                Type = featureType,
+                Geometry = geometryBytes,
+                Tags = [.. feature.Properties
+                    .Select(property => new ShardTag
+                    {
+                        KeyId = ShardEncodingIds.TagIdFromString(property.Key),
+                        ValueId = ShardEncodingIds.TagIdFromString(property.Value?.ToString() ?? string.Empty)
+                    })]
             });
         }
 
-        _logger.LogInformation("Built shard z{Zoom}/{X}/{Y} with {Owned} owned and {Pointers} pointers.",
-            _canonicalZoom, x, y, shard.Owned.Count, shard.Pointers.Count);
+        _logger.LogInformation("Built shard z{Zoom}/{X}/{Y} with {Owned} clipped features.",
+            _canonicalZoom, x, y, shard.Owned.Count);
         return shard;
     }
 
-    private static HashSet<(int x, int y)> FeatureTouchesTiles(Geometry geometry, int zoom)
-    {
-        return geometry switch
-        {
-            Point point => [SlippyTileCalculator.WGS84ToTileIndex(new Coordinate(point.Coordinates.Longitude, point.Coordinates.Latitude), zoom)],
-            LineString line => [.. line.Coordinates.Select(position => SlippyTileCalculator.WGS84ToTileIndex(new Coordinate(position.Longitude, position.Latitude), zoom))],
-            _ => []
-        };
-    }
-
-    private sealed record CandidateFeature(string LogicalId, int OwnerX, int OwnerY, Feature Feature, HashSet<(int x, int y)> TouchingTiles);
+    private ulong CreateTileScopedFeatureId(string logicalId, int x, int y)
+        => ShardEncodingIds.FeatureIdFromString($"{_canonicalZoom}/{x}/{y}/{logicalId}");
 }

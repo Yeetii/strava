@@ -17,21 +17,14 @@ public sealed class ShardTag
 public sealed class ShardFeature
 {
     public ulong Id { get; set; }
+    public string? OsmId { get; set; }
+    public string? Name { get; set; }
     public ShardFeatureType Type { get; set; }
     public byte[] Geometry { get; set; } = [];
     public List<ShardTag> Tags { get; set; } = [];
 }
 
-public sealed class FeaturePointer
-{
-    public ulong FeatureId { get; set; }
-    public uint OwnerX { get; set; }
-    public uint OwnerY { get; set; }
-    public uint LocalIndex { get; set; }
-}
-
 public sealed class Shard
 {
     public List<ShardFeature> Owned { get; set; } = [];
-    public List<FeaturePointer> Pointers { get; set; } = [];
 }

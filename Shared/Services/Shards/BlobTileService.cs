@@ -13,9 +13,16 @@ public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 1
     {
         var shardKeys = GetIntersectingShardKeys(z, x, y, _shardZoom);
         var features = await _featureClient.GetFeaturesForShards(shardKeys, cancellationToken);
-        var clipped = Clip(features, z, x, y);
+        var clipped = ClipToTileBounds(features, z, x, y);
         var pbf = MvtTileEncoder.EncodeLayer("highways", clipped, z, x, y);
         return Gzip(pbf);
+    }
+
+    public async Task<byte[]> RefreshTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    {
+        var shardKeys = GetIntersectingShardKeys(z, x, y, _shardZoom);
+        await _featureClient.RefreshShards(shardKeys, cancellationToken);
+        return await BuildTileAsync(z, x, y, cancellationToken);
     }
 
     internal static IReadOnlyList<(int x, int y)> GetIntersectingShardKeys(int z, int x, int y, int shardZoom)
@@ -39,7 +46,7 @@ public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 1
         return result;
     }
 
-    private static IEnumerable<Feature> Clip(IEnumerable<Feature> features, int z, int x, int y)
+    internal static IEnumerable<Feature> ClipToTileBounds(IEnumerable<Feature> features, int z, int x, int y)
     {
         var (southWest, northEast) = Geo.SlippyTileCalculator.TileIndexToWGS84(x, y, z);
         foreach (var feature in features)
@@ -55,30 +62,61 @@ public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 1
                     break;
 
                 case LineString line:
-                    var clipped = ClipLineToBounds(line, southWest.Lng, southWest.Lat, northEast.Lng, northEast.Lat);
-                    if (clipped.Count >= 2)
-                        yield return new Feature(new LineString(clipped), feature.Properties, null, feature.Id);
+                    var clippedFragments = ClipLineToBounds(line, southWest.Lng, southWest.Lat, northEast.Lng, northEast.Lat);
+                    if (clippedFragments.Count == 1)
+                    {
+                        var fragment = clippedFragments[0];
+                        if (fragment.Count >= 2)
+                            yield return new Feature(new LineString(fragment), feature.Properties, null, feature.Id);
+                        break;
+                    }
+
+                    for (var fragmentIndex = 0; fragmentIndex < clippedFragments.Count; fragmentIndex++)
+                    {
+                        var fragment = clippedFragments[fragmentIndex];
+                        if (fragment.Count < 2)
+                            continue;
+
+                        yield return new Feature(
+                            new LineString(fragment),
+                            feature.Properties,
+                            null,
+                            feature.Id);
+                    }
                     break;
             }
         }
     }
 
-    private static List<Position> ClipLineToBounds(LineString line, double minX, double minY, double maxX, double maxY)
+    private static List<List<Position>> ClipLineToBounds(LineString line, double minX, double minY, double maxX, double maxY)
     {
-        var clipped = new List<Position>();
+        var fragments = new List<List<Position>>();
+        List<Position>? currentFragment = null;
         Position? lastPoint = null;
+
         foreach (var segment in line.Coordinates.Zip(line.Coordinates.Skip(1)))
         {
             if (!TryClipSegment(segment.First, segment.Second, minX, minY, maxX, maxY, out var start, out var end))
+            {
+                currentFragment = null;
+                lastPoint = null;
                 continue;
+            }
 
-            if (lastPoint is null || lastPoint.Longitude != start.Longitude || lastPoint.Latitude != start.Latitude)
-                clipped.Add(start);
-            clipped.Add(end);
+            if (currentFragment is null
+                || lastPoint is null
+                || lastPoint.Longitude != start.Longitude
+                || lastPoint.Latitude != start.Latitude)
+            {
+                currentFragment = [start];
+                fragments.Add(currentFragment);
+            }
+
+            currentFragment.Add(end);
             lastPoint = end;
         }
 
-        return clipped;
+        return fragments;
     }
 
     private static bool TryClipSegment(Position p0, Position p1, double minX, double minY, double maxX, double maxY, out Position c0, out Position c1)

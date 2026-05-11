@@ -26,7 +26,7 @@ namespace Shared.Services
             HttpStatusCode.GatewayTimeout
         ];
 
-        private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass.maprva.org/api/interpreter"];
+        private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter"];
 
 
         private async Task<HttpResponseMessage> GetAsyncMultipleMirrors(string query, CancellationToken cancellationToken = default)
@@ -145,14 +145,7 @@ namespace Shared.Services
             if (!response.IsSuccessStatusCode)
                 throw new Exception($"Could not get peaks, status code: {response.StatusCode}, {response.ReasonPhrase}");
             string rawPeaks = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(rawPeaks) || !(rawPeaks.TrimStart().StartsWith("{") || rawPeaks.TrimStart().StartsWith("[")))
-            {
-                // Log the raw response for debugging
-                Console.WriteLine("Overpass response was not valid JSON:");
-                Console.WriteLine(rawPeaks);
-                throw new Exception("Overpass API did not return valid JSON. Response may be HTML or an error page.");
-            }
-            RootPeaks rootPeaks = JsonConvert.DeserializeObject<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
+            RootPeaks rootPeaks = DeserializeOverpassResponse<RootPeaks>(rawPeaks, "peaks");
             return ConvertRawPeaksToFeatures(rootPeaks.Elements);
         }
 
@@ -185,13 +178,17 @@ namespace Shared.Services
                     }
 
                     string rawPeaks = await response.Content.ReadAsStringAsync(cancellationToken);
-                    if (string.IsNullOrWhiteSpace(rawPeaks) || !(rawPeaks.TrimStart().StartsWith("{") || rawPeaks.TrimStart().StartsWith("[")))
+                    RootPeaks rootPeaks;
+                    try
                     {
-                        _logger.LogWarning("Overpass mirror {Mirror} returned a non-JSON response when fetching peaks by id.", mirror);
+                        rootPeaks = DeserializeOverpassResponse<RootPeaks>(rawPeaks, "peaks by id");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Overpass mirror {Mirror} returned an unusable response when fetching peaks by id.", mirror);
                         continue;
                     }
 
-                    RootPeaks rootPeaks = JsonConvert.DeserializeObject<RootPeaks>(rawPeaks) ?? throw new Exception("Could not deserialize");
                     rawPeaksBatch = rootPeaks.Elements
                         .Where(p => p.Tags.TryGetValue("natural", out var natural)
                             && string.Equals(natural.ToString(), "peak", StringComparison.Ordinal))
@@ -229,6 +226,20 @@ namespace Shared.Services
             }
         }
 
+        public async Task<IEnumerable<Feature>> GetHighways(Coordinate southWest, Coordinate northEast, CancellationToken cancellationToken = default)
+        {
+            string bbox = CreateBoundingBox(southWest, northEast);
+            string query = $"[out:json][timeout:400];way[highway]({bbox});out geom;";
+            string encodedQuery = Uri.EscapeDataString(query);
+
+            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"Could not get highways, status code: {response.StatusCode}, {response.ReasonPhrase}");
+            string rawPaths = await response.Content.ReadAsStringAsync(cancellationToken);
+            RootPaths rootPaths = DeserializeOverpassResponse<RootPaths>(rawPaths, "highways");
+            return ConvertRawPathsToFeatures(rootPaths.Elements);
+        }
+
         public async Task<IEnumerable<Feature>> GetPaths(Coordinate southWest, Coordinate northEast, CancellationToken cancellationToken = default)
         {
             string bbox = CreateBoundingBox(southWest, northEast);
@@ -239,13 +250,7 @@ namespace Shared.Services
             if (!response.IsSuccessStatusCode)
                 throw new Exception($"Could not get paths, status code: {response.StatusCode}, {response.ReasonPhrase}");
             string rawPaths = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(rawPaths) || !(rawPaths.TrimStart().StartsWith("{") || rawPaths.TrimStart().StartsWith("[")))
-            {
-                Console.WriteLine("Overpass response was not valid JSON:");
-                Console.WriteLine(rawPaths);
-                throw new Exception("Overpass API did not return valid JSON. Response may be HTML or an error page.");
-            }
-            RootPaths rootPaths = JsonConvert.DeserializeObject<RootPaths>(rawPaths) ?? throw new Exception("Could not deserialize");
+            RootPaths rootPaths = DeserializeOverpassResponse<RootPaths>(rawPaths, "paths");
             return ConvertRawPathsToFeatures(rootPaths.Elements);
         }
 
@@ -260,7 +265,11 @@ namespace Shared.Services
                         kvp => kvp.Key,
                         kvp => (dynamic)kvp.Value.ToString()
                     );
-                var coordinates = p.Geometry.Select(node => new Position(node.Lon, node.Lat)).ToList();
+                var coordinates = p.Geometry
+                    .Where(node => node != null)
+                    .Select(node => new Position(node!.Lon, node.Lat))
+                    .ToList();
+                if (coordinates.Count < 2) continue;
                 var geometry = new LineString(coordinates);
                 var feature = new Feature(geometry, properties, null, new FeatureId(p.Id.ToString()));
                 yield return feature;
@@ -285,15 +294,7 @@ namespace Shared.Services
                 throw new Exception($"Could not get protected areas, status code: {response.StatusCode}, {response.ReasonPhrase}");
 
             string rawAreas = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(rawAreas) || !(rawAreas.TrimStart().StartsWith("{") || rawAreas.TrimStart().StartsWith("[")))
-            {
-                Console.WriteLine("Overpass response was not valid JSON:");
-                Console.WriteLine(rawAreas);
-                throw new Exception("Overpass API did not return valid JSON. Response may be HTML or an error page.");
-            }
-
-            RootProtectedAreas rootProtectedAreas = JsonConvert.DeserializeObject<RootProtectedAreas>(rawAreas)
-                ?? throw new Exception("Could not deserialize");
+            RootProtectedAreas rootProtectedAreas = DeserializeOverpassResponse<RootProtectedAreas>(rawAreas, "protected areas");
             return ConvertRawProtectedAreasToFeatures(rootProtectedAreas.Elements);
         }
 
@@ -479,11 +480,7 @@ namespace Shared.Services
                 throw new Exception($"Could not get admin boundary IDs, status code: {response.StatusCode}, {response.ReasonPhrase}");
 
             string rawAreas = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(rawAreas) || !(rawAreas.TrimStart().StartsWith("{") || rawAreas.TrimStart().StartsWith("[")))
-                throw new Exception("Overpass API did not return valid JSON for admin boundary IDs.");
-
-            RootProtectedAreas root = JsonConvert.DeserializeObject<RootProtectedAreas>(rawAreas)
-                ?? throw new Exception("Could not deserialize admin boundary IDs");
+            RootProtectedAreas root = DeserializeOverpassResponse<RootProtectedAreas>(rawAreas, "admin boundary IDs");
 
             return root.Elements.Select(e => (
                 e.Type,
@@ -503,16 +500,27 @@ namespace Shared.Services
                 throw new Exception($"Could not get admin boundaries, status code: {response.StatusCode}, {response.ReasonPhrase}");
 
             string rawAreas = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(rawAreas) || !(rawAreas.TrimStart().StartsWith("{") || rawAreas.TrimStart().StartsWith("[")))
+            RootProtectedAreas root = DeserializeOverpassResponse<RootProtectedAreas>(rawAreas, "admin boundaries");
+            return ConvertRawAdminBoundariesToFeatures(root.Elements);
+        }
+
+        private T DeserializeOverpassResponse<T>(string rawResponse, string operation) where T : OverpassResponseRoot
+        {
+            if (string.IsNullOrWhiteSpace(rawResponse) || !(rawResponse.TrimStart().StartsWith("{") || rawResponse.TrimStart().StartsWith("[")))
             {
                 Console.WriteLine("Overpass response was not valid JSON:");
-                Console.WriteLine(rawAreas);
-                throw new Exception("Overpass API did not return valid JSON. Response may be HTML or an error page.");
+                Console.WriteLine(rawResponse);
+                throw new Exception($"Overpass API did not return valid JSON for {operation}. Response may be HTML or an error page.");
             }
 
-            RootProtectedAreas root = JsonConvert.DeserializeObject<RootProtectedAreas>(rawAreas)
-                ?? throw new Exception("Could not deserialize");
-            return ConvertRawAdminBoundariesToFeatures(root.Elements);
+            var root = JsonConvert.DeserializeObject<T>(rawResponse) ?? throw new Exception($"Could not deserialize {operation}");
+            if (!string.IsNullOrWhiteSpace(root.Remark))
+            {
+                _logger.LogWarning("Overpass returned a remark for {Operation}: {Remark}", operation, root.Remark);
+                throw new Exception($"Overpass returned an incomplete response for {operation}: {root.Remark}");
+            }
+
+            return root;
         }
 
         private static IEnumerable<Feature> ConvertRawAdminBoundariesToFeatures(IEnumerable<RawProtectedArea> raw)
@@ -564,7 +572,13 @@ namespace Shared.Services
         }
     }
 
-    public class RootPeaks
+    public abstract class OverpassResponseRoot
+    {
+        [JsonProperty("remark")]
+        public string? Remark { get; set; }
+    }
+
+    public class RootPeaks : OverpassResponseRoot
     {
         [JsonProperty("elements")]
         public required List<RawPeaks> Elements { get; set; }
@@ -583,7 +597,7 @@ namespace Shared.Services
         [JsonProperty("tags")]
         public Dictionary<string, JToken> Tags { get; set; } = new();
     }
-    public class RootPaths
+    public class RootPaths : OverpassResponseRoot
     {
         [JsonProperty("elements")]
         public required List<RawPath> Elements { get; set; }
@@ -607,7 +621,7 @@ namespace Shared.Services
         public double Lon { get; set; }
     }
 
-    public class RootProtectedAreas
+    public class RootProtectedAreas : OverpassResponseRoot
     {
         [JsonProperty("elements")]
         public required List<RawProtectedArea> Elements { get; set; }

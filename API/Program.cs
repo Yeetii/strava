@@ -100,7 +100,7 @@ var host = new HostBuilder()
             var overpass = serviceProvider.GetRequiredService<OverpassClient>();
             var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
             var shardBufferMeters = configuration.GetValue<int?>(AppConfig.BlobShardBufferMeters) ?? 200;
-            return new BlobShardRepository(containerClient, repositoryLogger, overpass.GetPaths, shardZoom, shardBufferMeters);
+            return new BlobShardRepository(containerClient, repositoryLogger, overpass.GetHighways, shardZoom, shardBufferMeters);
         });
         services.AddSingleton(serviceProvider =>
         {
