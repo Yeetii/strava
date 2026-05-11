@@ -27,7 +27,7 @@ public class GetVisitedAreas(
     [OpenApiOperation(tags: ["VisitedAreas"])]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "areaType", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Optional comma-separated filter by area type (e.g. national_park,nature_reserve,protected_area,region).")]
+        Description = "Optional comma-separated filter by area type (e.g. national_park,nature_reserve,protected_area,region,country).")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<VisitedAreaDto>),
         Description = "A list of areas the authenticated user has visited, including visit counts and dates.")]
     [Function(nameof(GetVisitedAreas))]
@@ -66,7 +66,7 @@ public class GetVisitedAreas(
 
         var allActivityIds = visitedAreasList.SelectMany(va => va.ActivityIds).Distinct().ToArray();
         var activitiesById = allActivityIds.Length == 0
-            ? new Dictionary<string, Activity>()
+            ? []
             : (await activityCollection.GetByIdsAsync(allActivityIds)).ToDictionary(a => a.Id, a => a);
 
         var result = visitedAreasList

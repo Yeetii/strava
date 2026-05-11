@@ -72,8 +72,9 @@ namespace Backend
             }
             catch (Exception ex)
             {
+                var scheduledEnqueueTimeUtc = (ex as StravaRateLimitExceededException)?.RetryAtUtc;
                 await ServiceBusCosmosRetryHelper.HandleRetryAsync(
-                    ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivityFetchJobs, _logger, cancellationToken);
+                    ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivityFetchJobs, _logger, cancellationToken, maxRetryCount: 3, scheduledEnqueueTimeUtc: scheduledEnqueueTimeUtc);
             }
         }
 

@@ -6,7 +6,7 @@ namespace Backend;
 public static class ServiceBusCosmosRetryHelper
 {
     public const string RetryCountProperty = "ExceptionRetryCount";
-    public const int MaxRetryCount = 10;
+    public const int DefaultMaxRetryCount = 10;
     private static readonly TimeSpan MinRetryDelay = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromHours(2);
 
@@ -39,7 +39,9 @@ public static class ServiceBusCosmosRetryHelper
         ServiceBusClient serviceBusClient,
         string queueName,
         ILogger logger,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxRetryCount = DefaultMaxRetryCount,
+        DateTimeOffset? scheduledEnqueueTimeUtc = null)
     {
         if (!HasRealLockToken(message))
         {
@@ -50,7 +52,7 @@ public static class ServiceBusCosmosRetryHelper
         }
 
         var retryCount = GetRetryCount(message);
-        if (retryCount >= MaxRetryCount)
+        if (retryCount >= maxRetryCount)
         {
             logger.LogError(exception,
                 "Retry limit reached for message {MessageId} on queue {QueueName}; dead-lettering",
@@ -58,23 +60,31 @@ public static class ServiceBusCosmosRetryHelper
 
             await actions.DeadLetterMessageAsync(message,
                 deadLetterReason: "RetryLimitExceeded",
-                deadLetterErrorDescription: $"Exceeded {MaxRetryCount} retries for exception: {exception.Message}",
+                deadLetterErrorDescription: $"Exceeded {maxRetryCount} retries for exception: {exception.Message}",
                 cancellationToken: cancellationToken);
             return;
         }
 
         var nextRetryCount = retryCount + 1;
-        var delayMilliseconds = Random.Shared.NextInt64((long)MinRetryDelay.TotalMilliseconds, (long)MaxRetryDelay.TotalMilliseconds + 1);
-        var scheduledEnqueueTime = DateTimeOffset.UtcNow.AddMilliseconds(delayMilliseconds);
+        var scheduledEnqueueTime = scheduledEnqueueTimeUtc?.ToUniversalTime();
+        if (scheduledEnqueueTime is null)
+        {
+            var delayMilliseconds = Random.Shared.NextInt64((long)MinRetryDelay.TotalMilliseconds, (long)MaxRetryDelay.TotalMilliseconds + 1);
+            scheduledEnqueueTime = DateTimeOffset.UtcNow.AddMilliseconds(delayMilliseconds);
+        }
+
+        var delay = scheduledEnqueueTime.Value - DateTimeOffset.UtcNow;
+        if (delay < TimeSpan.Zero)
+            delay = TimeSpan.Zero;
 
         await using var sender = serviceBusClient.CreateSender(queueName);
         var retryMessage = BuildRetryMessage(message, nextRetryCount);
 
-        await sender.ScheduleMessageAsync(retryMessage, scheduledEnqueueTime, cancellationToken);
+        await sender.ScheduleMessageAsync(retryMessage, scheduledEnqueueTime.Value, cancellationToken);
 
         logger.LogWarning(exception,
-            "Exception retry scheduled for message {MessageId} on queue {QueueName}. Rescheduled after {Delay} for attempt {Attempt}/{MaxAttempts}",
-            message.MessageId, queueName, TimeSpan.FromMilliseconds(delayMilliseconds), nextRetryCount, MaxRetryCount);
+            "Exception retry scheduled for message {MessageId} on queue {QueueName}. Rescheduled for {ScheduledEnqueueTimeUtc} after {Delay} for attempt {Attempt}/{MaxAttempts}",
+            message.MessageId, queueName, scheduledEnqueueTime.Value, delay, nextRetryCount, maxRetryCount);
 
         await actions.CompleteMessageAsync(message, cancellationToken);
     }
