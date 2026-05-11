@@ -28,7 +28,6 @@ public class CollectionClientBuilder(IServiceCollection services)
     {
         AddCollection<StoredFeature>(databaseName, containerName);
         AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Peak, op => op.GetPeaks, op => op.GetPeaksByIds, storeZoom: 11);
-        AddKeyedTiledClient(databaseName, containerName, FeatureKinds.Path, op => op.GetPaths, storeZoom: 11);
         AddKeyedTiledClient(databaseName, containerName, FeatureKinds.ProtectedArea, op => op.GetProtectedAreas, storeZoom: 8);
 
         services.AddSingleton(sp =>
