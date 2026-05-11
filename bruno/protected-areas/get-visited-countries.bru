@@ -1,0 +1,19 @@
+meta {
+  name: Get Visited Countries
+  type: http
+  seq: 3
+}
+
+get {
+  url: http://localhost:7071/api/visitedAreas
+  body: none
+  auth: none
+}
+
+params:query {
+  areaType: country
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}

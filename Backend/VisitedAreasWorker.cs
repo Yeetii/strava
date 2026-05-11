@@ -40,7 +40,7 @@ public class VisitedAreasWorker(
         var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var activitiesList = activities
-            .Where(a => !string.IsNullOrWhiteSpace(a.Polyline ?? a.SummaryPolyline))
+            .Where(a => !string.IsNullOrWhiteSpace(GetRoutePolyline(a)))
             .ToList();
 
         var nearbyAreas = (await FetchNearbyAreas(activitiesList)).ToList();
@@ -62,14 +62,16 @@ public class VisitedAreasWorker(
         {
             var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
 
-            if (activity == null || string.IsNullOrWhiteSpace(activity.Polyline ?? activity.SummaryPolyline))
+            var routePolyline = activity is null ? null : GetRoutePolyline(activity);
+
+            if (activity == null || string.IsNullOrWhiteSpace(routePolyline))
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
                 if (hasRealLockToken) await actions.CompleteMessageAsync(job);
                 return;
             }
 
-            var activityPoints = GeoSpatialFunctions.DecodePolyline(activity.Polyline ?? activity.SummaryPolyline ?? string.Empty).ToList();
+            var activityPoints = GeoSpatialFunctions.DecodePolyline(routePolyline).ToList();
             _logger.LogDebug("Activity {ActivityId} decoded {PointCount} route points", activityId, activityPoints.Count);
 
             var nearbyRegions = (await FetchAdminRegionsForActivity(activityPoints, cancellationToken)).ToList();
@@ -368,15 +370,50 @@ public class VisitedAreasWorker(
             .ToDictionary(doc => doc.Id, StringComparer.Ordinal);
 
         var validatedSummaries = summaries
-            .Where(summary => boundaryDocsById.TryGetValue(summary.Id, out var boundaryDoc)
-                && ActivityIntersectsBoundary(activityPoints, boundaryDoc.Geometry))
+            .Select(summary => boundaryDocsById.TryGetValue(summary.Id, out var boundaryDoc)
+                && ActivityIntersectsBoundary(activityPoints, boundaryDoc.Geometry)
+                    ? MergeSummaryWithBoundaryDoc(summary, boundaryDoc)
+                    : null)
+            .Where(summary => summary is not null)
+            .Select(summary => summary!)
             .ToList();
+
+        if (validatedSummaries.Count == 0)
+        {
+            var mergedCandidates = summaries
+                .Select(summary => boundaryDocsById.TryGetValue(summary.Id, out var boundaryDoc)
+                    ? MergeSummaryWithBoundaryDoc(summary, boundaryDoc)
+                    : summary)
+                .ToList();
+
+            _logger.LogWarning(
+                "All {CandidateCount} admin region candidates for this activity were rejected by local geometry validation; falling back to ST_WITHIN candidates.",
+                summaries.Count);
+            return mergedCandidates;
+        }
 
         _logger.LogDebug(
             "Found {CandidateCount} admin region candidates via ST_WITHIN; {ValidatedCount} remained after local geometry validation",
             summaries.Count,
             validatedSummaries.Count);
         return validatedSummaries;
+    }
+
+    private static StoredFeatureSummary MergeSummaryWithBoundaryDoc(
+        StoredFeatureSummary summary,
+        StoredFeature boundaryDoc)
+    {
+        var mergedProperties = new Dictionary<string, dynamic>(summary.Properties, StringComparer.Ordinal);
+        foreach (var (key, value) in boundaryDoc.Properties)
+            mergedProperties[key] = value;
+
+        return new StoredFeatureSummary
+        {
+            Id = summary.Id,
+            FeatureId = summary.FeatureId,
+            Kind = summary.Kind,
+            Properties = mergedProperties
+        };
     }
 
     private static bool ActivityIntersectsBoundary(
@@ -390,5 +427,16 @@ public class VisitedAreasWorker(
         }
 
         return false;
+    }
+
+    private static string? GetRoutePolyline(Activity activity)
+    {
+        if (!string.IsNullOrWhiteSpace(activity.Polyline))
+            return activity.Polyline;
+
+        if (!string.IsNullOrWhiteSpace(activity.SummaryPolyline))
+            return activity.SummaryPolyline;
+
+        return null;
     }
 }

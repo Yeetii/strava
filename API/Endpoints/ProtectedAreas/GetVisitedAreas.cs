@@ -43,13 +43,17 @@ public class GetVisitedAreas(
         }
 
         var areaType = req.Query["areaType"];
-        var areaTypes = areaType?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var areaTypes = areaType?
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(value => value.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
         QueryDefinition query;
         if (areaTypes is { Length: > 0 })
         {
-            var inClause = string.Join(",", areaTypes.Select((_, i) => $"@areaType{i}"));
-            var qd = new QueryDefinition($"SELECT * FROM c WHERE c.userId = @userId AND c.areaType IN ({inClause})")
+            var predicate = string.Join(" OR ", areaTypes.Select((_, i) => $"LOWER(c.areaType) = @areaType{i}"));
+            var qd = new QueryDefinition($"SELECT * FROM c WHERE c.userId = @userId AND ({predicate})")
                 .WithParameter("@userId", user.Id);
             for (int i = 0; i < areaTypes.Length; i++)
                 qd = qd.WithParameter($"@areaType{i}", areaTypes[i]);

@@ -52,7 +52,8 @@ public static class ServiceBusCosmosRetryHelper
         }
 
         var retryCount = GetRetryCount(message);
-        if (retryCount >= maxRetryCount)
+        var hasExplicitScheduledRetry = scheduledEnqueueTimeUtc.HasValue;
+        if (retryCount >= maxRetryCount && !hasExplicitScheduledRetry)
         {
             logger.LogError(exception,
                 "Retry limit reached for message {MessageId} on queue {QueueName}; dead-lettering",
@@ -65,7 +66,7 @@ public static class ServiceBusCosmosRetryHelper
             return;
         }
 
-        var nextRetryCount = retryCount + 1;
+        var nextRetryCount = hasExplicitScheduledRetry ? 0 : retryCount + 1;
         var scheduledEnqueueTime = scheduledEnqueueTimeUtc?.ToUniversalTime();
         if (scheduledEnqueueTime is null)
         {
