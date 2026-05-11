@@ -14,10 +14,10 @@ public class Athlete
         public int ResourceState { get; set; }
 
         [JsonPropertyName("firstname")]
-        public required string Firstname { get; set; }
+        public string? Firstname { get; set; }
 
         [JsonPropertyName("lastname")]
-        public required string Lastname { get; set; }
+        public string? Lastname { get; set; }
 
         [JsonPropertyName("bio")]
         public string? Bio { get; set; }
