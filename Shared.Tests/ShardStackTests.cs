@@ -1,0 +1,154 @@
+using BAMCIS.GeoJSON;
+using Shared.Models;
+using Shared.Services.Shards;
+
+namespace Shared.Tests;
+
+public class ShardStackTests
+{
+    [Fact]
+    public void PackedGeometryCodec_RoundTrips_LineString()
+    {
+        var line = new LineString(
+        [
+            new Position(11.1234567, 59.1234567),
+            new Position(11.2234567, 59.2234567),
+            new Position(11.3234567, 59.3234567)
+        ]);
+
+        var (type, bytes) = PackedGeometryCodec.Encode(line);
+        var decoded = PackedGeometryCodec.Decode(type, bytes);
+
+        var decodedLine = Assert.IsType<LineString>(decoded);
+        var coordinates = decodedLine.Coordinates.ToList();
+        Assert.Equal(3, coordinates.Count);
+        Assert.Equal(11.1234567, coordinates[0].Longitude, 6);
+        Assert.Equal(59.3234567, coordinates[2].Latitude, 6);
+    }
+
+    [Fact]
+    public void ShardBinarySerializer_RoundTrips_OwnedFeatures_WithOsmId()
+    {
+        var shard = new Shard
+        {
+            Owned =
+            [
+                new ShardFeature
+                {
+                    Id = 42,
+                    OsmId = "123456",
+                    Name = "My Trail",
+                    Type = ShardFeatureType.LineString,
+                    Geometry = [1, 2, 3],
+                    Tags = [new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("surface"), ValueId = ShardEncodingIds.TagIdFromString("gravel") }]
+                }
+            ]
+        };
+
+        var bytes = ShardBinarySerializer.Serialize(shard);
+        var roundTrip = ShardBinarySerializer.Deserialize(bytes);
+
+        Assert.Single(roundTrip.Owned);
+        Assert.Equal((ulong)42, roundTrip.Owned[0].Id);
+        Assert.Equal("123456", roundTrip.Owned[0].OsmId);
+        Assert.Equal("My Trail", roundTrip.Owned[0].Name);
+        Assert.Equal(ShardFeatureType.LineString, roundTrip.Owned[0].Type);
+        Assert.Collection(roundTrip.Owned[0].Tags,
+            tag =>
+            {
+                Assert.Equal(ShardEncodingIds.TagIdFromString("surface"), tag.KeyId);
+                Assert.Equal(ShardEncodingIds.TagIdFromString("gravel"), tag.ValueId);
+            });
+    }
+
+    [Fact]
+    public void BlobTileService_IntersectingShardKeys_Expands_WhenRequestZoomBelowCanonical()
+    {
+        var keys = BlobTileService.GetIntersectingShardKeys(z: 10, x: 550, y: 330, shardZoom: 12);
+        Assert.Equal(16, keys.Count);
+        Assert.Contains((2200, 1320), keys);
+    }
+
+    [Fact]
+    public async Task ShardFeatureClient_ExposesOsmIdProperty()
+    {
+        var shard = new Shard
+        {
+            Owned = [new ShardFeature
+            {
+                Id = 10,
+                OsmId = "987654",
+                Name = "Residential Connector",
+                Type = ShardFeatureType.Point,
+                Geometry = PackedGeometryCodec.Encode(new Point(new Position(10, 10))).bytes,
+                Tags =
+                [
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("highway"), ValueId = ShardEncodingIds.TagIdFromString("residential") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("footway"), ValueId = ShardEncodingIds.TagIdFromString("informal") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("surface"), ValueId = ShardEncodingIds.TagIdFromString("dirt") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("width"), ValueId = ShardEncodingIds.TagIdFromString("1.5") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("trail_visibility"), ValueId = ShardEncodingIds.TagIdFromString("intermediate") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("sac_scale"), ValueId = ShardEncodingIds.TagIdFromString("mountain_hiking") }
+                ]
+            }]
+        };
+
+        var fakeRepo = new FakeShardRepository(new Dictionary<(int z, int x, int y), Shard>
+        {
+            [(12, 5, 6)] = shard
+        });
+        var client = new ShardFeatureClient(fakeRepo, canonicalZoom: 12);
+
+        var features = await client.GetFeaturesForShards([(5, 6)], CancellationToken.None);
+
+        Assert.Single(features);
+        Assert.Equal("987654", Assert.IsType<string>(features[0].Properties["osmId"]));
+        Assert.Equal("Residential Connector", Assert.IsType<string>(features[0].Properties["name"]));
+        Assert.Equal("residential", Assert.IsType<string>(features[0].Properties["highway"]));
+        Assert.Equal("informal", Assert.IsType<string>(features[0].Properties["footway"]));
+        Assert.Equal("dirt", Assert.IsType<string>(features[0].Properties["surface"]));
+        Assert.Equal("1.5", Assert.IsType<string>(features[0].Properties["width"]));
+        Assert.Equal("intermediate", Assert.IsType<string>(features[0].Properties["trail_visibility"]));
+        Assert.Equal("mountain_hiking", Assert.IsType<string>(features[0].Properties["sac_scale"]));
+        Assert.Equal(1, fakeRepo.GetCalls);
+    }
+
+    [Fact]
+    public void MvtTileEncoder_Encodes_StringProperties()
+    {
+        var feature = new Feature(
+            new LineString(
+            [
+                new Position(0, 0),
+                new Position(1, 1)
+            ]),
+            new Dictionary<string, dynamic> { ["osmId"] = "way-123" },
+            null,
+            new FeatureId("1"));
+
+        var tile = MvtTileEncoder.EncodeLayer("highways", [feature], 0, 0, 0);
+        var utf8 = System.Text.Encoding.UTF8.GetString(tile);
+
+        Assert.Contains("osmId", utf8);
+        Assert.Contains("way-123", utf8);
+    }
+
+    private sealed class FakeShardRepository(Dictionary<(int z, int x, int y), Shard> shards) : IShardRepository
+    {
+        public int GetCalls { get; private set; }
+        public int DeleteCalls { get; private set; }
+
+        public Task<Shard> GetShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+        {
+            GetCalls++;
+            return Task.FromResult(shards[(z, x, y)]);
+        }
+
+        public Task DeleteShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+        {
+            DeleteCalls++;
+            shards.Remove((z, x, y));
+            return Task.CompletedTask;
+        }
+    }
+}
