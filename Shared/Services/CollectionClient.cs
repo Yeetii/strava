@@ -258,41 +258,54 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
     }
 
 
+    private const int CosmosBatchMaxOperations = 100;
+
     public async Task ExecuteBatch(
         PartitionKey partitionKey,
         IEnumerable<T>? creates = null,
         IEnumerable<(string Id, IReadOnlyList<PatchOperation> Operations)>? patches = null,
         CancellationToken cancellationToken = default)
     {
-        var batch = _container.CreateTransactionalBatch(partitionKey);
-        int count = 0;
+        // Cosmos transactional batches are capped at 100 operations; chunk accordingly.
+        var createsList = (creates ?? []).ToList();
+        var patchesList = (patches ?? []).ToList();
+        int total = createsList.Count + patchesList.Count;
+        if (total == 0) return;
 
-        foreach (var item in creates ?? [])
-        {
-            batch.CreateItem(item);
-            count++;
-        }
-        foreach (var (id, operations) in patches ?? [])
-        {
-            batch.PatchItem(id, operations);
-            count++;
-        }
+        int createIndex = 0;
+        int patchIndex = 0;
 
-        if (count == 0) return;
+        while (createIndex < createsList.Count || patchIndex < patchesList.Count)
+        {
+            var batch = _container.CreateTransactionalBatch(partitionKey);
+            int count = 0;
 
-        await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
-        try
-        {
-            using var response = await batch.ExecuteAsync(cancellationToken);
-            if (!response.IsSuccessStatusCode)
-                throw new CosmosException(
-                    $"Batch failed with status {response.StatusCode}",
-                    response.StatusCode, 0, response.ActivityId, response.RequestCharge);
-            await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
-        }
-        finally
-        {
-            CosmosWriteThrottle.Semaphore.Release();
+            while (createIndex < createsList.Count && count < CosmosBatchMaxOperations)
+            {
+                batch.CreateItem(createsList[createIndex++]);
+                count++;
+            }
+            while (patchIndex < patchesList.Count && count < CosmosBatchMaxOperations)
+            {
+                var (id, operations) = patchesList[patchIndex++];
+                batch.PatchItem(id, operations);
+                count++;
+            }
+
+            await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+            try
+            {
+                using var response = await batch.ExecuteAsync(cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                    throw new CosmosException(
+                        $"Batch failed with status {response.StatusCode}",
+                        response.StatusCode, 0, response.ActivityId, response.RequestCharge);
+                await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+            }
+            finally
+            {
+                CosmosWriteThrottle.Semaphore.Release();
+            }
         }
     }
 }

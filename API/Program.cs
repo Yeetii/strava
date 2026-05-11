@@ -111,8 +111,9 @@ var host = new HostBuilder()
         services.AddSingleton(serviceProvider =>
         {
             var featureClient = serviceProvider.GetRequiredService<ShardFeatureClient>();
+            var tileLogger = serviceProvider.GetRequiredService<ILogger<BlobTileService>>();
             var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-            return new BlobTileService(featureClient, shardZoom);
+            return new BlobTileService(featureClient, tileLogger, shardZoom);
         });
 
         services.AddScoped(serviceProvider =>

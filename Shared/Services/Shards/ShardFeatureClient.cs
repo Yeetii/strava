@@ -7,6 +7,7 @@ public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZ
 {
     private readonly IShardRepository _shardRepository = shardRepository;
     private readonly int _canonicalZoom = canonicalZoom;
+    public int CanonicalZoom => _canonicalZoom;
     private static readonly string[] RenderValues =
     [
         "yes",
@@ -105,7 +106,7 @@ public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZ
             return [];
 
         // Fetch all shards in parallel to avoid timeout on low zoom levels (which require many shards)
-        var shardTasks = keys.Select(key => _shardRepository.GetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken)).ToList();
+        var shardTasks = keys.Select(key => GetShardWithContext(key, cancellationToken)).ToList();
         var shards = await Task.WhenAll(shardTasks);
 
         var features = new List<Feature>();
@@ -127,8 +128,40 @@ public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZ
     public async Task RefreshShards(IEnumerable<(int x, int y)> shardKeys, CancellationToken cancellationToken = default)
     {
         var keys = shardKeys.Distinct().ToList();
-        var deleteTasks = keys.Select(key => _shardRepository.DeleteShardAsync(_canonicalZoom, key.x, key.y, cancellationToken)).ToList();
+        var deleteTasks = keys.Select(key => DeleteShardWithContext(key, cancellationToken)).ToList();
         await Task.WhenAll(deleteTasks);
+    }
+
+    private async Task<Shard> GetShardWithContext((int x, int y) key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _shardRepository.GetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new OperationCanceledException($"Cancelled while loading shard z{_canonicalZoom}/{key.x}/{key.y}.", ex, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to load shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
+        }
+    }
+
+    private async Task DeleteShardWithContext((int x, int y) key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _shardRepository.DeleteShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new OperationCanceledException($"Cancelled while deleting shard z{_canonicalZoom}/{key.x}/{key.y}.", ex, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to delete shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
+        }
     }
 
     private static Feature ToFeature(ShardFeature feature)

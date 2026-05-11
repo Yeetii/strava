@@ -6,7 +6,7 @@ using Shared.Models;
 using Shared.Services;
 using BAMCIS.GeoJSON;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.DependencyInjection;
+using Shared.Services.Shards;
 
 namespace Backend;
 
@@ -14,11 +14,10 @@ public class VisitedPathsWorker(
     ILogger<VisitedPathsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<VisitedPath> _visitedPathsCollection,
-    [FromKeyedServices(FeatureKinds.Path)] TiledCollectionClient _pathsCollection,
+    ShardFeatureClient _highwaysShardFeatureClient,
     ServiceBusClient serviceBusClient)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
-    private const int PathTileZoom = 11;
 
     // 50m ≈ 0.00045° – use a slightly larger threshold for a rough but fast check
     private const double ProximityThresholdDegrees = 0.0005;
@@ -211,15 +210,16 @@ public class VisitedPathsWorker(
 
     private async Task<IEnumerable<Feature>> FetchNearbyPaths(Dictionary<string, List<Coordinate>> decodedActivities)
     {
+        var shardZoom = _highwaysShardFeatureClient.CanonicalZoom;
         var tileIndices = new HashSet<(int x, int y)>();
         foreach (var points in decodedActivities.Values)
         {
-            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(points, PathTileZoom))
+            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(points, shardZoom))
                 tileIndices.Add(tile);
         }
 
-        var paths = (await _pathsCollection.FetchByTiles(tileIndices, PathTileZoom, followPointers: true)).ToList();
+        var paths = (await _highwaysShardFeatureClient.GetFeaturesForShards(tileIndices)).ToList();
         _logger.LogInformation("Found {Count} nearby paths", paths.Count);
-        return paths.Select(p => p.ToFeature());
+        return paths;
     }
 }

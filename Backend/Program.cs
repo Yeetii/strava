@@ -14,6 +14,7 @@ using Shared.Constants;
 using Microsoft.Extensions.Logging;
 using Azure.Storage.Blobs;
 using Backend;
+using Shared.Services.Shards;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
@@ -115,6 +116,30 @@ var host = new HostBuilder()
             containerClient.CreateIfNotExists();
             var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
             return new BlobOrganizerStore(containerClient, loggerFactory);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var cfg = serviceProvider.GetRequiredService<IConfiguration>();
+            var connStr = cfg.GetValue<string>("BlobStorageConnection")
+                ?? throw new Exception("BlobStorageConnection is not configured");
+            var containerClient = new BlobContainerClient(connStr, BlobContainerNames.HighwaysShards);
+            containerClient.CreateIfNotExists();
+            return new HighwaysShardContainer(containerClient);
+        });
+        services.AddSingleton<IShardRepository>(serviceProvider =>
+        {
+            var repositoryLogger = serviceProvider.GetRequiredService<ILogger<BlobShardRepository>>();
+            var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
+            var overpass = serviceProvider.GetRequiredService<OverpassClient>();
+            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
+            var shardBufferMeters = configuration.GetValue<int?>(AppConfig.BlobShardBufferMeters) ?? 200;
+            return new BlobShardRepository(containerClient, repositoryLogger, overpass.GetHighways, shardZoom, shardBufferMeters);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
+            var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
+            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
+            return new ShardFeatureClient(shardRepository, shardZoom);
         });
 
         services.AddSingleton<AdminBoundaryMetricsEnricher>();

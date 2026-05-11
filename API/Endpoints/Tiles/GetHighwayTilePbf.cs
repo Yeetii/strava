@@ -4,13 +4,15 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Shared.Services.Shards;
 using System.Globalization;
+using System.Diagnostics;
 
 namespace API.Endpoints.Tiles;
 
-public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration configuration)
+public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration configuration, ILogger<GetHighwayTilePbf> logger)
 {
     [OpenApiOperation(tags: ["Tiles"])]
     [OpenApiParameter(name: "z", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
@@ -27,18 +29,34 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "tiles/highways/{z}/{x}/{y}.pbf")] HttpRequestData req,
         CancellationToken cancellationToken)
     {
+        var start = Stopwatch.StartNew();
+        var invocationId = req.FunctionContext.InvocationId;
+        int z = default;
+        int x = default;
+        int y = default;
+        var forceRefresh = false;
+
         try
         {
-            if (!TryParseTileCoordinates(req, out var z, out var x, out var y))
+            if (!TryParseTileCoordinates(req, out z, out x, out y))
                 return req.CreateResponse(HttpStatusCode.BadRequest);
 
-            var forceRefresh = string.Equals(req.Query["forceRefresh"], "true", StringComparison.OrdinalIgnoreCase);
+            forceRefresh = string.Equals(req.Query["forceRefresh"], "true", StringComparison.OrdinalIgnoreCase);
             if (forceRefresh && !IsAuthorized(req))
                 return req.CreateResponse(HttpStatusCode.Unauthorized);
 
             var tile = forceRefresh
                 ? await blobTileService.RefreshTileAsync(z, x, y, cancellationToken)
                 : await blobTileService.BuildTileAsync(z, x, y, cancellationToken);
+
+            logger.LogInformation(
+                "GetHighwayTilePbf succeeded for z{Z}/{X}/{Y} (forceRefresh={ForceRefresh}, invocationId={InvocationId}) in {ElapsedMs}ms",
+                z,
+                x,
+                y,
+                forceRefresh,
+                invocationId,
+                start.ElapsedMilliseconds);
 
             var response = req.CreateResponse(HttpStatusCode.OK);
             response.Headers.Add("Content-Type", "application/x-protobuf");
@@ -49,6 +67,16 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
         }
         catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
         {
+            logger.LogWarning(
+                ex,
+                "GetHighwayTilePbf cancelled for z{Z}/{X}/{Y} (forceRefresh={ForceRefresh}, invocationId={InvocationId}, elapsedMs={ElapsedMs}, cancellationRequested={CancellationRequested})",
+                z,
+                x,
+                y,
+                forceRefresh,
+                invocationId,
+                start.ElapsedMilliseconds,
+                cancellationToken.IsCancellationRequested);
             return RequestCancellation.CreateCancelledResponse(req);
         }
     }

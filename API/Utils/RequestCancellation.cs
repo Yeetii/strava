@@ -7,7 +7,18 @@ public static class RequestCancellation
 {
     public static bool IsCancellation(Exception exception, CancellationToken cancellationToken)
     {
-        return exception is OperationCanceledException && cancellationToken.IsCancellationRequested;
+        if (exception is OperationCanceledException)
+            return true;
+
+        var current = exception.InnerException;
+        while (current is not null)
+        {
+            if (current is OperationCanceledException)
+                return true;
+            current = current.InnerException;
+        }
+
+        return cancellationToken.IsCancellationRequested;
     }
 
     public static HttpResponseData CreateCancelledResponse(HttpRequestData req)

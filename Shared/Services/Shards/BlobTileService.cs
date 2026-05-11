@@ -1,28 +1,111 @@
 using System.IO.Compression;
 using BAMCIS.GeoJSON;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace Shared.Services.Shards;
 
-public class BlobTileService(ShardFeatureClient featureClient, int shardZoom = 12)
+public class BlobTileService(ShardFeatureClient featureClient, ILogger<BlobTileService> logger, int shardZoom = 12)
 {
     private readonly ShardFeatureClient _featureClient = featureClient;
+    private readonly ILogger<BlobTileService> _logger = logger;
     private readonly int _shardZoom = shardZoom;
     private const double ClipTolerance = 1e-10;
+    private const int ShardSampleSize = 20;
 
     public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
         var shardKeys = GetIntersectingShardKeys(z, x, y, _shardZoom);
-        var features = await _featureClient.GetFeaturesForShards(shardKeys, cancellationToken);
-        var clipped = ClipToTileBounds(features, z, x, y);
-        var pbf = MvtTileEncoder.EncodeLayer("highways", clipped, z, x, y);
-        return Gzip(pbf);
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var features = await _featureClient.GetFeaturesForShards(shardKeys, cancellationToken);
+            var clipped = ClipToTileBounds(features, z, x, y);
+            var pbf = MvtTileEncoder.EncodeLayer("highways", clipped, z, x, y);
+            return Gzip(pbf);
+        }
+        catch (Exception ex) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex,
+                "Cancelled highway tile build for z{Z}/{X}/{Y} (shardZoom={ShardZoom}, shardCount={ShardCount}, shardSample={ShardSample}, elapsedMs={ElapsedMs})",
+                z,
+                x,
+                y,
+                _shardZoom,
+                shardKeys.Count,
+                FormatShardSample(shardKeys),
+                stopwatch.ElapsedMilliseconds);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed highway tile build for z{Z}/{X}/{Y} (shardZoom={ShardZoom}, shardCount={ShardCount}, shardSample={ShardSample}, elapsedMs={ElapsedMs})",
+                z,
+                x,
+                y,
+                _shardZoom,
+                shardKeys.Count,
+                FormatShardSample(shardKeys),
+                stopwatch.ElapsedMilliseconds);
+            throw;
+        }
     }
 
     public async Task<byte[]> RefreshTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
         var shardKeys = GetIntersectingShardKeys(z, x, y, _shardZoom);
-        await _featureClient.RefreshShards(shardKeys, cancellationToken);
-        return await BuildTileAsync(z, x, y, cancellationToken);
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            await _featureClient.RefreshShards(shardKeys, cancellationToken);
+            return await BuildTileAsync(z, x, y, cancellationToken);
+        }
+        catch (Exception ex) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex,
+                "Cancelled highway tile refresh for z{Z}/{X}/{Y} (shardZoom={ShardZoom}, shardCount={ShardCount}, shardSample={ShardSample}, elapsedMs={ElapsedMs})",
+                z,
+                x,
+                y,
+                _shardZoom,
+                shardKeys.Count,
+                FormatShardSample(shardKeys),
+                stopwatch.ElapsedMilliseconds);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed highway tile refresh for z{Z}/{X}/{Y} (shardZoom={ShardZoom}, shardCount={ShardCount}, shardSample={ShardSample}, elapsedMs={ElapsedMs})",
+                z,
+                x,
+                y,
+                _shardZoom,
+                shardKeys.Count,
+                FormatShardSample(shardKeys),
+                stopwatch.ElapsedMilliseconds);
+            throw;
+        }
+    }
+
+    private static string FormatShardSample(IReadOnlyList<(int x, int y)> shardKeys)
+    {
+        if (shardKeys.Count == 0)
+            return string.Empty;
+
+        var sample = shardKeys
+            .Take(ShardSampleSize)
+            .Select(k => $"{k.x}/{k.y}");
+        var formatted = string.Join(",", sample);
+        return shardKeys.Count > ShardSampleSize
+            ? $"{formatted}...(+{shardKeys.Count - ShardSampleSize} more)"
+            : formatted;
     }
 
     internal static IReadOnlyList<(int x, int y)> GetIntersectingShardKeys(int z, int x, int y, int shardZoom)
