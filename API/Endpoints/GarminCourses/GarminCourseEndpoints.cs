@@ -92,10 +92,16 @@ public class GetGarminCourses(
         }
         catch (HttpRequestException)
         {
-            var response = req.CreateResponse(HttpStatusCode.BadGateway);
-            CorsHeaders.Add(req, response, methods);
-            return response;
+            return CreateProxyUnavailable(req, methods);
         }
+    }
+
+    internal static HttpResponseData CreateProxyUnavailable(HttpRequestData req, string methods)
+    {
+        var response = req.CreateResponse(HttpStatusCode.BadGateway);
+        CorsHeaders.Add(req, response, methods);
+        response.WriteString("Garmin proxy service is unavailable. Configure GarminProxyBaseUrl or start the local proxy service.");
+        return response;
     }
 
     internal static async Task<HttpResponseData> ProxyResponseAsync(
@@ -264,34 +270,45 @@ public class PutGarminCourse(
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
-        using var upstreamResponse = await garminCoursesApi.UpdateCourse(courseId, gpxBytes, fileName, cancellationToken);
-
-        if (upstreamResponse.IsSuccessStatusCode)
+        HttpResponseMessage upstreamResponse;
+        try
         {
-            if (long.TryParse(courseId, out long courseIdLong))
-            {
-                var courseName = System.IO.Path.GetFileNameWithoutExtension(fileName);
-                var messages = new[]
-                {
-                    new
-                    {
-                        deviceId = HardcodedDeviceId,
-                        messageUrl = $"course-service/course/fit/{courseIdLong}/{HardcodedDeviceId}?elevation=true",
-                        messageType = "courses",
-                        messageName = courseName,
-                        groupName = (string?)null,
-                        priority = 0,
-                        fileType = "FIT",
-                        metaDataId = courseIdLong,
-                        wifiSetup = true
-                    }
-                };
-
-                _ = garminCoursesApi.SendDeviceMessages(messages, cancellationToken);
-            }
+            upstreamResponse = await garminCoursesApi.UpdateCourse(courseId, gpxBytes, fileName, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            return GetGarminCourses.CreateProxyUnavailable(req, "DELETE, PUT, OPTIONS");
         }
 
-        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, PUT, OPTIONS");
+        using (upstreamResponse)
+        {
+            if (upstreamResponse.IsSuccessStatusCode)
+            {
+                if (long.TryParse(courseId, out long courseIdLong))
+                {
+                    var courseName = System.IO.Path.GetFileNameWithoutExtension(fileName);
+                    var messages = new[]
+                    {
+                        new
+                        {
+                            deviceId = HardcodedDeviceId,
+                            messageUrl = $"course-service/course/fit/{courseIdLong}/{HardcodedDeviceId}?elevation=true",
+                            messageType = "courses",
+                            messageName = courseName,
+                            groupName = (string?)null,
+                            priority = 0,
+                            fileType = "FIT",
+                            metaDataId = courseIdLong,
+                            wifiSetup = true
+                        }
+                    };
+
+                    _ = garminCoursesApi.SendDeviceMessages(messages, cancellationToken);
+                }
+            }
+
+            return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, PUT, OPTIONS");
+        }
     }
 }
 
@@ -326,44 +343,55 @@ public class PostGarminCourse(
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
-        using var upstreamResponse = await garminCoursesApi.UploadCourse(gpxBytes, fileName, cancellationToken);
-
-        if (upstreamResponse.IsSuccessStatusCode)
+        HttpResponseMessage upstreamResponse;
+        try
         {
-            var responseBody = await upstreamResponse.Content.ReadAsByteArrayAsync(cancellationToken);
-
-            if (TryExtractCourseId(responseBody, out var courseIdLong))
-            {
-                var courseName = Path.GetFileNameWithoutExtension(fileName);
-                var messages = new[]
-                {
-                    new
-                    {
-                        deviceId = PutGarminCourse.HardcodedDeviceId,
-                        messageUrl = $"course-service/course/fit/{courseIdLong}/{PutGarminCourse.HardcodedDeviceId}?elevation=true",
-                        messageType = "courses",
-                        messageName = courseName,
-                        groupName = (string?)null,
-                        priority = 0,
-                        fileType = "FIT",
-                        metaDataId = courseIdLong,
-                        wifiSetup = true
-                    }
-                };
-
-                _ = garminCoursesApi.SendDeviceMessages(messages, cancellationToken);
-            }
-
-            // Re-build response from buffered body since the stream is consumed
-            var proxyResponse = req.CreateResponse(upstreamResponse.StatusCode);
-            CorsHeaders.Add(req, proxyResponse, "GET, POST, OPTIONS");
-            foreach (var header in upstreamResponse.Content.Headers)
-                proxyResponse.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            await proxyResponse.Body.WriteAsync(responseBody, cancellationToken);
-            return proxyResponse;
+            upstreamResponse = await garminCoursesApi.UploadCourse(gpxBytes, fileName, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            return GetGarminCourses.CreateProxyUnavailable(req, "GET, POST, OPTIONS");
         }
 
-        return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "GET, POST, OPTIONS");
+        using (upstreamResponse)
+        {
+            if (upstreamResponse.IsSuccessStatusCode)
+            {
+                var responseBody = await upstreamResponse.Content.ReadAsByteArrayAsync(cancellationToken);
+
+                if (TryExtractCourseId(responseBody, out var courseIdLong))
+                {
+                    var courseName = Path.GetFileNameWithoutExtension(fileName);
+                    var messages = new[]
+                    {
+                        new
+                        {
+                            deviceId = PutGarminCourse.HardcodedDeviceId,
+                            messageUrl = $"course-service/course/fit/{courseIdLong}/{PutGarminCourse.HardcodedDeviceId}?elevation=true",
+                            messageType = "courses",
+                            messageName = courseName,
+                            groupName = (string?)null,
+                            priority = 0,
+                            fileType = "FIT",
+                            metaDataId = courseIdLong,
+                            wifiSetup = true
+                        }
+                    };
+
+                    _ = garminCoursesApi.SendDeviceMessages(messages, cancellationToken);
+                }
+
+                // Re-build response from buffered body since the stream is consumed
+                var proxyResponse = req.CreateResponse(upstreamResponse.StatusCode);
+                CorsHeaders.Add(req, proxyResponse, "GET, POST, OPTIONS");
+                foreach (var header in upstreamResponse.Content.Headers)
+                    proxyResponse.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                await proxyResponse.Body.WriteAsync(responseBody, cancellationToken);
+                return proxyResponse;
+            }
+
+            return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "GET, POST, OPTIONS");
+        }
     }
 
     private static bool TryExtractCourseId(byte[] responseBody, out long courseId)
