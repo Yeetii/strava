@@ -64,6 +64,8 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
             outputs.ActivitiesFetchJob = fetchJob;
         }
 
+        var syncStatus = userExist?.SyncStatus ?? UserSyncStatusService.CreateDefaultStatus();
+
         outputs.User = new Shared.Models.User
         {
             Id = userId,
@@ -72,7 +74,8 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
             LastName = tokenResponse.Athlete.Lastname,
             RefreshToken = refreshToken,
             AccessToken = tokenResponse.AccessToken,
-            TokenExpiresAt = tokenResponse.ExpiresAt
+            TokenExpiresAt = tokenResponse.ExpiresAt,
+            SyncStatus = syncStatus,
         };
 
         outputs.Session = new Session
@@ -86,7 +89,8 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
             UserId = tokenResponse.Athlete.Id.ToString(),
             Username = tokenResponse.Athlete.Username,
             FirstName = tokenResponse.Athlete.Firstname,
-            LastName = tokenResponse.Athlete.Lastname
+            LastName = tokenResponse.Athlete.Lastname,
+            SyncStatus = syncStatus,
         });
 
         return outputs;
@@ -104,6 +108,9 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
 
         [JsonPropertyName("lastName")]
         public string? LastName { get; set; }
+
+        [JsonPropertyName("syncStatus")]
+        public required StravaSyncStatus SyncStatus { get; set; }
     }
 
     public class ReturnBindings

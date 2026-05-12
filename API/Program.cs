@@ -170,6 +170,7 @@ var host = new HostBuilder()
             return new UserAuthenticationService(usersCollection, sessionsCollection);
         });
         services.AddScoped<UserSyncService>();
+        services.AddScoped<UserSyncStatusService>();
     })
     .ConfigureOpenApi()
     .Build();

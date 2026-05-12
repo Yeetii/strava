@@ -17,7 +17,8 @@ public class VisitedAreasWorker(
     CollectionClient<VisitedArea> _visitedAreasCollection,
     [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient _protectedAreasCollection,
     AdminBoundariesCollectionClient _adminBoundariesCollection,
-    ServiceBusClient serviceBusClient)
+    ServiceBusClient serviceBusClient,
+    UserSyncStatusService _userSyncStatusService)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     private const int AreaTileZoom = 8;
@@ -67,6 +68,10 @@ public class VisitedAreasWorker(
             if (activity == null || string.IsNullOrWhiteSpace(routePolyline))
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
+                if (activity != null)
+                {
+                    await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
+                }
                 if (hasRealLockToken) await actions.CompleteMessageAsync(job);
                 return;
             }
@@ -110,6 +115,7 @@ public class VisitedAreasWorker(
 
             if (visitedAreas.Count == 0)
             {
+                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
                 if (hasRealLockToken) await actions.CompleteMessageAsync(job);
                 return;
             }
@@ -159,6 +165,7 @@ public class VisitedAreasWorker(
                 string.Join(", ", documentIds));
             await _visitedAreasCollection.ExecuteBatch(partitionKey, creates: toCreate, patches: toPatch, cancellationToken: cancellationToken);
             _logger.LogInformation("Batch write complete for activity {ActivityId}", activityId);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
             if (hasRealLockToken) await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)

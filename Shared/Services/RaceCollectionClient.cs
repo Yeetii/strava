@@ -164,7 +164,7 @@ public class RaceCollectionClient(Container container, ILoggerFactory loggerFact
 
         try
         {
-            await PatchDocument(id, BuildRacePartitionKey(target.X, target.Y), operations, cancellationToken);
+            await PatchDocument(id, BuildRacePartitionKey(target.X, target.Y), operations, cancellationToken: cancellationToken);
             return true;
         }
         catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)

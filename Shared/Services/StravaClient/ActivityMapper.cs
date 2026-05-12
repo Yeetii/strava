@@ -5,7 +5,7 @@ namespace Shared.Services.StravaClient;
 
 public static class ActivityMapper
 {
-    public static Activity MapDetailedActivity(DetailedActivity activity)
+    public static Activity MapDetailedActivity(DetailedActivity activity, Activity? existingActivity = null)
     {
         return new Activity()
         {
@@ -30,22 +30,23 @@ public static class ActivityMapper
             AverageSpeed = activity.AverageSpeed,
             MaxSpeed = activity.MaxSpeed,
             SummaryPolyline = activity.Map.SummaryPolyline,
-            Polyline = activity.Map.Polyline
+            Polyline = activity.Map.Polyline,
+            ProcessingStatus = existingActivity?.ProcessingStatus
         };
     }
 
-    public static Activity MapSummaryActivity(SummaryActivity activity)
+    public static Activity MapSummaryActivity(SummaryActivity activity, Activity? existingActivity = null)
     {
         return new Activity()
         {
             Id = activity.Id.ToString(),
             UserId = activity.Athlete.Id.ToString(),
             Name = activity.Name,
-            Description = "",
+            Description = existingActivity?.Description ?? string.Empty,
             Distance = activity.Distance,
             MovingTime = activity.MovingTime,
             ElapsedTime = activity.ElapsedTime,
-            Calories = null,
+            Calories = existingActivity?.Calories,
             TotalElevationGain = activity.TotalElevationGain,
             ElevHigh = activity.ElevHigh,
             ElevLow = activity.ElevLow,
@@ -59,6 +60,8 @@ public static class ActivityMapper
             AverageSpeed = activity.AverageSpeed,
             MaxSpeed = activity.MaxSpeed,
             SummaryPolyline = activity.Map.SummaryPolyline,
+            Polyline = existingActivity?.Polyline,
+            ProcessingStatus = existingActivity?.ProcessingStatus,
         };
     }
 }

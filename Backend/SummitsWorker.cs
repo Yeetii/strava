@@ -20,7 +20,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
     [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
     ServiceBusClient serviceBusClient,
-    ISummitsCalculator _summitsCalculator)
+    ISummitsCalculator _summitsCalculator,
+    UserSyncStatusService _userSyncStatusService)
 {
     readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender("activityprocessed");
@@ -43,6 +44,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
                 await SendActivityProcessedEvent(activity, []);
+                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
                 await actions.CompleteMessageAsync(job);
                 return;
             }
@@ -50,6 +52,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             if (summits.Count == 0)
             {
                 await SendActivityProcessedEvent(activity, []);
+                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
                 await actions.RenewMessageLockAsync(job);
                 await actions.CompleteMessageAsync(job);
                 return;
@@ -58,6 +61,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
             await SendActivityProcessedEvent(activity, summits);
             await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
             await actions.RenewMessageLockAsync(job);
             await actions.CompleteMessageAsync(job);
         }

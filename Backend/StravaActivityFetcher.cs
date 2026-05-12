@@ -14,7 +14,7 @@ namespace Backend
         public required string ActivityId { get; set; }
     }
 
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient)
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient, UserSyncStatusService _userSyncStatusService)
     {
         private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
         readonly HttpClient _backendApiClient = httpClientFactory.CreateClient("backendApiClient");
@@ -67,7 +67,13 @@ namespace Backend
                     return;
                 }
 
-                await _activitiesCollection.UpsertDocument(ActivityMapper.MapDetailedActivity(activity));
+                var existingActivity = await _activitiesCollection.GetByIdMaybe(fetchJob.ActivityId, new Microsoft.Azure.Cosmos.PartitionKey(fetchJob.UserId), cancellationToken);
+                await _activitiesCollection.UpsertDocument(ActivityMapper.MapDetailedActivity(activity, existingActivity), cancellationToken);
+                if (existingActivity == null)
+                {
+                    await _userSyncStatusService.IncrementSyncedActivities(fetchJob.UserId, 1, cancellationToken);
+                    await _userSyncStatusService.IncrementKnownTotalActivitiesOnStrava(fetchJob.UserId, 1, cancellationToken);
+                }
                 await actions.CompleteMessageAsync(message, cancellationToken);
             }
             catch (Exception ex)

@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace Backend
 {
-    public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient)
+    public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient, UserSyncStatusService _userSyncStatusService)
     {
         private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
         readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
@@ -43,8 +43,25 @@ namespace Backend
                     return;
                 }
 
-                _logger.LogInformation("Fetched {amount} activities", activites.Count());
-                await _activitiesCollection.BulkUpsert(activites.Select(ActivityMapper.MapSummaryActivity));
+                var activitiesList = activites.ToList();
+                _logger.LogInformation("Fetched {amount} activities", activitiesList.Count);
+
+                var activityIds = activitiesList.Select(activity => activity.Id.ToString()).ToList();
+                var existingActivities = (await _activitiesCollection.GetByIdsAsync(activityIds, cancellationToken))
+                    .ToDictionary(activity => activity.Id, StringComparer.Ordinal);
+
+                var newActivityCount = activityIds.Count(id => !existingActivities.ContainsKey(id));
+                var mappedActivities = activitiesList.Select(activity =>
+                {
+                    existingActivities.TryGetValue(activity.Id.ToString(), out var existingActivity);
+                    return ActivityMapper.MapSummaryActivity(activity, existingActivity);
+                });
+
+                await _activitiesCollection.BulkUpsert(mappedActivities, cancellationToken: cancellationToken);
+                await _userSyncStatusService.IncrementSyncedActivities(fetchJob.UserId, newActivityCount, cancellationToken);
+
+                var discoveredMinimumTotal = ((page - 1) * 200) + activitiesList.Count;
+                await _userSyncStatusService.SetTotalActivitiesOnStravaAtLeast(fetchJob.UserId, discoveredMinimumTotal, cancellationToken);
 
                 if (hasMorePages)
                 {

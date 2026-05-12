@@ -15,7 +15,8 @@ public class VisitedPathsWorker(
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<VisitedPath> _visitedPathsCollection,
     ShardFeatureClient _highwaysShardFeatureClient,
-    ServiceBusClient serviceBusClient)
+    ServiceBusClient serviceBusClient,
+    UserSyncStatusService _userSyncStatusService)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
 
@@ -71,6 +72,10 @@ public class VisitedPathsWorker(
             if (activity == null || !decodedActivities.TryGetValue(activityId, out var activityPoints) || activityPoints.Count == 0)
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
+                if (activity != null)
+                {
+                    await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
+                }
                 if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
@@ -82,6 +87,7 @@ public class VisitedPathsWorker(
 
             if (visitedPaths.Count == 0)
             {
+                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
                 if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
@@ -127,6 +133,7 @@ public class VisitedPathsWorker(
 
             if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.RenewMessageLockAsync(job);
             await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
             if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)

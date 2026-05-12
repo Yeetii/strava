@@ -226,12 +226,20 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         await Task.WhenAll(tasks);
     }
 
-    public async Task PatchDocument(string id, PartitionKey partitionKey, IReadOnlyList<PatchOperation> operations, CancellationToken cancellationToken = default)
+    public async Task PatchDocument(
+        string id,
+        PartitionKey partitionKey,
+        IReadOnlyList<PatchOperation> operations,
+        string? ifMatchEtag = null,
+        CancellationToken cancellationToken = default)
     {
         await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
         try
         {
-            await _container.PatchItemAsync<T>(id, partitionKey, operations, cancellationToken: cancellationToken);
+            PatchItemRequestOptions? requestOptions = string.IsNullOrWhiteSpace(ifMatchEtag)
+                ? null
+                : new PatchItemRequestOptions { IfMatchEtag = ifMatchEtag };
+            await _container.PatchItemAsync<T>(id, partitionKey, operations, requestOptions, cancellationToken);
             await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
         }
         finally

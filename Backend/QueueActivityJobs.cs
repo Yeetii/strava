@@ -22,12 +22,23 @@ namespace Backend
 
             foreach (var activity in updatedActivities)
             {
+                if (!ShouldQueueActivity(activity))
+                {
+                    continue;
+                }
+
                 await Task.WhenAll(
                     summitsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)),
                     pathsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)),
                     areasSender.SendMessageAsync(new ServiceBusMessage(activity.Id))
                 );
             }
+        }
+
+        internal static bool ShouldQueueActivity(Activity activity)
+        {
+            var status = activity.ProcessingStatus;
+            return status == null || (!status.SummitedPeaks && !status.VisitedPaths && !status.VisitedAreas);
         }
     }
 }

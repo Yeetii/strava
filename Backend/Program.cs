@@ -161,6 +161,7 @@ var host = new HostBuilder()
             var sessionsCollection = serviceProvider.GetRequiredService<CollectionClient<Session>>();
             return new UserAuthenticationService(usersCollection, sessionsCollection);
         });
+        services.AddScoped<UserSyncStatusService>();
         services.AddScoped<ISummitsCalculator>(serviceProvider =>
         {
             return new SummitsCalculatorWithBoundingBoxFilter();

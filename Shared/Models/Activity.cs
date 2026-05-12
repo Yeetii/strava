@@ -1,5 +1,6 @@
 using BAMCIS.GeoJSON;
 using Shared.Geo;
+using System.Text.Json.Serialization;
 
 namespace Shared.Models;
 
@@ -27,6 +28,10 @@ public class Activity : IDocument
     public float? MaxSpeed { get; set; }
     public string? Polyline { get; set; }
     public string? SummaryPolyline { get; set; }
+    public ActivityProcessingStatus? ProcessingStatus { get; set; }
+
+    [JsonPropertyName("_etag")]
+    public string? ETag { get; set; }
 
     public Feature ToFeature()
     {
@@ -62,6 +67,13 @@ public class Activity : IDocument
         }
         return new Feature(new LineString(positions), properties, null, new FeatureId(Id));
     }
+}
+
+public class ActivityProcessingStatus
+{
+    public bool SummitedPeaks { get; set; }
+    public bool VisitedPaths { get; set; }
+    public bool VisitedAreas { get; set; }
 }
 
 public static class SportTypes

@@ -16,7 +16,15 @@ namespace Backend
             await QueueActivityCollectionJobs.QueueAllActivitiesAsync(
                 _cosmosClient,
                 serviceBusClient,
-                ServiceBusConfig.CalculateVisitedAreasJobs);
+                ServiceBusConfig.CalculateVisitedAreasJobs,
+                GetUserIdFilter(req.Url));
+        }
+
+        internal static string? GetUserIdFilter(Uri requestUrl)
+        {
+            var queryString = System.Web.HttpUtility.ParseQueryString(requestUrl.Query);
+            var userId = queryString["userId"];
+            return string.IsNullOrWhiteSpace(userId) ? null : userId;
         }
     }
 }
