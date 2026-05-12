@@ -1,4 +1,5 @@
 using Azure.Messaging.ServiceBus;
+using Microsoft.Azure.Cosmos;
 using Shared.Models;
 using Shared.Services;
 
@@ -11,17 +12,29 @@ internal static class QueueActivityCollectionJobs
     public static async Task QueueAllActivitiesAsync(
         CollectionClient<Activity> activitiesClient,
         ServiceBusClient serviceBusClient,
-        string queueName)
+        string queueName,
+        string? userId = null)
     {
-        var activities = (await activitiesClient.FetchWholeCollection()).ToList();
+        var activityIds = (await activitiesClient.ExecuteQueryAsync<string>(BuildActivityIdsQueryDefinition(userId))).ToList();
         var sender = serviceBusClient.CreateSender(queueName);
 
-        for (var index = 0; index < activities.Count; index++)
+        for (var index = 0; index < activityIds.Count; index++)
         {
-            await sender.SendMessageAsync(new ServiceBusMessage(activities[index].Id)
+            await sender.SendMessageAsync(new ServiceBusMessage(activityIds[index])
             {
                 ScheduledEnqueueTime = DateTimeOffset.UtcNow.Add(MessageSpacing * index)
             });
         }
+    }
+
+    internal static QueryDefinition BuildActivityIdsQueryDefinition(string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return new QueryDefinition("SELECT VALUE c.id FROM c");
+        }
+
+        return new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.userId = @userId")
+            .WithParameter("@userId", userId);
     }
 }

@@ -1,0 +1,25 @@
+meta {
+  name: Queue All Summit Jobs
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{backendUrl}}/api/QueueAllSummitJobs
+  body: none
+  auth: none
+}
+
+params:query {
+  ~code: {{functionKey}}
+  ~userId: 11908635
+}
+
+docs {
+  Queues summit recalculation jobs for all activities.
+
+  Query parameters:
+
+  - code (optional): backend function key for environments that require function auth
+  - userId (optional): when provided, only queue activities for that user
+}

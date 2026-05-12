@@ -93,7 +93,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var documents = new List<SummitedPeak>();
         foreach (var peak in summitedPeaks)
         {
-            var documentId = activity.UserId + "-" + peak.Id;
+            var peakId = NormalizeSummitedPeakId(peak.Id);
+            var documentId = BuildSummitedPeakDocumentId(activity.UserId, peak.Id);
             var partitionKey = new PartitionKey(activity.UserId);
             var summitedPeakDocument = await _summitedPeaksCollection.GetByIdMaybe(documentId, partitionKey)
                 ?? new SummitedPeak
@@ -101,7 +102,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                     Id = documentId,
                     Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName : "",
                     UserId = activity.UserId,
-                    PeakId = peak.Id.Value,
+                    PeakId = peakId,
                     Elevation = peak.Properties.TryGetValue("elevation", out var elevation) ? float.Parse(elevation) : null,
                     ActivityIds = []
                 };
@@ -110,6 +111,12 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         }
         return documents;
     }
+
+    internal static string BuildSummitedPeakDocumentId(string userId, FeatureId peakId)
+        => $"{userId}-{NormalizeSummitedPeakId(peakId)}";
+
+    internal static string NormalizeSummitedPeakId(FeatureId peakId)
+        => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, peakId.Value);
 
     private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities)
     {

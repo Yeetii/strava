@@ -63,7 +63,7 @@
       "options": {
         "cwd": "${workspaceFolder}/bin/Debug/net8.0"
       },
-      "command": "host start --port 7072",
+      "command": "host start --port 1234",
       "isBackground": true,
       "problemMatcher": "$func-dotnet-watch"
     }
