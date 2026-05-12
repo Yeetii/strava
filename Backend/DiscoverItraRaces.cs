@@ -8,6 +8,8 @@ public class DiscoverItraRaces(
     RaceDiscoveryService discoveryService,
     ILogger<DiscoverItraRaces> logger)
 {
+    internal const int PageSize = 50;
+
     // Country is the only filter that scopes results server-side.
     // Iterating over every country code keeps each request under the global ~300-race cap.
     private static readonly string[] CountryCodes =
@@ -29,27 +31,107 @@ public class DiscoverItraRaces(
     [Function(nameof(DiscoverItraRaces))]
     public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
     {
-        await discoveryService.EnqueueDiscoveryMessageAsync(new RaceDiscoveryMessage("itra"), delay: null, cancellationToken);
+        await discoveryService.EnqueueDiscoveryMessageAsync(CreateCountryMessage(page: 1, countryIndex: 0, countryPage: 1), delay: null, cancellationToken);
     }
 
-    public async Task<bool> ProcessPageAsync(int page, CancellationToken cancellationToken)
+    public async Task<RaceDiscoveryMessage?> ProcessPageAsync(RaceDiscoveryMessage message, CancellationToken cancellationToken)
     {
-        if (page < 1 || page > TotalPages)
+        var currentPage = message.CurrentPage;
+        var (countryIndex, country, countryPage) = ResolvePageContext(message);
+        if (countryIndex < 0 || countryIndex >= CountryCodes.Length)
         {
-            logger.LogWarning("ITRA discovery page {Page} is outside valid range 1..{TotalPages}", page, TotalPages);
-            return false;
+            logger.LogWarning("ITRA discovery page {Page} has invalid country index {CountryIndex}", currentPage, countryIndex);
+            return null;
         }
 
-        var country = CountryCodes[page - 1];
-        logger.LogInformation("ITRA: discovering country {Country} on page {Page}/{TotalPages}", country, page, TotalPages);
+        logger.LogInformation(
+            "ITRA: discovering country {Country} on page {Page} (country slice {CountryPage})",
+            country,
+            currentPage,
+            countryPage);
 
-        var jobs = await FetchJobsAsync(country, cancellationToken);
-        await discoveryService.DiscoverAndWriteAsync("itra", jobs, cancellationToken);
+        var jobs = (await FetchJobsAsync(country, cancellationToken)).ToArray();
+        var countryPageCount = GetCountryPageCount(jobs.Length);
+        var pageJobs = SliceCountryJobs(jobs, countryPage).ToArray();
 
-        return page < TotalPages;
+        logger.LogInformation(
+            "ITRA: country {Country} page {Page} is slice {CountryPage}/{CountryPageCount} with {RacesOnPage} races",
+            country,
+            currentPage,
+            countryPage,
+            countryPageCount,
+            pageJobs.Length);
+
+        await discoveryService.DiscoverAndWriteAsync("itra", pageJobs, cancellationToken);
+
+        if (countryPage < countryPageCount)
+        {
+            return CreateCountryMessage(
+                page: currentPage + 1,
+                countryIndex: countryIndex,
+                countryPage: countryPage + 1,
+                countryPageCount: countryPageCount,
+                racesOnPage: CountRacesOnPage(jobs.Length, countryPage + 1));
+        }
+
+        if (countryIndex + 1 >= CountryCodes.Length)
+            return null;
+
+        return CreateCountryMessage(page: currentPage + 1, countryIndex: countryIndex + 1, countryPage: 1);
     }
 
-    private static int TotalPages => CountryCodes.Length;
+    internal static int GetCountryPageCount(int raceCount)
+        => Math.Max(1, (int)Math.Ceiling(raceCount / (double)PageSize));
+
+    internal static int CountRacesOnPage(int raceCount, int countryPage)
+    {
+        if (countryPage < 1)
+            return 0;
+
+        var skip = (countryPage - 1) * PageSize;
+        if (skip >= raceCount)
+            return 0;
+
+        return Math.Min(PageSize, raceCount - skip);
+    }
+
+    internal static IReadOnlyList<ScrapeJob> SliceCountryJobs(IReadOnlyList<ScrapeJob> jobs, int countryPage)
+    {
+        if (countryPage < 1)
+            return [];
+
+        return jobs.Skip((countryPage - 1) * PageSize).Take(PageSize).ToArray();
+    }
+
+    internal static RaceDiscoveryMessage CreateCountryMessage(
+        int page,
+        int countryIndex,
+        int countryPage,
+        int? countryPageCount = null,
+        int? racesOnPage = null)
+    {
+        var country = countryIndex >= 0 && countryIndex < CountryCodes.Length ? CountryCodes[countryIndex] : null;
+        return new RaceDiscoveryMessage(
+            Agent: "itra",
+            Page: page,
+            Country: country,
+            CountryIndex: countryIndex,
+            CountryPage: countryPage,
+            CountryPageCount: countryPageCount,
+            RacesOnPage: racesOnPage);
+    }
+
+    internal static (int CountryIndex, string Country, int CountryPage) ResolvePageContext(RaceDiscoveryMessage message)
+    {
+        var countryIndex = message.CountryIndex ?? (message.CurrentPage - 1);
+        var country = !string.IsNullOrWhiteSpace(message.Country)
+            ? message.Country.Trim().ToUpperInvariant()
+            : countryIndex >= 0 && countryIndex < CountryCodes.Length
+                ? CountryCodes[countryIndex]
+                : string.Empty;
+        var countryPage = Math.Max(1, message.CountryPage ?? 1);
+        return (countryIndex, country, countryPage);
+    }
 
     private async Task<IReadOnlyCollection<ScrapeJob>> FetchJobsAsync(string country, CancellationToken cancellationToken)
     {

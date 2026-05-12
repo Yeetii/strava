@@ -54,22 +54,25 @@ public class RaceDiscoveryWorker(
         var normalizedMessage = discoveryMessage with { Agent = discoveryMessage.Agent.Trim().ToLowerInvariant() };
         try
         {
-            var hasNextPage = normalizedMessage.Agent switch
+            RaceDiscoveryMessage? nextMessage = normalizedMessage.Agent switch
             {
-                "duv" => await duvDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken),
-                "tracedetrail" => await traceDeTrailDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken),
-                "itra" => await itraDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken),
-                "skyrunning" => await skyrunningDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken),
+                "duv" => await duvDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken)
+                    ? normalizedMessage with { Page = normalizedMessage.CurrentPage + 1 }
+                    : null,
+                "tracedetrail" => await traceDeTrailDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken)
+                    ? normalizedMessage with { Page = normalizedMessage.CurrentPage + 1 }
+                    : null,
+                "itra" => await itraDiscovery.ProcessPageAsync(normalizedMessage, cancellationToken),
+                "skyrunning" => await skyrunningDiscovery.ProcessPageAsync(normalizedMessage.CurrentPage, cancellationToken)
+                    ? normalizedMessage with { Page = normalizedMessage.CurrentPage + 1 }
+                    : null,
                 _ => throw new NotSupportedException($"Unknown race discovery agent '{normalizedMessage.Agent}'.")
             };
 
-            if (hasNextPage)
-                await discoveryService.EnqueueDiscoveryMessageAsync(
-                    normalizedMessage with { Page = normalizedMessage.CurrentPage + 1 },
-                    delay: null,
-                    cancellationToken);
-
             await actions.CompleteMessageAsync(message, cancellationToken);
+
+            if (nextMessage is not null)
+                await discoveryService.EnqueueDiscoveryMessageAsync(nextMessage, delay: null, cancellationToken);
         }
         catch (NotSupportedException ex)
         {
