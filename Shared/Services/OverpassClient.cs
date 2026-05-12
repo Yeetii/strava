@@ -15,6 +15,7 @@ namespace Shared.Services
         readonly HttpClient _client = httpClient;
         readonly ILogger<OverpassClient> _logger = logger;
         private const int MaxAttemptsPerMirror = 2;
+        private const int RequiredEmptyConfirmations = 2;
         private const int DefaultMaxConcurrentRequests = 2;
         private static readonly TimeSpan BaseThrottleDelay = TimeSpan.FromMilliseconds(750);
         private static readonly int MaxConcurrentRequests = GetMaxConcurrentRequests();
@@ -82,6 +83,108 @@ namespace Shared.Services
                     throw lastException;
 
                 throw new HttpRequestException($"All Overpass mirrors failed or throttled. Last status code: {(int?)lastStatusCode}");
+            }
+            finally
+            {
+                RequestSemaphore.Release();
+            }
+        }
+
+        private async Task<T> ExecuteMirroredQuery<T>(
+            string encodedQuery,
+            string operation,
+            Func<T, bool>? acceptResult,
+            CancellationToken cancellationToken = default) where T : OverpassResponseRoot
+        {
+            await RequestSemaphore.WaitAsync(cancellationToken);
+
+            Exception? lastException = null;
+            HttpStatusCode? lastStatusCode = null;
+            T? emptyCandidate = null;
+            var emptyMirrors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var mirrorsInAttemptOrder = (string[])mirrors.Clone();
+            Random.Shared.Shuffle(mirrorsInAttemptOrder);
+
+            try
+            {
+                foreach (var mirror in mirrorsInAttemptOrder)
+                {
+                    for (var attempt = 1; attempt <= MaxAttemptsPerMirror; attempt++)
+                    {
+                        try
+                        {
+                            using var response = await _client.GetAsync($"{mirror}?data={encodedQuery}", cancellationToken);
+                            if (!response.IsSuccessStatusCode)
+                            {
+                                lastStatusCode = response.StatusCode;
+
+                                if (!IsThrottledStatusCode(response.StatusCode))
+                                    break;
+
+                                var delay = GetRetryDelay(response, attempt);
+                                _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on attempt {Attempt}. Retrying after {DelayMs}ms.", mirror, (int)response.StatusCode, attempt, delay.TotalMilliseconds);
+                                await Task.Delay(delay, cancellationToken);
+                                continue;
+                            }
+
+                            var rawResponse = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                            T root;
+                            try
+                            {
+                                root = DeserializeOverpassResponse<T>(rawResponse, operation);
+                            }
+                            catch (Exception ex)
+                            {
+                                lastException = ex;
+                                _logger.LogWarning(ex, "Overpass mirror {Mirror} returned an unusable response for {Operation} on attempt {Attempt}.", mirror, operation, attempt);
+                                break;
+                            }
+
+                            if (acceptResult?.Invoke(root) != false)
+                                return root;
+
+                            emptyCandidate = root;
+                            emptyMirrors.Add(mirror);
+                            _logger.LogWarning(
+                                "Overpass mirror {Mirror} returned an empty {Operation} payload on attempt {Attempt}. Waiting for corroboration before accepting empty data.",
+                                mirror,
+                                operation,
+                                attempt);
+                            break;
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            lastException = ex;
+                            _logger.LogWarning(ex, "Overpass mirror {Mirror} failed for {Operation} on attempt {Attempt}.", mirror, operation, attempt);
+                            break;
+                        }
+                    }
+                }
+
+                if (emptyCandidate is not null && emptyMirrors.Count >= RequiredEmptyConfirmations)
+                {
+                    _logger.LogInformation(
+                        "Accepting empty Overpass response for {Operation} after {ConfirmationCount} corroborating mirrors.",
+                        operation,
+                        emptyMirrors.Count);
+                    return emptyCandidate;
+                }
+
+                if (emptyCandidate is not null)
+                {
+                    throw new HttpRequestException(
+                        $"Overpass returned only unconfirmed empty data for {operation}. Refusing to cache an empty result after {emptyMirrors.Count} corroborating mirror response(s).");
+                }
+
+                if (lastException != null)
+                    throw lastException;
+
+                throw new HttpRequestException($"All Overpass mirrors failed or throttled for {operation}. Last status code: {(int?)lastStatusCode}");
             }
             finally
             {
@@ -232,11 +335,11 @@ namespace Shared.Services
             string query = $"[out:json][timeout:400];way[highway]({bbox});out geom;";
             string encodedQuery = Uri.EscapeDataString(query);
 
-            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-                throw new Exception($"Could not get highways, status code: {response.StatusCode}, {response.ReasonPhrase}");
-            string rawPaths = await response.Content.ReadAsStringAsync(cancellationToken);
-            RootPaths rootPaths = DeserializeOverpassResponse<RootPaths>(rawPaths, "highways");
+            RootPaths rootPaths = await ExecuteMirroredQuery<RootPaths>(
+                encodedQuery,
+                "highways",
+                root => root.Elements.Count > 0,
+                cancellationToken);
             return ConvertRawPathsToFeatures(rootPaths.Elements);
         }
 
@@ -246,11 +349,11 @@ namespace Shared.Services
             string query = $"[out:json][timeout:400];way[\"highway\"=\"path\"]({bbox});out geom;";
             string encodedQuery = Uri.EscapeDataString(query);
 
-            var response = await GetAsyncMultipleMirrors(encodedQuery, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-                throw new Exception($"Could not get paths, status code: {response.StatusCode}, {response.ReasonPhrase}");
-            string rawPaths = await response.Content.ReadAsStringAsync(cancellationToken);
-            RootPaths rootPaths = DeserializeOverpassResponse<RootPaths>(rawPaths, "paths");
+            RootPaths rootPaths = await ExecuteMirroredQuery<RootPaths>(
+                encodedQuery,
+                "paths",
+                root => root.Elements.Count > 0,
+                cancellationToken);
             return ConvertRawPathsToFeatures(rootPaths.Elements);
         }
 
