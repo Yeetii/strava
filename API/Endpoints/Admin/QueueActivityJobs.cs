@@ -26,6 +26,8 @@ public class QueueActivityJobs(
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "jobType", In = ParameterLocation.Path, Type = typeof(string), Required = true,
         Description = "Job type: summits | visitedPaths | visitedAreas")]
+    [OpenApiParameter(name: "userId", In = ParameterLocation.Query, Type = typeof(string), Required = false,
+        Description = "Optional target user id. When omitted, queues jobs for the authenticated session user.")]
     [OpenApiParameter(name: "startDate", In = ParameterLocation.Query, Type = typeof(string), Required = false,
         Description = "Optional ISO 8601 start date filter (inclusive)")]
     [OpenApiParameter(name: "endDate", In = ParameterLocation.Query, Type = typeof(string), Required = false,
@@ -55,6 +57,10 @@ public class QueueActivityJobs(
         }
 
         var queryString = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
+        var targetUserId = queryString["userId"];
+        var effectiveUserId = string.IsNullOrWhiteSpace(targetUserId)
+            ? user.Id
+            : targetUserId;
         DateTime? startDate = DateTime.TryParse(queryString["startDate"], out var sd) ? sd.ToUniversalTime() : null;
         DateTime? endDate = DateTime.TryParse(queryString["endDate"], out var ed) ? ed.ToUniversalTime() : null;
 
@@ -71,7 +77,7 @@ public class QueueActivityJobs(
                 queryBuilder.Append(" AND c.startDate <= @endDate");
 
             queryDefinition = new QueryDefinition(queryBuilder.ToString())
-                .WithParameter("@userId", user.Id);
+                .WithParameter("@userId", effectiveUserId);
 
             if (startDate.HasValue)
                 queryDefinition = queryDefinition.WithParameter("@startDate", startDate.Value.ToString("O"));
@@ -80,7 +86,7 @@ public class QueueActivityJobs(
         }
         else
         {
-            queryDefinition = queryDefinition.WithParameter("@userId", user.Id);
+            queryDefinition = queryDefinition.WithParameter("@userId", effectiveUserId);
         }
 
         var activityIds = await activityCollection.ExecuteQueryAsync<string>(queryDefinition);
