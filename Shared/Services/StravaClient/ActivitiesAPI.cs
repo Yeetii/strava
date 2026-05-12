@@ -94,11 +94,10 @@ public class ActivitiesApi(HttpClient _stravaClient)
         var isDailyLimitExceeded = snapshot is { } value && value.Usage.Daily >= value.Limit.Daily;
         var isFifteenMinuteLimitExceeded = snapshot is { } fifteenMinuteValue
             && fifteenMinuteValue.Usage.FifteenMinute >= fifteenMinuteValue.Limit.FifteenMinute;
-        var retryAtUtc = isDailyLimitExceeded
-            ? GetNextMidnightUtc(now)
-            : isFifteenMinuteLimitExceeded
-                ? GetNextQuarterHourUtc(now)
-                : GetNextQuarterHourUtc(now);
+        var retryAtUtc = StravaActivityFetchScheduling.GetRateLimitRetryUtc(
+            isDailyLimitExceeded,
+            isFifteenMinuteLimitExceeded,
+            now);
 
         return new StravaRateLimitExceededException(
             retryAtUtc,
@@ -146,17 +145,5 @@ public class ActivitiesApi(HttpClient _stravaClient)
 
         values = (fifteenMinute, daily);
         return true;
-    }
-
-    private static DateTimeOffset GetNextQuarterHourUtc(DateTimeOffset now)
-    {
-        var quarterStart = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute / 15 * 15, 0, TimeSpan.Zero);
-        return quarterStart.AddMinutes(15);
-    }
-
-    private static DateTimeOffset GetNextMidnightUtc(DateTimeOffset now)
-    {
-        var nextDay = now.UtcDateTime.Date.AddDays(1);
-        return new DateTimeOffset(nextDay, TimeSpan.Zero);
     }
 }

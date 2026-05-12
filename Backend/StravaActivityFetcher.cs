@@ -26,9 +26,11 @@ namespace Backend
             ServiceBusMessageActions actions,
             CancellationToken cancellationToken)
         {
+            Activity? existingActivity = null;
+            ActivityFetchJob? fetchJob = null;
             try
             {
-                if (!TryParseFetchJob(message, out var fetchJob, out var parseError))
+                if (!TryParseFetchJob(message, out fetchJob, out var parseError))
                 {
                     var bodyPreview = CreateBodyPreview(message.Body.ToString());
                     _logger.LogError(
@@ -59,6 +61,7 @@ namespace Backend
                 }
 
                 var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
+                existingActivity = await _activitiesCollection.GetByIdMaybe(fetchJob.ActivityId, new Microsoft.Azure.Cosmos.PartitionKey(fetchJob.UserId), cancellationToken);
                 var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
                 if (activity is null)
                 {
@@ -67,7 +70,6 @@ namespace Backend
                     return;
                 }
 
-                var existingActivity = await _activitiesCollection.GetByIdMaybe(fetchJob.ActivityId, new Microsoft.Azure.Cosmos.PartitionKey(fetchJob.UserId), cancellationToken);
                 await _activitiesCollection.UpsertDocument(ActivityMapper.MapDetailedActivity(activity, existingActivity), cancellationToken);
                 if (existingActivity == null)
                 {
@@ -78,7 +80,9 @@ namespace Backend
             }
             catch (Exception ex)
             {
-                var scheduledEnqueueTimeUtc = (ex as StravaRateLimitExceededException)?.RetryAtUtc;
+                DateTimeOffset? scheduledEnqueueTimeUtc = ex is StravaRateLimitExceededException rateLimitExceededException
+                    ? StravaActivityFetchScheduling.ResolveRetryScheduleUtc(rateLimitExceededException, existingActivity, fetchJob?.ActivityId ?? string.Empty, DateTimeOffset.UtcNow)
+                    : null;
                 await ServiceBusCosmosRetryHelper.HandleRetryAsync(
                     ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivityFetchJobs, _logger, cancellationToken, maxRetryCount: 3, scheduledEnqueueTimeUtc: scheduledEnqueueTimeUtc);
             }

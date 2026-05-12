@@ -12,7 +12,7 @@ namespace Backend
     {
         private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
         readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
-        readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs);
+        readonly ServiceBusSender _activitiesFetchSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs);
 
         [Function(nameof(StravaActivitiesFetcher))]
         public async Task Run(
@@ -31,7 +31,7 @@ namespace Backend
                         $"Failed to get access token for user {fetchJob.UserId}: {(int)accessTokenResponse.StatusCode} {accessTokenResponse.ReasonPhrase}. Response body: {responseBody}");
                 }
 
-                var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
+                var accessToken = await accessTokenResponse.Content.ReadAsStringAsync(cancellationToken);
 
                 var page = fetchJob.Page ?? 1;
 
@@ -66,7 +66,7 @@ namespace Backend
                 if (hasMorePages)
                 {
                     fetchJob.Page = ++page;
-                    await _sbSender.SendMessageAsync(new ServiceBusMessage(JsonSerializer.Serialize(fetchJob)));
+                    await _activitiesFetchSender.SendMessageAsync(new ServiceBusMessage(JsonSerializer.Serialize(fetchJob)), cancellationToken);
                 }
 
                 await actions.CompleteMessageAsync(message, cancellationToken);
