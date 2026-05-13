@@ -21,27 +21,7 @@ namespace Backend
             Connection = "CosmosDBConnection",
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<SummitedPeak> input)
         {
-            var peaks = await _peaksCollection.GetByFeatureIdsAsync(input.Select(x => x.PeakId));
-            var userIds = input.Select(x => x.UserId).Distinct();
-            var userToSessionsDict = await GetUserToSessionsDict(userIds);
-            var messages = new List<SignalRMessageAction>();
-
-            foreach (var peak in peaks)
-            {
-                var userId = input.First(x => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, x.PeakId) == peak.LogicalId).UserId;
-                var sessions = userToSessionsDict[userId];
-
-                foreach (var sessionId in sessions)
-                {
-                    _logger.LogInformation("Sending summited peak {PeakId} to session {SessionId}", peak.Id, sessionId);
-                    messages.Add(new SignalRMessageAction("summitedPeak")
-                    {
-                        Arguments = [peak],
-                        UserId = sessionId
-                    });
-                }
-            }
-            return messages;
+            return [];
         }
 
         private async Task<Dictionary<string, IEnumerable<string>>> GetUserToSessionsDict(IEnumerable<string> userIds)

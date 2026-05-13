@@ -33,6 +33,18 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var peaks = (await FetchNearbyPeaks(activities)).ToList();
+
+        // Renew locks after the potentially slow peak fetch before per-job processing
+        var realJobs = jobs.Where(ServiceBusCosmosRetryHelper.HasRealLockToken).ToList();
+        await Task.WhenAll(realJobs.Select(async j =>
+        {
+            try { await actions.RenewMessageLockAsync(j); }
+            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+            {
+                _logger.LogWarning("Lock lost before processing for message {MessageId}; it will be redelivered.", j.MessageId);
+            }
+        }));
+
         var processingTasks = activities.Select(activity => ProcessSummitJob(jobs.First(x => x.Body.ToString() == activity.Id), actions, peaks, activity, cancellationToken));
         await Task.WhenAll(processingTasks.ToArray());
     }
@@ -53,7 +65,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             {
                 await SendActivityProcessedEvent(activity, []);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-                await actions.RenewMessageLockAsync(job);
+                if (ServiceBusCosmosRetryHelper.HasRealLockToken(job))
+                    try { await actions.RenewMessageLockAsync(job); } catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost) { }
                 await actions.CompleteMessageAsync(job);
                 return;
             }
@@ -62,7 +75,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             await SendActivityProcessedEvent(activity, summits);
             await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-            await actions.RenewMessageLockAsync(job);
+            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job))
+                try { await actions.RenewMessageLockAsync(job); } catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost) { }
             await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)

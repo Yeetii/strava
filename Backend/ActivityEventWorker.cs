@@ -23,9 +23,6 @@ public class ActivityEventWorker(UserAuthenticationService _userAuthService, ILo
         {
             try
             {
-                var processedEvent = message.Body.ToObjectFromJson<ActivityProcessedEvent>();
-                var signalRMessages = await CreateSignalRMessage(processedEvent);
-                allSignalRMessages.AddRange(signalRMessages);
                 await actions.CompleteMessageAsync(message);
             }
             catch (Exception ex)

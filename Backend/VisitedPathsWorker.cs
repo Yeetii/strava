@@ -46,11 +46,28 @@ public class VisitedPathsWorker(
             a => a.Id,
             a => GeoSpatialFunctions.DecodePolyline(a.Polyline ?? a.SummaryPolyline).ToList());
 
+        // Renew locks before the potentially slow shared data fetch
+        var realJobs = jobs.Where(ServiceBusCosmosRetryHelper.HasRealLockToken).ToList();
+        await Task.WhenAll(realJobs.Select(async j =>
+        {
+            try { await actions.RenewMessageLockAsync(j); }
+            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+            {
+                _logger.LogWarning("Lock lost before renewal for message {MessageId}; it will be redelivered.", j.MessageId);
+            }
+        }));
+
         var nearbyPaths = (await FetchNearbyPaths(decodedActivities)).ToList();
 
-        // Renew locks after the potentially slow shared data fetch
-        var realJobs = jobs.Where(ServiceBusCosmosRetryHelper.HasRealLockToken).ToList();
-        await Task.WhenAll(realJobs.Select(j => actions.RenewMessageLockAsync(j)));
+        // Renew locks again after the potentially slow shared data fetch
+        await Task.WhenAll(realJobs.Select(async j =>
+        {
+            try { await actions.RenewMessageLockAsync(j); }
+            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+            {
+                _logger.LogWarning("Lock lost after fetch renewal for message {MessageId}; it will be redelivered.", j.MessageId);
+            }
+        }));
 
         foreach (var job in jobs)
             await ProcessJob(job, actions, activitiesList, decodedActivities, nearbyPaths, cancellationToken);
