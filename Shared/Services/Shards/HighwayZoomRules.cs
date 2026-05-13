@@ -123,7 +123,7 @@ public static class HighwayZoomRules
         => IsLowZoomCore(value) || ArterialRoads.Contains(value);
 
     private static bool IsZoom9Visible(string value)
-        => IsZoom8Visible(value) || value is "residential" or "living_street" or "road";
+        => IsZoom8Visible(value) || value is "residential" or "living_street";
 
     private static bool IsZoom10Visible(string value)
         => IsZoom9Visible(value) || value is "service" or "services" or "footway" or "pedestrian" or "steps";
