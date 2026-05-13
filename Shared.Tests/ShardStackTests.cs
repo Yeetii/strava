@@ -151,7 +151,7 @@ public class ShardStackTests
         var visible = BlobTileService.FilterByZoom([residential, track], zoom: 8).ToList();
 
         Assert.Single(visible);
-        Assert.Equal("t1", visible[0].Id.ToString());
+        Assert.Equal("track", Assert.IsType<string>(visible[0].Properties["highway"]));
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public class ShardStackTests
         var simplified = BlobTileService.SimplifyByZoom([feature], zoom: 8).Single();
         var line = Assert.IsType<LineString>(simplified.Geometry);
 
-        Assert.True(line.Coordinates.Count < points.Count);
+        Assert.True(line.Coordinates.Count() < points.Count);
     }
 
     [Fact]
