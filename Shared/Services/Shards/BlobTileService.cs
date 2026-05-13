@@ -2,12 +2,19 @@ using System.IO.Compression;
 using BAMCIS.GeoJSON;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using Shared.Geo;
+using Shared.Models;
 
 namespace Shared.Services.Shards;
 
-public class BlobTileService(ShardFeatureClient featureClient, ILogger<BlobTileService> logger, int shardZoom = 12)
+public class BlobTileService(
+    ShardFeatureClient featureClient,
+    HighwayZoomIndexService zoomIndexService,
+    ILogger<BlobTileService> logger,
+    int shardZoom = 12)
 {
     private readonly ShardFeatureClient _featureClient = featureClient;
+    private readonly HighwayZoomIndexService _zoomIndexService = zoomIndexService;
     private readonly ILogger<BlobTileService> _logger = logger;
     private readonly int _shardZoom = shardZoom;
     private const double ClipTolerance = 1e-10;
@@ -15,14 +22,16 @@ public class BlobTileService(ShardFeatureClient featureClient, ILogger<BlobTileS
 
     public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
-        var shardKeys = GetIntersectingShardKeys(z, x, y, _shardZoom);
+        var shardKeys = await _zoomIndexService.GetShardKeysAsync(z, x, y, cancellationToken);
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
             var features = await _featureClient.GetFeaturesForShards(shardKeys, cancellationToken);
-            var clipped = ClipToTileBounds(features, z, x, y);
-            var pbf = MvtTileEncoder.EncodeLayer("highways", clipped, z, x, y);
+            var filtered = FilterByZoom(features, z);
+            var clipped = ClipToTileBounds(filtered, z, x, y);
+            var simplified = SimplifyByZoom(clipped, z);
+            var pbf = MvtTileEncoder.EncodeLayer("highways", simplified, z, x, y);
             return Gzip(pbf);
         }
         catch (Exception ex) when (cancellationToken.IsCancellationRequested)
@@ -57,7 +66,7 @@ public class BlobTileService(ShardFeatureClient featureClient, ILogger<BlobTileS
 
     public async Task<byte[]> RefreshTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
-        var shardKeys = GetIntersectingShardKeys(z, x, y, _shardZoom);
+        var shardKeys = await _zoomIndexService.GetShardKeysAsync(z, x, y, cancellationToken);
         var stopwatch = Stopwatch.StartNew();
         try
         {
@@ -127,6 +136,40 @@ public class BlobTileService(ShardFeatureClient featureClient, ILogger<BlobTileS
             for (var currentY = minY; currentY < minY + expansion; currentY++)
                 result.Add((currentX, currentY));
         return result;
+    }
+
+    internal static IEnumerable<Feature> FilterByZoom(IEnumerable<Feature> features, int zoom)
+        => features.Where(feature => HighwayZoomRules.ShouldKeepFeature(feature, zoom));
+
+    internal static IEnumerable<Feature> SimplifyByZoom(IEnumerable<Feature> features, int zoom)
+    {
+        var epsilon = HighwayZoomRules.GetSimplificationEpsilon(zoom);
+        if (epsilon <= 0)
+            return features;
+
+        return features
+            .Select(feature => SimplifyFeature(feature, epsilon))
+            .Where(feature => feature is not null)
+            .Select(feature => feature!);
+    }
+
+    private static Feature? SimplifyFeature(Feature feature, double epsilon)
+    {
+        if (feature.Geometry is not LineString line)
+            return feature;
+
+        var coordinates = line.Coordinates
+            .Select(position => new Coordinate(position.Longitude, position.Latitude))
+            .ToList();
+
+        var simplified = GeometryDecimator.SimplifyTrack(coordinates, epsilon);
+        if (simplified.Count < 2)
+            return null;
+
+        var simplifiedLine = new LineString(
+            simplified.Select(point => new Position(point.Lng, point.Lat)).ToList());
+
+        return new Feature(simplifiedLine, feature.Properties, null, feature.Id);
     }
 
     internal static IEnumerable<Feature> ClipToTileBounds(IEnumerable<Feature> features, int z, int x, int y)

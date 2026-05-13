@@ -110,10 +110,19 @@ var host = new HostBuilder()
         });
         services.AddSingleton(serviceProvider =>
         {
+            var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
+            var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
+            var indexLogger = serviceProvider.GetRequiredService<ILogger<HighwayZoomIndexService>>();
+            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
+            return new HighwayZoomIndexService(containerClient, shardRepository, indexLogger, shardZoom);
+        });
+        services.AddSingleton(serviceProvider =>
+        {
             var featureClient = serviceProvider.GetRequiredService<ShardFeatureClient>();
+            var zoomIndexService = serviceProvider.GetRequiredService<HighwayZoomIndexService>();
             var tileLogger = serviceProvider.GetRequiredService<ILogger<BlobTileService>>();
             var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-            return new BlobTileService(featureClient, tileLogger, shardZoom);
+            return new BlobTileService(featureClient, zoomIndexService, tileLogger, shardZoom);
         });
 
         services.AddScoped(serviceProvider =>
