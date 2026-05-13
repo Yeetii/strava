@@ -150,7 +150,7 @@ public static class HighwayZoomRules
     private static List<string> GetDistinctNonEmptyValues(params string?[] values)
         => values
             .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => value!)
+            .Select(value => value ?? string.Empty)
             .Distinct(StringComparer.Ordinal)
             .ToList();
 

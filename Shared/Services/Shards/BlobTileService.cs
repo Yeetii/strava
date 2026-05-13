@@ -149,8 +149,7 @@ public class BlobTileService(
 
         return features
             .Select(feature => SimplifyFeature(feature, epsilon))
-            .Where(feature => feature is not null)
-            .Select(feature => feature!);
+            .OfType<Feature>();
     }
 
     private static Feature? SimplifyFeature(Feature feature, double epsilon)
