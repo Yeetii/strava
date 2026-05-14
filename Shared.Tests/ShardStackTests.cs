@@ -133,6 +133,57 @@ public class ShardStackTests
         Assert.Contains("way-123", utf8);
     }
 
+    [Fact]
+    public void BlobTileService_FilterByZoom_HidesMinorUrbanRoadsAtLowZoom_ButKeepsTracks()
+    {
+        var residential = new Feature(
+            new LineString([new Position(10, 59), new Position(10.01, 59.01)]),
+            new Dictionary<string, dynamic> { ["highway"] = "residential" },
+            null,
+            new FeatureId("r1"));
+
+        var track = new Feature(
+            new LineString([new Position(10, 59), new Position(10.01, 59.01)]),
+            new Dictionary<string, dynamic> { ["highway"] = "track" },
+            null,
+            new FeatureId("t1"));
+
+        var visible = BlobTileService.FilterByZoom([residential, track], zoom: 8).ToList();
+
+        Assert.Single(visible);
+        Assert.Equal("track", Assert.IsType<string>(visible[0].Properties["highway"]));
+    }
+
+    [Fact]
+    public void BlobTileService_SimplifyByZoom_ReducesVerticesAtLowerZoom()
+    {
+        var points = new List<Position>();
+        for (var i = 0; i < 80; i++)
+        {
+            var lon = 10 + (i * 0.0002);
+            var lat = 59 + Math.Sin(i * 0.35) * 0.0015;
+            points.Add(new Position(lon, lat));
+        }
+
+        var feature = new Feature(
+            new LineString(points),
+            new Dictionary<string, dynamic> { ["highway"] = "track" },
+            null,
+            new FeatureId("line1"));
+
+        var simplified = BlobTileService.SimplifyByZoom([feature], zoom: 8).Single();
+        var line = Assert.IsType<LineString>(simplified.Geometry);
+
+        Assert.True(line.Coordinates.Count() < points.Count);
+    }
+
+    [Fact]
+    public void HighwayZoomIndexService_IndexBlobPath_IsStable()
+    {
+        var path = HighwayZoomIndexService.GetIndexBlobPath(9, 277, 168);
+        Assert.Equal("index/9/277/168.json", path);
+    }
+
     private sealed class FakeShardRepository(Dictionary<(int z, int x, int y), Shard> shards) : IShardRepository
     {
         public int GetCalls { get; private set; }
