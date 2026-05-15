@@ -44,8 +44,8 @@ public class HighwayZoomIndexService(
 
         foreach (var key in candidateShards)
         {
-            var shard = await _shardRepository.GetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
-            if (shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z)))
+            var shard = await _shardRepository.TryGetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+            if (shard is not null && shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z)))
                 retained.Add(key);
         }
 

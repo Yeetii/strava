@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BAMCIS.GeoJSON;
 using Shared.Models;
 
@@ -8,6 +9,10 @@ public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZ
     private readonly IShardRepository _shardRepository = shardRepository;
     private readonly int _canonicalZoom = canonicalZoom;
     public int CanonicalZoom => _canonicalZoom;
+
+    private const int ShardCacheMaxSize = 150;
+    private readonly ConcurrentDictionary<string, (Shard Shard, long LastAccessTicks)> _shardCache = new();
+    private readonly object _evictionLock = new();
     private static readonly string[] RenderValues =
     [
         "yes",
@@ -134,9 +139,17 @@ public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZ
 
     private async Task<Shard> GetShardWithContext((int x, int y) key, CancellationToken cancellationToken)
     {
+        var cacheKey = $"{key.x}/{key.y}";
+        if (_shardCache.TryGetValue(cacheKey, out var cached))
+        {
+            _shardCache[cacheKey] = (cached.Shard, DateTime.UtcNow.Ticks);
+            return cached.Shard;
+        }
+
+        Shard shard;
         try
         {
-            return await _shardRepository.GetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+            shard = await _shardRepository.GetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
         }
         catch (OperationCanceledException ex)
         {
@@ -146,10 +159,40 @@ public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZ
         {
             throw new InvalidOperationException($"Failed to load shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
         }
+
+        _shardCache[cacheKey] = (shard, DateTime.UtcNow.Ticks);
+        EvictIfOverCapacity();
+        return shard;
+    }
+
+    private void EvictIfOverCapacity()
+    {
+        if (_shardCache.Count <= ShardCacheMaxSize)
+            return;
+
+        lock (_evictionLock)
+        {
+            if (_shardCache.Count <= ShardCacheMaxSize)
+                return;
+
+            var toRemove = _shardCache
+                .ToList() // snapshot before sorting to avoid concurrent modification
+                .OrderBy(kvp => kvp.Value.LastAccessTicks)
+                .Take(_shardCache.Count - ShardCacheMaxSize / 2)
+                .Select(kvp => kvp.Key)
+                .Where(k => k is not null)
+                .ToList();
+
+            foreach (var k in toRemove)
+                _shardCache.TryRemove(k, out _);
+        }
     }
 
     private async Task DeleteShardWithContext((int x, int y) key, CancellationToken cancellationToken)
     {
+        var cacheKey = $"{key.x}/{key.y}";
+        _shardCache.TryRemove(cacheKey, out _);
+
         try
         {
             await _shardRepository.DeleteShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);

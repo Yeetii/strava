@@ -16,7 +16,7 @@ namespace Shared.Services
         readonly ILogger<OverpassClient> _logger = logger;
         private const int MaxAttemptsPerMirror = 2;
         private const int RequiredEmptyConfirmations = 2;
-        private const int DefaultMaxConcurrentRequests = 2;
+        private const int DefaultMaxConcurrentRequests = 3;
         private static readonly TimeSpan BaseThrottleDelay = TimeSpan.FromMilliseconds(750);
         private static readonly int MaxConcurrentRequests = GetMaxConcurrentRequests();
         private static readonly SemaphoreSlim RequestSemaphore = new(MaxConcurrentRequests, MaxConcurrentRequests);

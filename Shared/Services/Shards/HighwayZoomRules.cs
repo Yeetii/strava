@@ -92,12 +92,13 @@ public static class HighwayZoomRules
             9 => 0.0030,
             10 => 0.0015,
             11 => 0.0007,
+            12 => 0.0003,
             _ => 0d
         };
 
     private static bool ShouldKeepClassification(string? highway, string? footway, int zoom)
     {
-        if (zoom >= 12)
+        if (zoom > 12)
             return true;
 
         var values = GetDistinctNonEmptyValues(highway, footway);
@@ -112,8 +113,16 @@ public static class HighwayZoomRules
             return values.Any(IsZoom9Visible);
         if (zoom == 10)
             return values.Any(IsZoom10Visible);
+        if (zoom == 11)
+            return values.Any(IsZoom11Visible);
+        if (zoom == 12)
+            return values.Any(IsZoom12Visible);
+        if (zoom == 13)
+            return values.Any(IsZoom13Visible);
+        if (zoom == 14)
+            return values.Any(IsZoom14Visible);
 
-        return values.Any(IsZoom11Visible);
+        return values.Any(IsZoom14Visible);
     }
 
     private static bool IsLowZoomCore(string value)
@@ -123,13 +132,22 @@ public static class HighwayZoomRules
         => IsLowZoomCore(value) || ArterialRoads.Contains(value);
 
     private static bool IsZoom9Visible(string value)
-        => IsZoom8Visible(value) || value is "residential" or "living_street";
+        => IsZoom8Visible(value);
 
     private static bool IsZoom10Visible(string value)
-        => IsZoom9Visible(value) || value is "service" or "services" or "footway" or "pedestrian" or "steps";
+        => IsZoom9Visible(value);
 
     private static bool IsZoom11Visible(string value)
-        => IsZoom10Visible(value) || LocalRoads.Contains(value) || LocalPathways.Contains(value);
+        => IsZoom10Visible(value) || LocalPathways.Contains(value);
+
+    private static bool IsZoom12Visible(string value)
+        => IsZoom11Visible(value) || value is "service" or "services";
+
+    private static bool IsZoom13Visible(string value)
+        => IsZoom12Visible(value) || value is "residential" or "living_street";
+
+    private static bool IsZoom14Visible(string value)
+        => IsZoom13Visible(value) || LocalRoads.Contains(value);
 
     private static (string? highway, string? footway) GetRoadClassifications(IDictionary<string, dynamic> properties)
     {
@@ -148,11 +166,10 @@ public static class HighwayZoomRules
     }
 
     private static List<string> GetDistinctNonEmptyValues(params string?[] values)
-        => values
+        => [.. values
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value ?? string.Empty)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+            .Distinct(StringComparer.Ordinal)];
 
     private static Dictionary<uint, string> BuildTagValueLookup()
     {
