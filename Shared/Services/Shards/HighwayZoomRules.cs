@@ -74,6 +74,19 @@ public static class HighwayZoomRules
         "impassable",
     };
 
+    private static readonly HashSet<string> HighVisibilityTrailValues = new(StringComparer.Ordinal)
+    {
+        "excellent",
+        "good",
+        "intermediate",
+    };
+
+    private static readonly HashSet<string> LowDifficultySacScales = new(StringComparer.Ordinal)
+    {
+        "hiking",
+        "mountain_hiking",
+    };
+
     private static readonly HashSet<string> MediumDifficultySacScales = new(StringComparer.Ordinal)
     {
         "demanding_mountain_hiking",
@@ -85,15 +98,6 @@ public static class HighwayZoomRules
         "demanding_alpine_hiking",
         "difficult_alpine_hiking",
     };
-
-    private static readonly string[] AdditionalTrailTags =
-    [
-        "excellent",
-        "good",
-        "intermediate",
-        "hiking",
-        "mountain_hiking"
-    ];
 
     private static readonly uint HighwayTagKeyId = ShardEncodingIds.TagIdFromString("highway");
     private static readonly uint FootwayTagKeyId = ShardEncodingIds.TagIdFromString("footway");
@@ -187,18 +191,28 @@ public static class HighwayZoomRules
     }
 
     private static bool IsTrailValue(string value)
-        => TrailNetwork.Contains(value) || LocalPathways.Contains(value);
+        => TrailBackbone.Contains(value) || TrailNetwork.Contains(value) || LocalPathways.Contains(value);
 
     private static int GetTrailVisibilityPenalty(string? trailVisibility)
-        => !string.IsNullOrWhiteSpace(trailVisibility) && LowVisibilityTrailValues.Contains(trailVisibility)
+    {
+        if (string.IsNullOrWhiteSpace(trailVisibility))
+            return 0;
+
+        if (HighVisibilityTrailValues.Contains(trailVisibility))
+            return 0;
+
+        return LowVisibilityTrailValues.Contains(trailVisibility)
             ? LowVisibilityPenalty
             : 0;
+    }
 
     private static int GetSacScalePenalty(string? sacScale)
     {
         if (string.IsNullOrWhiteSpace(sacScale))
             return 0;
 
+        if (LowDifficultySacScales.Contains(sacScale))
+            return 0;
         if (HighDifficultySacScales.Contains(sacScale))
             return 2;
         if (MediumDifficultySacScales.Contains(sacScale))
@@ -239,9 +253,10 @@ public static class HighwayZoomRules
             .Concat(TrailNetwork)
             .Concat(LocalPathways)
             .Concat(LowVisibilityTrailValues)
+            .Concat(HighVisibilityTrailValues)
+            .Concat(LowDifficultySacScales)
             .Concat(MediumDifficultySacScales)
             .Concat(HighDifficultySacScales)
-            .Concat(AdditionalTrailTags)
             .Distinct(StringComparer.Ordinal);
 
         return values

@@ -66,29 +66,6 @@ public class HighwayZoomRulesTests
         Assert.Equal(0.0007, HighwayZoomRules.GetSimplificationEpsilon(11));
     }
 
-    [Fact]
-    public void FilteredTilePayload_IsSmallerAtLowerZooms()
-    {
-        var features = new[]
-        {
-            CreateFeature("primary"),
-            CreateFeature("tertiary"),
-            CreateFeature("path", trailVisibility: "good"),
-            CreateFeature("path", trailVisibility: "bad"),
-            CreateFeature("footway", trailVisibility: "bad"),
-            CreateFeature("residential")
-        };
-
-        var zoom8 = BlobTileService.FilterByZoom(features, 8).ToList();
-        var zoom12 = BlobTileService.FilterByZoom(features, 12).ToList();
-
-        var zoom8Tile = MvtTileEncoder.EncodeLayer("highways", BlobTileService.SimplifyByZoom(zoom8, 8), 0, 0, 0);
-        var zoom12Tile = MvtTileEncoder.EncodeLayer("highways", BlobTileService.SimplifyByZoom(zoom12, 12), 0, 0, 0);
-
-        Assert.True(zoom8.Count < zoom12.Count);
-        Assert.True(zoom8Tile.Length < zoom12Tile.Length);
-    }
-
     private static Feature CreateFeature(string highway, string? trailVisibility = null, string? sacScale = null)
     {
         var properties = new Dictionary<string, dynamic>

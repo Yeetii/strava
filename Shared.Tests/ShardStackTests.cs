@@ -178,10 +178,50 @@ public class ShardStackTests
     }
 
     [Fact]
+    public void BlobTileService_FilteredTilePayload_IsSmallerAtLowerZooms()
+    {
+        var features = new[]
+        {
+            CreateHighwayFeature("primary", "p1"),
+            CreateHighwayFeature("tertiary", "t1"),
+            CreateHighwayFeature("path", "path-good", trailVisibility: "good"),
+            CreateHighwayFeature("path", "path-bad", trailVisibility: "bad"),
+            CreateHighwayFeature("footway", "foot-bad", trailVisibility: "bad"),
+            CreateHighwayFeature("residential", "r1")
+        };
+
+        var zoom8 = BlobTileService.FilterByZoom(features, 8).ToList();
+        var zoom12 = BlobTileService.FilterByZoom(features, 12).ToList();
+
+        var zoom8Tile = MvtTileEncoder.EncodeLayer("highways", BlobTileService.SimplifyByZoom(zoom8, 8), 0, 0, 0);
+        var zoom12Tile = MvtTileEncoder.EncodeLayer("highways", BlobTileService.SimplifyByZoom(zoom12, 12), 0, 0, 0);
+
+        Assert.True(zoom8.Count < zoom12.Count);
+        Assert.True(zoom8Tile.Length < zoom12Tile.Length);
+    }
+
+    [Fact]
     public void HighwayZoomIndexService_IndexBlobPath_IsStable()
     {
         var path = HighwayZoomIndexService.GetIndexBlobPath(9, 277, 168);
         Assert.Equal("index/9/277/168.json", path);
+    }
+
+    private static Feature CreateHighwayFeature(string highway, string id, string? trailVisibility = null)
+    {
+        var properties = new Dictionary<string, dynamic>
+        {
+            ["highway"] = highway
+        };
+
+        if (!string.IsNullOrWhiteSpace(trailVisibility))
+            properties["trail_visibility"] = trailVisibility;
+
+        return new Feature(
+            new LineString([new Position(10, 59), new Position(10.01, 59.01)]),
+            properties,
+            null,
+            new FeatureId(id));
     }
 
     private sealed class FakeShardRepository(Dictionary<(int z, int x, int y), Shard> shards) : IShardRepository
