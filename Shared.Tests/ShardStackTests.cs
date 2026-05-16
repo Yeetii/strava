@@ -195,6 +195,13 @@ public class ShardStackTests
             return Task.FromResult(shards[(z, x, y)]);
         }
 
+        public Task<Shard?> TryGetShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+        {
+            GetCalls++;
+            shards.TryGetValue((z, x, y), out var shard);
+            return Task.FromResult(shard);
+        }
+
         public Task DeleteShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
         {
             DeleteCalls++;
