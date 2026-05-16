@@ -86,6 +86,15 @@ public static class HighwayZoomRules
         "difficult_alpine_hiking",
     };
 
+    private static readonly string[] AdditionalTrailTags =
+    [
+        "excellent",
+        "good",
+        "intermediate",
+        "hiking",
+        "mountain_hiking"
+    ];
+
     private static readonly uint HighwayTagKeyId = ShardEncodingIds.TagIdFromString("highway");
     private static readonly uint FootwayTagKeyId = ShardEncodingIds.TagIdFromString("footway");
     private static readonly uint TrailVisibilityTagKeyId = ShardEncodingIds.TagIdFromString("trail_visibility");
@@ -232,7 +241,7 @@ public static class HighwayZoomRules
             .Concat(LowVisibilityTrailValues)
             .Concat(MediumDifficultySacScales)
             .Concat(HighDifficultySacScales)
-            .Concat(["excellent", "good", "intermediate", "hiking", "mountain_hiking"])
+            .Concat(AdditionalTrailTags)
             .Distinct(StringComparer.Ordinal);
 
         return values
