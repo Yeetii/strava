@@ -74,6 +74,11 @@ public class ActivityProcessingStatus
     public bool SummitedPeaks { get; set; }
     public bool VisitedPaths { get; set; }
     public bool VisitedAreas { get; set; }
+    public DateTime? SummitedPeaksDoneAtUtc { get; set; }
+    public DateTime? VisitedPathsDoneAtUtc { get; set; }
+    public DateTime? VisitedAreasDoneAtUtc { get; set; }
+    public DateTime? LastUpdatedAtUtc { get; set; }
+    public string? LastProcessingError { get; set; }
 }
 
 public static class SportTypes

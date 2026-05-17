@@ -77,7 +77,7 @@ public class UserSyncStatusService(
                 return false;
 
             var nextStatus = CloneActivityProcessingStatus(activity.ProcessingStatus);
-            SetStageProcessed(nextStatus, stage);
+            SetStageProcessed(nextStatus, stage, DateTime.UtcNow);
 
             try
             {
@@ -180,6 +180,11 @@ public class UserSyncStatusService(
             SummitedPeaks = current?.SummitedPeaks ?? false,
             VisitedPaths = current?.VisitedPaths ?? false,
             VisitedAreas = current?.VisitedAreas ?? false,
+            SummitedPeaksDoneAtUtc = current?.SummitedPeaksDoneAtUtc,
+            VisitedPathsDoneAtUtc = current?.VisitedPathsDoneAtUtc,
+            VisitedAreasDoneAtUtc = current?.VisitedAreasDoneAtUtc,
+            LastUpdatedAtUtc = current?.LastUpdatedAtUtc,
+            LastProcessingError = current?.LastProcessingError,
         };
     }
 
@@ -194,21 +199,27 @@ public class UserSyncStatusService(
         };
     }
 
-    private static void SetStageProcessed(ActivityProcessingStatus status, ActivitySyncStage stage)
+    private static void SetStageProcessed(ActivityProcessingStatus status, ActivitySyncStage stage, DateTime processedAtUtc)
     {
         switch (stage)
         {
             case ActivitySyncStage.SummitedPeaks:
                 status.SummitedPeaks = true;
+                status.SummitedPeaksDoneAtUtc = processedAtUtc;
                 break;
             case ActivitySyncStage.VisitedPaths:
                 status.VisitedPaths = true;
+                status.VisitedPathsDoneAtUtc = processedAtUtc;
                 break;
             case ActivitySyncStage.VisitedAreas:
                 status.VisitedAreas = true;
+                status.VisitedAreasDoneAtUtc = processedAtUtc;
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(stage), stage, null);
         }
+
+        status.LastUpdatedAtUtc = processedAtUtc;
+        status.LastProcessingError = null;
     }
 }

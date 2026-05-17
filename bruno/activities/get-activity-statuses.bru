@@ -1,0 +1,15 @@
+meta {
+  name: Get Activity Statuses
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/activityStatuses?limit=10
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}
