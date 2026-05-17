@@ -221,9 +221,52 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
     public async Task DeleteDocumentsByKey(string key, string value, string? partitionKey = null, CancellationToken cancellationToken = default)
     {
-        var ids = await GetIdsByKey(key, value, cancellationToken);
-        var tasks = ids.Select(id => DeleteDocument(id, new PartitionKey(partitionKey ?? id), cancellationToken));
+        var references = await GetDocumentDeleteReferencesByKey(key, value, cancellationToken);
+        var tasks = references.Select(reference => DeleteDocumentByCandidates(reference, value, partitionKey, cancellationToken));
         await Task.WhenAll(tasks);
+    }
+
+    private sealed class DocumentDeleteReference
+    {
+        public required string Id { get; init; }
+        public string? KeyValue { get; init; }
+    }
+
+    private async Task<IEnumerable<DocumentDeleteReference>> GetDocumentDeleteReferencesByKey(string key, string value, CancellationToken cancellationToken)
+    {
+        var queryDefinition = new QueryDefinition($"SELECT c.id, c.{key} AS keyValue FROM c WHERE c.{key} = @value")
+            .WithParameter("@value", value);
+
+        return await ExecuteQueryAsync<DocumentDeleteReference>(queryDefinition, cancellationToken: cancellationToken);
+    }
+
+    private async Task DeleteDocumentByCandidates(
+        DocumentDeleteReference reference,
+        string queryValue,
+        string? explicitPartitionKey,
+        CancellationToken cancellationToken)
+    {
+        var candidateKeys = new[] { explicitPartitionKey, reference.KeyValue, reference.Id, queryValue }
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        foreach (var candidate in candidateKeys)
+        {
+            try
+            {
+                await DeleteDocument(reference.Id, new PartitionKey(candidate), cancellationToken);
+                return;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+            }
+        }
+
+        _logger.LogWarning(
+            "Unable to delete document {DocumentId} by key-based lookup after trying {CandidateCount} partition key candidates.",
+            reference.Id,
+            candidateKeys.Length);
     }
 
     public async Task PatchDocument(
