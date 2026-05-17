@@ -14,6 +14,9 @@ public class RemoveUser(
     CollectionClient<Shared.Models.User> usersCollection,
     CollectionClient<SummitedPeak> summitedPeaksCollection,
     CollectionClient<Activity> activitiesCollection,
+    CollectionClient<VisitedPath> visitedPathsCollection,
+    CollectionClient<VisitedArea> visitedAreasCollection,
+    CollectionClient<UserSyncItem> userSyncItemsCollection,
     CollectionClient<Session> sessionsCollection)
 {
     [OpenApiOperation(tags: ["Admin"])]
@@ -27,6 +30,9 @@ public class RemoveUser(
     {
         await summitedPeaksCollection.DeleteDocumentsByKey("userId", userId, userId);
         await activitiesCollection.DeleteDocumentsByKey("userId", userId, userId);
+        await visitedPathsCollection.DeleteDocumentsByKey("userId", userId, userId);
+        await visitedAreasCollection.DeleteDocumentsByKey("userId", userId, userId);
+        await userSyncItemsCollection.DeleteDocumentsByKey("userId", userId, userId);
         await sessionsCollection.DeleteDocumentsByKey("userId", userId);
         await usersCollection.DeleteDocument(userId, new PartitionKey(userId));
         return req.CreateResponse(HttpStatusCode.NoContent);

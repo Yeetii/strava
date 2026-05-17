@@ -214,16 +214,80 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
     public async Task<IEnumerable<string>> GetIdsByKey(string key, string value, CancellationToken cancellationToken = default)
     {
-        var queryDefinition = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c." + key + " = @value")
+        var validatedKey = ValidateQueryPropertyName(key);
+        var queryDefinition = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c." + validatedKey + " = @value")
             .WithParameter("@value", value);
         return await ExecuteQueryAsync<string>(queryDefinition, cancellationToken: cancellationToken);
     }
 
     public async Task DeleteDocumentsByKey(string key, string value, string? partitionKey = null, CancellationToken cancellationToken = default)
     {
-        var ids = await GetIdsByKey(key, value, cancellationToken);
-        var tasks = ids.Select(id => DeleteDocument(id, new PartitionKey(partitionKey ?? id), cancellationToken));
+        var references = await GetDocumentDeleteReferencesByKey(key, value, cancellationToken);
+        var tasks = references.Select(reference => DeleteDocumentByCandidates(reference, value, partitionKey, cancellationToken));
         await Task.WhenAll(tasks);
+    }
+
+    private sealed class DocumentDeleteReference
+    {
+        public required string Id { get; init; }
+        public string? KeyValue { get; init; }
+    }
+
+    private async Task<IEnumerable<DocumentDeleteReference>> GetDocumentDeleteReferencesByKey(string key, string value, CancellationToken cancellationToken)
+    {
+        var validatedKey = ValidateQueryPropertyName(key);
+        var queryDefinition = new QueryDefinition($"SELECT c.id, c.{validatedKey} AS keyValue FROM c WHERE c.{validatedKey} = @value")
+            .WithParameter("@value", value);
+
+        return await ExecuteQueryAsync<DocumentDeleteReference>(queryDefinition, cancellationToken: cancellationToken);
+    }
+
+    private async Task DeleteDocumentByCandidates(
+        DocumentDeleteReference reference,
+        string queryValue,
+        string? explicitPartitionKey,
+        CancellationToken cancellationToken)
+    {
+        var candidateKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in new[] { explicitPartitionKey, reference.KeyValue, reference.Id, queryValue })
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                candidateKeys.Add(candidate);
+            }
+        }
+
+        foreach (var candidate in candidateKeys)
+        {
+            try
+            {
+                await DeleteDocument(reference.Id, new PartitionKey(candidate), cancellationToken);
+                return;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+            }
+        }
+
+        _logger.LogWarning(
+            "Unable to delete document {DocumentId} in {DocumentType} by key-based lookup after trying {CandidateCount} partition key candidates. This may indicate a partition-key mismatch or that the document was already deleted.",
+            reference.Id,
+            typeof(T).Name,
+            candidateKeys.Count);
+    }
+
+    private static string ValidateQueryPropertyName(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Query property name cannot be empty.", nameof(key));
+
+        if (!char.IsLetter(key[0]) && key[0] != '_')
+            throw new ArgumentException($"Invalid query property name '{key}'.", nameof(key));
+
+        if (key.Any(ch => !char.IsLetterOrDigit(ch) && ch != '_'))
+            throw new ArgumentException($"Invalid query property name '{key}'.", nameof(key));
+
+        return key;
     }
 
     public async Task PatchDocument(
