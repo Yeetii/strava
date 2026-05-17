@@ -14,6 +14,7 @@ public sealed class ActivityStatusProjection
     public string Id { get; set; } = string.Empty;
     public string? Name { get; set; }
     public DateTime StartDateLocal { get; set; }
+    public string? SummaryPolyline { get; set; }
     public ActivityProcessingStatus? ProcessingStatus { get; set; }
 }
 
@@ -28,6 +29,7 @@ public class GetActivityStatuses(
         string ActivityId,
         string ActivityName,
         DateTime StartDateLocal,
+        string? SummaryPolyline,
         ActivityProcessingStatus ProcessingStatus);
 
     [OpenApiOperation(tags: ["Activities"])]
@@ -49,6 +51,7 @@ public class GetActivityStatuses(
                 ActivityId: activity.Id,
                 ActivityName: activity.Name ?? string.Empty,
                 StartDateLocal: activity.StartDateLocal,
+                SummaryPolyline: activity.SummaryPolyline,
                 ProcessingStatus: activity.ProcessingStatus ?? new ActivityProcessingStatus()))
             .ToArray();
 
@@ -59,11 +62,13 @@ public class GetActivityStatuses(
 
     public static QueryDefinition BuildQuery(string userId, int limit)
     {
+        // Cosmos SQL does not support parameterizing TOP; limit is clamped via ParseLimit.
         return new QueryDefinition($"""
             SELECT TOP {limit}
                 c.id,
                 c.name,
                 c.startDateLocal,
+                c.summaryPolyline,
                 c.processingStatus
             FROM c
             WHERE c.userId = @userId
