@@ -214,7 +214,8 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
     public async Task<IEnumerable<string>> GetIdsByKey(string key, string value, CancellationToken cancellationToken = default)
     {
-        var queryDefinition = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c." + key + " = @value")
+        var validatedKey = ValidateQueryPropertyName(key);
+        var queryDefinition = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c." + validatedKey + " = @value")
             .WithParameter("@value", value);
         return await ExecuteQueryAsync<string>(queryDefinition, cancellationToken: cancellationToken);
     }
@@ -234,7 +235,8 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
     private async Task<IEnumerable<DocumentDeleteReference>> GetDocumentDeleteReferencesByKey(string key, string value, CancellationToken cancellationToken)
     {
-        var queryDefinition = new QueryDefinition($"SELECT c.id, c.{key} AS keyValue FROM c WHERE c.{key} = @value")
+        var validatedKey = ValidateQueryPropertyName(key);
+        var queryDefinition = new QueryDefinition($"SELECT c.id, c.{validatedKey} AS keyValue FROM c WHERE c.{validatedKey} = @value")
             .WithParameter("@value", value);
 
         return await ExecuteQueryAsync<DocumentDeleteReference>(queryDefinition, cancellationToken: cancellationToken);
@@ -246,10 +248,14 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         string? explicitPartitionKey,
         CancellationToken cancellationToken)
     {
-        var candidateKeys = new[] { explicitPartitionKey, reference.KeyValue, reference.Id, queryValue }
-            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var candidateKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in new[] { explicitPartitionKey, reference.KeyValue, reference.Id, queryValue })
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                candidateKeys.Add(candidate);
+            }
+        }
 
         foreach (var candidate in candidateKeys)
         {
@@ -264,9 +270,24 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         }
 
         _logger.LogWarning(
-            "Unable to delete document {DocumentId} by key-based lookup after trying {CandidateCount} partition key candidates.",
+            "Unable to delete document {DocumentId} in {DocumentType} by key-based lookup after trying {CandidateCount} partition key candidates. This may indicate a partition-key mismatch or that the document was already deleted.",
             reference.Id,
-            candidateKeys.Length);
+            typeof(T).Name,
+            candidateKeys.Count);
+    }
+
+    private static string ValidateQueryPropertyName(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Query property name cannot be empty.", nameof(key));
+
+        if (!char.IsLetter(key[0]) && key[0] != '_')
+            throw new ArgumentException($"Invalid query property name '{key}'.", nameof(key));
+
+        if (key.Any(ch => !char.IsLetterOrDigit(ch) && ch != '_'))
+            throw new ArgumentException($"Invalid query property name '{key}'.", nameof(key));
+
+        return key;
     }
 
     public async Task PatchDocument(
