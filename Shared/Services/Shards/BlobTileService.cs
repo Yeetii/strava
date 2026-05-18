@@ -20,9 +20,10 @@ public class BlobTileService(
     private const double ClipTolerance = 1e-10;
     private const int ShardSampleSize = 20;
 
-    public async Task<byte[]> BuildTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    public async Task<HighwayTileBuildResult> BuildTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
-        var shardKeys = await _zoomIndexService.GetShardKeysAsync(z, x, y, cancellationToken);
+        var selection = await _zoomIndexService.GetShardKeysAsync(z, x, y, cancellationToken);
+        var shardKeys = selection.Shards;
         var stopwatch = Stopwatch.StartNew();
 
         try
@@ -32,7 +33,7 @@ public class BlobTileService(
             var clipped = ClipToTileBounds(filtered, z, x, y);
             var simplified = SimplifyByZoom(clipped, z);
             var pbf = MvtTileEncoder.EncodeLayer("highways", simplified, z, x, y);
-            return Gzip(pbf);
+            return new HighwayTileBuildResult(Gzip(pbf), selection.IsComplete);
         }
         catch (Exception ex) when (cancellationToken.IsCancellationRequested)
         {
@@ -64,9 +65,10 @@ public class BlobTileService(
         }
     }
 
-    public async Task<byte[]> RefreshTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    public async Task<HighwayTileBuildResult> RefreshTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
-        var shardKeys = await _zoomIndexService.GetShardKeysAsync(z, x, y, cancellationToken);
+        var selection = await _zoomIndexService.GetShardKeysAsync(z, x, y, cancellationToken);
+        var shardKeys = selection.Shards;
         var stopwatch = Stopwatch.StartNew();
         try
         {
@@ -350,3 +352,5 @@ public class BlobTileService(
         return output.ToArray();
     }
 }
+
+public sealed record HighwayTileBuildResult(byte[] Payload, bool IsComplete);

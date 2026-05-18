@@ -61,8 +61,17 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
             var response = req.CreateResponse(HttpStatusCode.OK);
             response.Headers.Add("Content-Type", "application/x-protobuf");
             response.Headers.Add("Content-Encoding", "gzip");
-            response.Headers.Add("Cache-Control", "public,max-age=60");
-            await response.Body.WriteAsync(tile, cancellationToken);
+            if (tile.IsComplete)
+            {
+                response.Headers.Add("Cache-Control", "public,max-age=60");
+            }
+            else
+            {
+                response.Headers.Add("Cache-Control", "no-store");
+                response.Headers.Add("X-Tile-Incomplete", "true");
+            }
+
+            await response.Body.WriteAsync(tile.Payload, cancellationToken);
             return response;
         }
         catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
