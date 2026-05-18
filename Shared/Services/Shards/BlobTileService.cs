@@ -73,8 +73,7 @@ public class BlobTileService(
         try
         {
             await _featureClient.RefreshShards(shardKeys, cancellationToken);
-            var refreshed = await BuildTileAsync(z, x, y, cancellationToken);
-            return new HighwayTileBuildResult(refreshed.Payload, selection.IsComplete && refreshed.IsComplete);
+            return await BuildTileAsync(z, x, y, cancellationToken);
         }
         catch (Exception ex) when (cancellationToken.IsCancellationRequested)
         {
