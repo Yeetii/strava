@@ -59,11 +59,11 @@ public class HighwayZoomRulesTests
     [Fact]
     public void GetSimplificationEpsilon_IsRougherAtLowZooms()
     {
-        Assert.Equal(0.0180, HighwayZoomRules.GetSimplificationEpsilon(7));
-        Assert.Equal(0.0100, HighwayZoomRules.GetSimplificationEpsilon(8));
-        Assert.Equal(0.0060, HighwayZoomRules.GetSimplificationEpsilon(9));
-        Assert.Equal(0.0030, HighwayZoomRules.GetSimplificationEpsilon(10));
-        Assert.Equal(0.0007, HighwayZoomRules.GetSimplificationEpsilon(11));
+        Assert.Equal(0.0130, HighwayZoomRules.GetSimplificationEpsilon(7));
+        Assert.Equal(0.0070, HighwayZoomRules.GetSimplificationEpsilon(8));
+        Assert.Equal(0.0040, HighwayZoomRules.GetSimplificationEpsilon(9));
+        Assert.Equal(0.0020, HighwayZoomRules.GetSimplificationEpsilon(10));
+        Assert.Equal(0.0005, HighwayZoomRules.GetSimplificationEpsilon(11));
     }
 
     private static Feature CreateFeature(string highway, string? trailVisibility = null, string? sacScale = null)

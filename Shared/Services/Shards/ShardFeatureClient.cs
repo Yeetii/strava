@@ -19,6 +19,10 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
     [
         "yes",
         "no",
+        "1",
+        "-1",
+        "reversible",
+        "alternating",
         "motorway",
         "motorway_link",
         "trunk",
@@ -274,6 +278,7 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
         => new()
         {
             [ShardEncodingIds.TagIdFromString("highway")] = "highway",
+            [ShardEncodingIds.TagIdFromString("oneway")] = "oneway",
             [ShardEncodingIds.TagIdFromString("footway")] = "footway",
             [ShardEncodingIds.TagIdFromString("surface")] = "surface",
             [ShardEncodingIds.TagIdFromString("width")] = "width",

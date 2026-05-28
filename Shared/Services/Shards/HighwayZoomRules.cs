@@ -136,12 +136,12 @@ public static class HighwayZoomRules
     public static double GetSimplificationEpsilon(int zoom)
         => zoom switch
         {
-            <= 7 => 0.0180,
-            8 => 0.0100,
-            9 => 0.0060,
-            10 => 0.0030,
-            11 => 0.0007,
-            12 => 0.0003,
+            <= 7 => 0.0130,
+            8 => 0.0070,
+            9 => 0.0040,
+            10 => 0.0020,
+            11 => 0.0005,
+            12 => 0.0002,
             _ => 0d
         };
 

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Azure;
 using Azure.Storage.Blobs;
 using Microsoft.Extensions.Logging;
+using Shared.Models;
 
 namespace Shared.Services.Shards;
 
@@ -11,7 +12,7 @@ public class HighwayZoomIndexService(
     ILogger<HighwayZoomIndexService> logger,
     int canonicalZoom = 12)
 {
-    private const int IndexVersion = 2;
+    private const int IndexVersion = 3;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly BlobContainerClient _container = container;
     private readonly IShardRepository _shardRepository = shardRepository;
@@ -35,6 +36,54 @@ public class HighwayZoomIndexService(
 
         var built = await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
         return built;
+    }
+
+    public async Task UpdateIndexesForShardAsync(int shardX, int shardY, Shard shard, CancellationToken cancellationToken = default)
+    {
+        if (shard is null)
+            throw new ArgumentNullException(nameof(shard));
+
+        for (var z = 0; z < _canonicalZoom; z++)
+        {
+            var shift = _canonicalZoom - z;
+            var x = shardX >> shift;
+            var y = shardY >> shift;
+            var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
+
+            var index = await TryReadIndexModelAsync(blob, z, x, y, cancellationToken);
+            if (index is null)
+                continue;
+
+            var shouldInclude = shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z));
+            var existingIndex = index.Shards.FindIndex(reference => reference.X == shardX && reference.Y == shardY);
+            var changed = false;
+
+            if (shouldInclude && existingIndex < 0)
+            {
+                index.Shards.Add(new HighwayTileShardRef(shardX, shardY));
+                changed = true;
+            }
+            else if (!shouldInclude && existingIndex >= 0)
+            {
+                index.Shards.RemoveAt(existingIndex);
+                changed = true;
+            }
+
+            if (!changed)
+                continue;
+
+            var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
+            await blob.UploadAsync(BinaryData.FromBytes(payload), overwrite: true, cancellationToken);
+
+            _logger.LogInformation(
+                "Updated highway shard index z{Z}/{X}/{Y} with shard {ShardX}/{ShardY}. Included={Included}.",
+                z,
+                x,
+                y,
+                shardX,
+                shardY,
+                shouldInclude);
+        }
     }
 
     private async Task<HighwayTileShardSelection> BuildAndPersistIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
@@ -85,6 +134,17 @@ public class HighwayZoomIndexService(
     private async Task<HighwayTileShardSelection?> TryReadIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
     {
         var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
+        var model = await TryReadIndexModelAsync(blob, z, x, y, cancellationToken);
+        if (model is null)
+            return null;
+
+        return new HighwayTileShardSelection(
+            model.IsComplete,
+            [.. model.Shards.Select(shard => (shard.X, shard.Y)).Distinct()]);
+    }
+
+    private async Task<HighwayTileShardIndex?> TryReadIndexModelAsync(BlobClient blob, int z, int x, int y, CancellationToken cancellationToken)
+    {
         try
         {
             var download = await blob.DownloadContentAsync(cancellationToken);
@@ -92,9 +152,7 @@ public class HighwayZoomIndexService(
             if (model is null || model.Version != IndexVersion || model.Zoom != z || model.X != x || model.Y != y)
                 return null;
 
-            return new HighwayTileShardSelection(
-                model.IsComplete,
-                [.. model.Shards.Select(shard => (shard.X, shard.Y)).Distinct()]);
+            return model;
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {

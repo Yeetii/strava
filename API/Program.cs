@@ -100,7 +100,17 @@ var host = new HostBuilder()
             var overpass = serviceProvider.GetRequiredService<OverpassClient>();
             var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
             var shardBufferMeters = configuration.GetValue<int?>(AppConfig.BlobShardBufferMeters) ?? 200;
-            return new BlobShardRepository(containerClient, repositoryLogger, overpass.GetHighways, shardZoom, shardBufferMeters);
+            return new BlobShardRepository(
+                containerClient,
+                repositoryLogger,
+                overpass.GetHighways,
+                shardZoom,
+                shardBufferMeters,
+                async (x, y, shard, cancellationToken) =>
+                {
+                    var zoomIndexService = serviceProvider.GetRequiredService<HighwayZoomIndexService>();
+                    await zoomIndexService.UpdateIndexesForShardAsync(x, y, shard, cancellationToken);
+                });
         });
         services.AddSingleton(serviceProvider =>
         {
