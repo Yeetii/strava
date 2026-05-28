@@ -264,7 +264,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
     {
         if (StoredFeature.IsPointerDocument(document) || document.Id.StartsWith("empty-", StringComparison.Ordinal))
         {
-            await UpsertDocument(document, cancellationToken);
+            await UpsertDocument(document, cancellationToken: cancellationToken);
             return;
         }
 
@@ -281,7 +281,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
 
         try
         {
-            await UpsertDocument(simplified, cancellationToken);
+            await UpsertDocument(simplified, cancellationToken: cancellationToken);
             return;
         }
         catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.RequestEntityTooLarge) { }
@@ -292,7 +292,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         {
             try
             {
-                await UpsertDocument(CreateSimplifiedBoundaryDocument(simplified, step), cancellationToken);
+                await UpsertDocument(CreateSimplifiedBoundaryDocument(simplified, step), cancellationToken: cancellationToken);
                 return;
             }
             catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.RequestEntityTooLarge && step < 32)
@@ -301,7 +301,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             }
         }
 
-        await UpsertDocument(CreateSimplifiedBoundaryDocument(simplified, 64), cancellationToken);
+        await UpsertDocument(CreateSimplifiedBoundaryDocument(simplified, 64), cancellationToken: cancellationToken);
     }
 
     private static StoredFeature CreateRdpSimplifiedDocument(StoredFeature document, double epsilon)

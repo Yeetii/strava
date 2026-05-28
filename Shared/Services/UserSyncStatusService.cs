@@ -86,7 +86,7 @@ public class UserSyncStatusService(
                     partitionKey,
                     [PatchOperation.Set("/processingStatus", nextStatus)],
                     activity.ETag,
-                    cancellationToken);
+                    cancellationToken: cancellationToken);
 
                 await IncrementProcessedActivities(userId, stage, cancellationToken);
                 return true;
@@ -144,7 +144,8 @@ public class UserSyncStatusService(
                     partitionKey,
                     [PatchOperation.Set("/syncStatus", nextStatus)],
                     user.ETag,
-                    cancellationToken);
+                    priority: CosmosWritePriority.High,
+                    cancellationToken: cancellationToken);
                 return;
             }
             catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.PreconditionFailed && attempt < MaxPatchRetries - 1)

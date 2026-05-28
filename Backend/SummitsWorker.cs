@@ -8,6 +8,7 @@ using Shared.Geo;
 using Shared.Constants;
 using Azure.Messaging.ServiceBus;
 using System.Text.Json;
+using System.Globalization;
 using Shared.Geo.SummitsCalculator;
 using BAMCIS.GeoJSON;
 
@@ -114,16 +115,16 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             var peakId = NormalizeSummitedPeakId(peak.Id);
             var documentId = BuildSummitedPeakDocumentId(activity.UserId, peak.Id);
             var partitionKey = new PartitionKey(activity.UserId);
-            var summitedPeakDocument = await _summitedPeaksCollection.GetByIdMaybe(documentId, partitionKey)
-                ?? new SummitedPeak
-                {
-                    Id = documentId,
-                    Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName : "",
-                    UserId = activity.UserId,
-                    PeakId = peakId,
-                    Elevation = peak.Properties.TryGetValue("elevation", out var elevation) ? float.Parse(elevation) : null,
-                    ActivityIds = []
-                };
+               var summitedPeakDocument = await _summitedPeaksCollection.GetByIdMaybe(documentId, partitionKey)
+                   ?? new SummitedPeak
+                   {
+                       Id = documentId,
+                       Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName?.ToString() ?? "" : "",
+                       UserId = activity.UserId,
+                       PeakId = peakId,
+                       Elevation = TryParseElevation(peak.Properties),
+                       ActivityIds = []
+                   };
             summitedPeakDocument.ActivityIds.Add(activity.Id);
             documents.Add(summitedPeakDocument);
         }
@@ -132,6 +133,33 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     internal static string BuildSummitedPeakDocumentId(string userId, FeatureId peakId)
         => $"{userId}-{NormalizeSummitedPeakId(peakId)}";
+
+    private static float? TryParseElevation(IDictionary<string, dynamic> properties)
+    {
+        if (!properties.TryGetValue("elevation", out var elevationValue) || elevationValue == null)
+            return null;
+
+        // Handle different types that might come from Cosmos/JSON
+        if (elevationValue is float f)
+            return f;
+        if (elevationValue is double d)
+            return (float)d;
+        if (elevationValue is int i)
+            return i;
+        if (elevationValue is long l)
+            return (float)l;
+        if (elevationValue is string s && float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            return parsed;
+        if (elevationValue is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
+        {
+            if (je.TryGetSingle(out var single))
+                return single;
+            if (je.TryGetDouble(out var dbl))
+                return (float)dbl;
+        }
+
+        return null;
+    }
 
     internal static string NormalizeSummitedPeakId(FeatureId peakId)
         => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, peakId.Value);

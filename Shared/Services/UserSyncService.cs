@@ -69,7 +69,7 @@ public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
                 ValueJson = entry.Deleted ? null : ToRawJson(entry.Value)
             };
 
-            await syncCollection.UpsertDocument(updatedItem, cancellationToken);
+            await syncCollection.UpsertDocument(updatedItem, cancellationToken: cancellationToken);
             itemsById[itemId] = updatedItem;
         }
     }

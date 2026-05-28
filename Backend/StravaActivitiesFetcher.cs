@@ -57,7 +57,10 @@ namespace Backend
                     return ActivityMapper.MapSummaryActivity(activity, existingActivity);
                 });
 
-                await _activitiesCollection.BulkUpsert(mappedActivities, cancellationToken: cancellationToken);
+                await _activitiesCollection.BulkUpsert(
+                    mappedActivities,
+                    cancellationToken: cancellationToken,
+                    priority: CosmosWritePriority.High);
                 await _userSyncStatusService.IncrementSyncedActivities(fetchJob.UserId, newActivityCount, cancellationToken);
 
                 var discoveredMinimumTotal = ((page - 1) * 200) + activitiesList.Count;

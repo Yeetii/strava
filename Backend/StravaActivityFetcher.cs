@@ -70,7 +70,10 @@ namespace Backend
                     return;
                 }
 
-                await _activitiesCollection.UpsertDocument(ActivityMapper.MapDetailedActivity(activity, existingActivity), cancellationToken);
+                await _activitiesCollection.UpsertDocument(
+                    ActivityMapper.MapDetailedActivity(activity, existingActivity),
+                    priority: CosmosWritePriority.High,
+                    cancellationToken: cancellationToken);
                 if (existingActivity == null)
                 {
                     await _userSyncStatusService.IncrementSyncedActivities(fetchJob.UserId, 1, cancellationToken);

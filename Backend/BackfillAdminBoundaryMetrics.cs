@@ -61,7 +61,7 @@ AND (
             }
         }
 
-        await _storedFeaturesCollection.PatchDocuments(patches, cancellationToken);
+        await _storedFeaturesCollection.PatchDocuments(patches, cancellationToken: cancellationToken);
         var processed = patches.Count;
 
         var response = req.CreateResponse(HttpStatusCode.OK);

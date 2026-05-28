@@ -35,7 +35,8 @@ public class StravaTokenService(
             [
                 PatchOperation.Set("/accessToken", tokenResponse.AccessToken),
                 PatchOperation.Set("/tokenExpiresAt", tokenResponse.ExpiresAt)
-            ]);
+            ],
+            priority: CosmosWritePriority.High);
 
         return tokenResponse.AccessToken;
     }

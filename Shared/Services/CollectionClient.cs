@@ -14,6 +14,39 @@ internal static class CosmosWriteThrottle
 {
     internal static readonly SemaphoreSlim Semaphore = new(1, 1);
     internal static readonly TimeSpan DelayBetweenWrites = TimeSpan.FromMilliseconds(50);
+    private const int PriorityPollDelayMs = 25;
+    private static int _highPriorityWaiters;
+
+    internal static async Task WaitForTurnAsync(CosmosWritePriority priority, CancellationToken cancellationToken)
+    {
+        if (priority == CosmosWritePriority.High)
+        {
+            Interlocked.Increment(ref _highPriorityWaiters);
+            try
+            {
+                await Semaphore.WaitAsync(cancellationToken);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _highPriorityWaiters);
+            }
+
+            return;
+        }
+
+        // Best-effort prioritization: while urgent writes are queued, pause lower priority writers.
+        while (Volatile.Read(ref _highPriorityWaiters) > 0)
+            await Task.Delay(PriorityPollDelayMs, cancellationToken);
+
+        await Semaphore.WaitAsync(cancellationToken);
+    }
+}
+
+public enum CosmosWritePriority
+{
+    Low,
+    Normal,
+    High,
 }
 
 public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) where T : IDocument
@@ -146,9 +179,9 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         return ids;
     }
 
-    public async Task UpsertDocument(T document, CancellationToken cancellationToken = default)
+    public async Task UpsertDocument(T document, CosmosWritePriority priority = CosmosWritePriority.Normal, CancellationToken cancellationToken = default)
     {
-        await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+        await CosmosWriteThrottle.WaitForTurnAsync(priority, cancellationToken);
         try
         {
             await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
@@ -161,7 +194,11 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             CosmosWriteThrottle.Semaphore.Release();
         }
     }
-    public async Task BulkUpsert(IEnumerable<T> documents, int maxDegreeOfParallelism = 1, CancellationToken cancellationToken = default)
+    public async Task BulkUpsert(
+        IEnumerable<T> documents,
+        int maxDegreeOfParallelism = 1,
+        CosmosWritePriority priority = CosmosWritePriority.Normal,
+        CancellationToken cancellationToken = default)
     {
         if (documents == null)
             return;
@@ -174,7 +211,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         {
             foreach (var document in docs)
             {
-                await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+                await CosmosWriteThrottle.WaitForTurnAsync(priority, cancellationToken);
                 try
                 {
                     await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
@@ -295,9 +332,10 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         PartitionKey partitionKey,
         IReadOnlyList<PatchOperation> operations,
         string? ifMatchEtag = null,
+        CosmosWritePriority priority = CosmosWritePriority.Normal,
         CancellationToken cancellationToken = default)
     {
-        await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+        await CosmosWriteThrottle.WaitForTurnAsync(priority, cancellationToken);
         try
         {
             PatchItemRequestOptions? requestOptions = string.IsNullOrWhiteSpace(ifMatchEtag)
@@ -312,9 +350,12 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         }
     }
 
-    public async Task PatchDocuments(IEnumerable<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)> patches, CancellationToken cancellationToken = default)
+    public async Task PatchDocuments(
+        IEnumerable<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)> patches,
+        CosmosWritePriority priority = CosmosWritePriority.Normal,
+        CancellationToken cancellationToken = default)
     {
-        await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+        await CosmosWriteThrottle.WaitForTurnAsync(priority, cancellationToken);
         try
         {
             foreach (var (id, partitionKey, operations) in patches)

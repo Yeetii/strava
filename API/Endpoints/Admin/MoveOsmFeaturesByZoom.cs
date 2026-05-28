@@ -155,7 +155,7 @@ public class MoveOsmFeaturesByZoom(
                         };
                     }).ToList();
 
-                    await storedFeaturesCollection.BulkUpsert(movedDocuments, MaxConcurrentDocumentMoves, cancellationToken);
+                    await storedFeaturesCollection.BulkUpsert(movedDocuments, MaxConcurrentDocumentMoves, cancellationToken: cancellationToken);
 
                     var patches = batch.Select(document =>
                     {
@@ -163,7 +163,7 @@ public class MoveOsmFeaturesByZoom(
                         return (document.Id, oldPartitionKey, new[] { PatchOperation.Set("/ttl", 1) } as IReadOnlyList<PatchOperation>);
                     }).ToList();
 
-                    await storedFeaturesCollection.PatchDocuments(patches, cancellationToken);
+                    await storedFeaturesCollection.PatchDocuments(patches, cancellationToken: cancellationToken);
 
                     foreach (var document in batch)
                     {

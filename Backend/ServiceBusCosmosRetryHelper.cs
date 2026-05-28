@@ -59,10 +59,19 @@ public static class ServiceBusCosmosRetryHelper
                 "Retry limit reached for message {MessageId} on queue {QueueName}; dead-lettering",
                 message.MessageId, queueName);
 
-            await actions.DeadLetterMessageAsync(message,
-                deadLetterReason: "RetryLimitExceeded",
-                deadLetterErrorDescription: $"Exceeded {maxRetryCount} retries for exception: {exception.Message}",
-                cancellationToken: cancellationToken);
+            try
+            {
+                await actions.DeadLetterMessageAsync(message,
+                    deadLetterReason: "RetryLimitExceeded",
+                    deadLetterErrorDescription: $"Exceeded {maxRetryCount} retries for exception: {exception.Message}",
+                    cancellationToken: cancellationToken);
+            }
+            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+            {
+                logger.LogWarning(ex,
+                    "Message lock already lost while dead-lettering {MessageId} on queue {QueueName}; message will be redelivered by Service Bus.",
+                    message.MessageId, queueName);
+            }
             return;
         }
 
@@ -87,7 +96,16 @@ public static class ServiceBusCosmosRetryHelper
             "Exception retry scheduled for message {MessageId} on queue {QueueName}. Rescheduled for {ScheduledEnqueueTimeUtc} after {Delay} for attempt {Attempt}/{MaxAttempts}",
             message.MessageId, queueName, scheduledEnqueueTime.Value, delay, nextRetryCount, maxRetryCount);
 
-        await actions.CompleteMessageAsync(message, cancellationToken);
+        try
+        {
+            await actions.CompleteMessageAsync(message, cancellationToken);
+        }
+        catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+        {
+            logger.LogWarning(ex,
+                "Message lock already lost while completing retry source message {MessageId} on queue {QueueName}. Retry copy was already scheduled.",
+                message.MessageId, queueName);
+        }
     }
 
     private static ServiceBusMessage BuildRetryMessage(ServiceBusReceivedMessage message, int retryCount)

@@ -49,7 +49,7 @@ public class AdminBoundaryEnrichmentWorker(
             }
         }
 
-        await storedFeaturesCollection.PatchDocuments(patches, cancellationToken);
+        await storedFeaturesCollection.PatchDocuments(patches, cancellationToken: cancellationToken);
 
         foreach (var message in completableMessages)
             await actions.CompleteMessageAsync(message, cancellationToken);

@@ -26,6 +26,10 @@ public class VisitedPathsWorker(
     // Grid cell size matches the proximity threshold for O(1) lookups
     private const double GridCellSize = ProximityThresholdDegrees;
 
+    internal sealed record PathGridIndex(
+        IReadOnlyList<Feature> Paths,
+        Dictionary<(int LatCell, int LngCell), List<int>> CellToPathIndices);
+
     private record ActivitySlim(string Id, string UserId, string? Polyline, string? SummaryPolyline);
 
     [Function(nameof(VisitedPathsWorker))]
@@ -40,6 +44,7 @@ public class VisitedPathsWorker(
         var activitiesList = activities
             .Where(a => !string.IsNullOrWhiteSpace(a.Polyline ?? a.SummaryPolyline))
             .ToList();
+        var activitiesById = activitiesList.ToDictionary(a => a.Id);
 
         // Decode polylines once and reuse
         var decodedActivities = activitiesList.ToDictionary(
@@ -58,6 +63,7 @@ public class VisitedPathsWorker(
         }));
 
         var nearbyPaths = (await FetchNearbyPaths(decodedActivities)).ToList();
+        var pathGridIndex = BuildPathGridIndex(nearbyPaths);
 
         // Renew locks again after the potentially slow shared data fetch
         await Task.WhenAll(realJobs.Select(async j =>
@@ -70,21 +76,21 @@ public class VisitedPathsWorker(
         }));
 
         foreach (var job in jobs)
-            await ProcessJob(job, actions, activitiesList, decodedActivities, nearbyPaths, cancellationToken);
+            await ProcessJob(job, actions, activitiesById, decodedActivities, pathGridIndex, cancellationToken);
     }
 
     private async Task ProcessJob(
         ServiceBusReceivedMessage job,
         ServiceBusMessageActions actions,
-        List<ActivitySlim> activitiesList,
+        Dictionary<string, ActivitySlim> activitiesById,
         Dictionary<string, List<Coordinate>> decodedActivities,
-        List<Feature> nearbyPaths,
+        PathGridIndex pathGridIndex,
         CancellationToken cancellationToken)
     {
         var activityId = job.Body.ToString();
         try
         {
-            var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
+            activitiesById.TryGetValue(activityId, out var activity);
 
             if (activity == null || !decodedActivities.TryGetValue(activityId, out var activityPoints) || activityPoints.Count == 0)
             {
@@ -97,8 +103,8 @@ public class VisitedPathsWorker(
                 return;
             }
 
-            var grid = BuildSpatialGrid(activityPoints);
-            var visitedPaths = FindVisitedPaths(grid, nearbyPaths).ToList();
+            var activityGrid = BuildSpatialGrid(activityPoints);
+            var visitedPaths = FindVisitedPaths(activityGrid, pathGridIndex).ToList();
 
             _logger.LogInformation("Activity {ActivityId} visits {PathCount} paths", activityId, visitedPaths.Count);
 
@@ -167,7 +173,7 @@ public class VisitedPathsWorker(
         }
     }
 
-    private static HashSet<(int, int)> BuildSpatialGrid(List<Coordinate> points)
+    internal static HashSet<(int, int)> BuildSpatialGrid(List<Coordinate> points)
     {
         var grid = new HashSet<(int, int)>(points.Count);
         foreach (var p in points)
@@ -175,36 +181,62 @@ public class VisitedPathsWorker(
         return grid;
     }
 
-    private static IEnumerable<Feature> FindVisitedPaths(HashSet<(int, int)> activityGrid, IEnumerable<Feature> paths)
+    internal static PathGridIndex BuildPathGridIndex(IReadOnlyList<Feature> paths)
     {
-        foreach (var path in paths)
+        var cellToPathIndices = new Dictionary<(int LatCell, int LngCell), List<int>>();
+
+        for (var i = 0; i < paths.Count; i++)
         {
+            var path = paths[i];
             if (path.Geometry is not LineString line)
                 continue;
 
-            if (PathIntersectsGrid(activityGrid, line.Coordinates))
-                yield return path;
+            if (!line.Coordinates.Any())
+                continue;
+
+            // Avoid adding the same path multiple times for duplicate coordinates in the same cell.
+            var touchedCells = new HashSet<(int LatCell, int LngCell)>();
+            foreach (var p in line.Coordinates)
+            {
+                var cell = ((int)Math.Floor(p.Latitude / GridCellSize), (int)Math.Floor(p.Longitude / GridCellSize));
+                if (!touchedCells.Add(cell))
+                    continue;
+
+                if (!cellToPathIndices.TryGetValue(cell, out var pathIndices))
+                {
+                    pathIndices = new List<int>();
+                    cellToPathIndices[cell] = pathIndices;
+                }
+
+                pathIndices.Add(i);
+            }
         }
+
+        return new PathGridIndex(paths, cellToPathIndices);
     }
 
-    private static bool PathIntersectsGrid(HashSet<(int, int)> activityGrid, IEnumerable<Position> pathCoords)
+    internal static IEnumerable<Feature> FindVisitedPaths(HashSet<(int, int)> activityGrid, PathGridIndex index)
     {
-        foreach (var p in pathCoords)
-        {
-            int latCell = (int)Math.Floor(p.Latitude / GridCellSize);
-            int lngCell = (int)Math.Floor(p.Longitude / GridCellSize);
+        var visitedPathIndices = new HashSet<int>();
 
+        foreach (var (latCell, lngCell) in activityGrid)
+        {
             // Check the cell and all 8 neighbors to account for points near cell boundaries
             for (int dLat = -1; dLat <= 1; dLat++)
             {
                 for (int dLng = -1; dLng <= 1; dLng++)
                 {
-                    if (activityGrid.Contains((latCell + dLat, lngCell + dLng)))
-                        return true;
+                    if (!index.CellToPathIndices.TryGetValue((latCell + dLat, lngCell + dLng), out var candidates))
+                        continue;
+
+                    foreach (var pathIndex in candidates)
+                    {
+                        if (visitedPathIndices.Add(pathIndex))
+                            yield return index.Paths[pathIndex];
+                    }
                 }
             }
         }
-        return false;
     }
 
     private async Task<List<ActivitySlim>> FetchActivitySlims(List<string> ids)

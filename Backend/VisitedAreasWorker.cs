@@ -23,6 +23,7 @@ public class VisitedAreasWorker(
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     private const int AreaTileZoom = 8;
     private const int AdminLevelRegion = 4;
+    private const int MaxAdminBoundaryLookupPoints = 120;
 
     private sealed record VisitedAreaCandidate(
         string AreaId,
@@ -46,7 +47,13 @@ public class VisitedAreasWorker(
 
         var nearbyAreas = (await FetchNearbyAreas(activitiesList)).ToList();
 
-        var processingTasks = jobs.Select(job => ProcessJob(job, actions, activitiesList, nearbyAreas, cancellationToken));
+        var semaphore = new SemaphoreSlim(4, 4);
+        var processingTasks = jobs.Select(async job =>
+        {
+            await semaphore.WaitAsync(cancellationToken);
+            try { await ProcessJob(job, actions, activitiesList, nearbyAreas, cancellationToken); }
+            finally { semaphore.Release(); }
+        });
         await Task.WhenAll(processingTasks);
     }
 
@@ -79,7 +86,16 @@ public class VisitedAreasWorker(
             var activityPoints = GeoSpatialFunctions.DecodePolyline(routePolyline).ToList();
             _logger.LogDebug("Activity {ActivityId} decoded {PointCount} route points", activityId, activityPoints.Count);
 
-            var nearbyRegions = (await FetchAdminRegionsForActivity(activityPoints, cancellationToken)).ToList();
+            var boundaryLookupPolyline = GetBoundaryLookupPolyline(activity) ?? routePolyline;
+            var boundaryLookupPoints = string.Equals(boundaryLookupPolyline, routePolyline, StringComparison.Ordinal)
+                ? activityPoints
+                : GeoSpatialFunctions.DecodePolyline(boundaryLookupPolyline).ToList();
+            _logger.LogDebug(
+                "Activity {ActivityId} using {LookupPointCount} points for admin boundary lookup",
+                activityId,
+                boundaryLookupPoints.Count);
+
+            var nearbyRegions = (await FetchAdminRegionsForActivity(boundaryLookupPoints, cancellationToken)).ToList();
 
             if (nearbyRegions.Count == 0)
             {
@@ -358,8 +374,7 @@ public class VisitedAreasWorker(
         if (activityPoints.Count == 0)
             return [];
 
-        var coordinates = GetSampledIndices(activityPoints.Count)
-            .Select(i => activityPoints[i])
+        var coordinates = SampleCoordinatesForAdminBoundaryLookup(activityPoints)
             .DistinctBy(p => (p.Lat, p.Lng));
 
         var summaries = (await _adminBoundariesCollection.FindBoundarySummariesContainingAnyPoint(
@@ -369,6 +384,12 @@ public class VisitedAreasWorker(
         {
             _logger.LogDebug("Found 0 admin region candidates via ST_WITHIN");
             return [];
+        }
+
+        if (summaries.Count == 1)
+        {
+            _logger.LogDebug("Found a single admin region candidate via ST_WITHIN; skipping local geometry validation and full boundary fetch.");
+            return summaries;
         }
 
         var boundaryDocsById = (await _adminBoundariesCollection.GetByIdsAsync(
@@ -436,6 +457,24 @@ public class VisitedAreasWorker(
         return false;
     }
 
+    private static IEnumerable<Coordinate> SampleCoordinatesForAdminBoundaryLookup(List<Coordinate> activityPoints)
+    {
+        if (activityPoints.Count <= MaxAdminBoundaryLookupPoints)
+            return activityPoints;
+
+        var step = (int)Math.Ceiling((double)activityPoints.Count / MaxAdminBoundaryLookupPoints);
+        var sampled = activityPoints
+            .Where((_, i) => i % step == 0)
+            .ToList();
+
+        // Ensure the end of the route is represented even when it does not align with the step.
+        var last = activityPoints[^1];
+        if (sampled.Count == 0 || sampled[^1] != last)
+            sampled.Add(last);
+
+        return sampled;
+    }
+
     private static string? GetRoutePolyline(Activity activity)
     {
         if (!string.IsNullOrWhiteSpace(activity.Polyline))
@@ -445,5 +484,13 @@ public class VisitedAreasWorker(
             return activity.SummaryPolyline;
 
         return null;
+    }
+
+    private static string? GetBoundaryLookupPolyline(Activity activity)
+    {
+        if (!string.IsNullOrWhiteSpace(activity.SummaryPolyline))
+            return activity.SummaryPolyline;
+
+        return GetRoutePolyline(activity);
     }
 }
