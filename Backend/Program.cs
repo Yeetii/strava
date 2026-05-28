@@ -138,8 +138,9 @@ var host = new HostBuilder()
         services.AddSingleton(serviceProvider =>
         {
             var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
+            var shardLogger = serviceProvider.GetRequiredService<ILogger<ShardFeatureClient>>();
             var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-            return new ShardFeatureClient(shardRepository, shardZoom);
+            return new ShardFeatureClient(shardRepository, shardLogger, shardZoom);
         });
 
         services.AddSingleton<AdminBoundaryMetricsEnricher>();

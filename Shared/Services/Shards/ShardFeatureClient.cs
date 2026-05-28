@@ -1,12 +1,14 @@
 using System.Collections.Concurrent;
 using BAMCIS.GeoJSON;
+using Microsoft.Extensions.Logging;
 using Shared.Models;
 
 namespace Shared.Services.Shards;
 
-public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZoom = 12)
+public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardFeatureClient> logger, int canonicalZoom = 12)
 {
     private readonly IShardRepository _shardRepository = shardRepository;
+    private readonly ILogger<ShardFeatureClient> _logger = logger;
     private readonly int _canonicalZoom = canonicalZoom;
     public int CanonicalZoom => _canonicalZoom;
 
@@ -110,15 +112,27 @@ public class ShardFeatureClient(IShardRepository shardRepository, int canonicalZ
         if (keys.Count == 0)
             return [];
 
-        // Fetch all shards in parallel to avoid timeout on low zoom levels (which require many shards)
+        // Fetch all shards in parallel to avoid timeout on low zoom levels (which require many shards).
+        // Failures are isolated per shard: a single broken tile logs a warning but does not abort the
+        // entire batch (which would cause all activities in the batch to fail and retry).
         var shardTasks = keys.Select(key => GetShardWithContext(key, cancellationToken)).ToList();
-        var shards = await Task.WhenAll(shardTasks);
+        var shardResults = await Task.WhenAll(shardTasks.Select(async t =>
+        {
+            try { return await t; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load a highway shard; features from that tile will be missing for this batch.");
+                return null;
+            }
+        }));
 
         var features = new List<Feature>();
         var seen = new HashSet<ulong>();
 
-        foreach (var shard in shards)
+        foreach (var shard in shardResults)
         {
+            if (shard is null)
+                continue;
             foreach (var owned in shard.Owned)
             {
                 if (!seen.Add(owned.Id))

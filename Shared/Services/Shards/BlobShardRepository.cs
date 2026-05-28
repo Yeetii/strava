@@ -31,7 +31,26 @@ public class BlobShardRepository(
         try
         {
             var download = await blob.DownloadContentAsync(cancellationToken);
-            return ShardBinarySerializer.Deserialize(download.Value.Content.ToArray());
+            var cached = ShardBinarySerializer.Deserialize(download.Value.Content.ToArray());
+
+            // A previously failed Overpass fetch may have written an empty shard to blob.
+            // Re-validate by querying Overpass again; if it returns features we overwrite the bad cache entry.
+            // If Overpass also confirms empty (2-mirror corroboration), we trust the cached empty shard —
+            // the in-memory LRU cache in ShardFeatureClient prevents repeated Overpass calls within a process.
+            if (cached.Owned.Count == 0)
+            {
+                _logger.LogInformation("Cached shard z{Zoom}/{X}/{Y} has 0 features; re-fetching from Overpass to verify.", z, x, y);
+                var rebuilt = await BuildShardAsync(x, y, cancellationToken);
+                if (rebuilt.Owned.Count > 0)
+                {
+                    var bytes = ShardBinarySerializer.Serialize(rebuilt);
+                    await blob.UploadAsync(BinaryData.FromBytes(bytes), overwrite: true, cancellationToken);
+                    _logger.LogInformation("Replaced empty shard z{Zoom}/{X}/{Y} with {Count} features.", z, x, y, rebuilt.Owned.Count);
+                    return rebuilt;
+                }
+            }
+
+            return cached;
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -79,15 +98,24 @@ public class BlobShardRepository(
 
         var clippedFeatures = BlobTileService.ClipToTileBounds(fetched, _canonicalZoom, x, y).ToList();
 
+        // Track how many fragments per OSM ID have been seen so that multi-fragment paths
+        // (an OSM way that enters/exits the tile boundary more than once) each get a unique
+        // tile-scoped ID.  Without this, duplicate IDs would cause later deduplication in
+        // ShardFeatureClient.GetFeaturesForShards to silently drop all but the first fragment.
+        var fragmentCountByOsmId = new Dictionary<string, int>();
         var shard = new Shard();
         foreach (var feature in clippedFeatures)
         {
-            var logicalId = feature.Id.Value?.ToString() ?? Guid.NewGuid().ToString("N");
+            var osmId = feature.Id.Value?.ToString() ?? Guid.NewGuid().ToString("N");
+            fragmentCountByOsmId.TryGetValue(osmId, out var fragmentIndex);
+            fragmentCountByOsmId[osmId] = fragmentIndex + 1;
+            var logicalId = fragmentIndex == 0 ? osmId : $"{osmId}_f{fragmentIndex}";
+
             var (featureType, geometryBytes) = PackedGeometryCodec.Encode(feature.Geometry);
             shard.Owned.Add(new ShardFeature
             {
                 Id = CreateTileScopedFeatureId(logicalId, x, y),
-                OsmId = logicalId,
+                OsmId = osmId,
                 Name = feature.Properties.TryGetValue("name", out var rawName)
                     ? rawName?.ToString()
                     : null,

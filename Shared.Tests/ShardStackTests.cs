@@ -97,7 +97,7 @@ public class ShardStackTests
         {
             [(12, 5, 6)] = shard
         });
-        var client = new ShardFeatureClient(fakeRepo, canonicalZoom: 12);
+        var client = new ShardFeatureClient(fakeRepo, Microsoft.Extensions.Logging.Abstractions.NullLogger<ShardFeatureClient>.Instance, canonicalZoom: 12);
 
         var features = await client.GetFeaturesForShards([(5, 6)], CancellationToken.None);
 

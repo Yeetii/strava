@@ -338,7 +338,7 @@ namespace Shared.Services
             RootPaths rootPaths = await ExecuteMirroredQuery<RootPaths>(
                 encodedQuery,
                 "highways",
-                root => root.Elements.Count > 0,
+                root => root.Elements.Any(e => e.Geometry is { Count: >= 2 }),
                 cancellationToken);
             return ConvertRawPathsToFeatures(rootPaths.Elements);
         }
