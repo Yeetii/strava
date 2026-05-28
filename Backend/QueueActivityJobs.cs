@@ -22,23 +22,27 @@ namespace Backend
 
             foreach (var activity in updatedActivities)
             {
-                if (!ShouldQueueActivity(activity))
-                {
-                    continue;
-                }
+                var queueTasks = new List<Task>(capacity: 3);
+                if (ShouldQueueSummits(activity))
+                    queueTasks.Add(summitsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)));
 
-                await Task.WhenAll(
-                    summitsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)),
-                    pathsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)),
-                    areasSender.SendMessageAsync(new ServiceBusMessage(activity.Id))
-                );
+                if (ShouldQueueVisitedPaths(activity))
+                    queueTasks.Add(pathsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)));
+
+                if (ShouldQueueVisitedAreas(activity))
+                    queueTasks.Add(areasSender.SendMessageAsync(new ServiceBusMessage(activity.Id)));
+
+                await Task.WhenAll(queueTasks);
             }
         }
 
-        internal static bool ShouldQueueActivity(Activity activity)
-        {
-            var status = activity.ProcessingStatus;
-            return status == null || (!status.SummitedPeaks && !status.VisitedPaths && !status.VisitedAreas);
-        }
+        internal static bool ShouldQueueSummits(Activity activity)
+            => activity.ProcessingStatus?.SummitedPeaks != true;
+
+        internal static bool ShouldQueueVisitedPaths(Activity activity)
+            => activity.ProcessingStatus?.VisitedPaths != true;
+
+        internal static bool ShouldQueueVisitedAreas(Activity activity)
+            => activity.ProcessingStatus?.VisitedAreas != true;
     }
 }

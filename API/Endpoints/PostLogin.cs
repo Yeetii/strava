@@ -81,7 +81,8 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
         outputs.Session = new Session
         {
             Id = sessionId.ToString(),
-            UserId = userId
+            UserId = userId,
+            CreatedAtUtc = DateTime.UtcNow
         };
 
         await response.WriteAsJsonAsync(new PostLoginResponse
