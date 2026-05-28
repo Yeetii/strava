@@ -66,7 +66,7 @@ public static class ServiceBusCosmosRetryHelper
                     deadLetterErrorDescription: $"Exceeded {maxRetryCount} retries for exception: {exception.Message}",
                     cancellationToken: cancellationToken);
             }
-            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+            catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
             {
                 logger.LogWarning(ex,
                     "Message lock already lost while dead-lettering {MessageId} on queue {QueueName}; message will be redelivered by Service Bus.",
@@ -100,7 +100,7 @@ public static class ServiceBusCosmosRetryHelper
         {
             await actions.CompleteMessageAsync(message, cancellationToken);
         }
-        catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+        catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
         {
             logger.LogWarning(ex,
                 "Message lock already lost while completing retry source message {MessageId} on queue {QueueName}. Retry copy was already scheduled.",

@@ -9,7 +9,7 @@ public class HighwayZoomRulesTests
     public void ShouldKeepFeature_KeepsOnlyMajorRoadsAtZoom7()
     {
         Assert.True(HighwayZoomRules.ShouldKeepFeature(CreateFeature("primary"), 7));
-        Assert.False(HighwayZoomRules.ShouldKeepFeature(CreateFeature("path"), 7));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(CreateFeature("path"), 7));
         Assert.False(HighwayZoomRules.ShouldKeepFeature(CreateFeature("tertiary"), 7));
     }
 
@@ -19,9 +19,9 @@ public class HighwayZoomRulesTests
         var highVisibilityPath = CreateFeature("path", trailVisibility: "good");
         var lowVisibilityPath = CreateFeature("path", trailVisibility: "bad");
 
-        Assert.True(HighwayZoomRules.ShouldKeepFeature(highVisibilityPath, 8));
-        Assert.False(HighwayZoomRules.ShouldKeepFeature(lowVisibilityPath, 8));
-        Assert.True(HighwayZoomRules.ShouldKeepFeature(lowVisibilityPath, 10));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(highVisibilityPath, 7));
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(lowVisibilityPath, 7));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(lowVisibilityPath, 9));
     }
 
     [Fact]
@@ -30,9 +30,9 @@ public class HighwayZoomRulesTests
         var easyTrack = CreateFeature("track", sacScale: "hiking");
         var demandingTrack = CreateFeature("track", sacScale: "demanding_alpine_hiking");
 
-        Assert.True(HighwayZoomRules.ShouldKeepFeature(easyTrack, 8));
-        Assert.False(HighwayZoomRules.ShouldKeepFeature(demandingTrack, 9));
-        Assert.True(HighwayZoomRules.ShouldKeepFeature(demandingTrack, 10));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(easyTrack, 7));
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(demandingTrack, 8));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(demandingTrack, 9));
     }
 
     [Fact]

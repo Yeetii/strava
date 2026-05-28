@@ -172,7 +172,14 @@ public class VisitedAreasWorker(
                 });
             }
 
-            if (hasRealLockToken) await actions.RenewMessageLockAsync(job);
+            if (hasRealLockToken)
+            {
+                try { await actions.RenewMessageLockAsync(job); }
+                catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+                {
+                    _logger.LogWarning("Lock lost before writing areas for message {MessageId}; it will be redelivered.", job.MessageId);
+                }
+            }
             _logger.LogInformation(
                 "Writing visited areas for activity {ActivityId}: creates={CreateCount}, patches={PatchCount}, documentIds=[{DocumentIds}]",
                 activityId,

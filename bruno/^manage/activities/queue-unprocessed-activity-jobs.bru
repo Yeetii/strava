@@ -1,0 +1,41 @@
+meta {
+  name: Queue Unprocessed Activity Jobs
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/manage/queue/unprocessed/:jobType?userId=11908635
+  body: none
+  auth: none
+}
+
+params:query {
+  userId: 11908635
+  ~startDate: 2025-06-01
+  ~endDate: 2024-12-31
+}
+
+params:path {
+  jobType: summits
+}
+
+headers {
+  Cookie: session={{sessionId}}
+}
+
+docs {
+  ## Job Types
+  
+  | jobType      | Queues activity when this stage is false/missing |
+  |--------------|---------------------------------------------------|
+  | summits      | processingStatus.summitedPeaks                    |
+  | visitedPaths | processingStatus.visitedPaths                      |
+  | visitedAreas | processingStatus.visitedAreas                      |
+  
+  ## Query Parameters
+  
+  - **userId** (optional): target user id; if omitted, uses authenticated session user
+  - **startDate** (optional): ISO 8601 date, queue activities on or after this date
+  - **endDate** (optional): ISO 8601 date, queue activities on or before this date
+}

@@ -181,7 +181,7 @@ public static class HighwayZoomRules
     {
         var baseZoom = value switch
         {
-            _ when TrailBackbone.Contains(value) => 8,
+            _ when TrailBackbone.Contains(value) => 7,
             _ when TrailNetwork.Contains(value) => 10,
             _ when LocalPathways.Contains(value) => 11,
             _ => int.MaxValue

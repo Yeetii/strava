@@ -56,7 +56,7 @@ public class VisitedPathsWorker(
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
-            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+            catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
             {
                 _logger.LogWarning("Lock lost before renewal for message {MessageId}; it will be redelivered.", j.MessageId);
             }
@@ -69,7 +69,7 @@ public class VisitedPathsWorker(
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
-            catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+            catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
             {
                 _logger.LogWarning("Lock lost after fetch renewal for message {MessageId}; it will be redelivered.", j.MessageId);
             }
@@ -154,7 +154,14 @@ public class VisitedPathsWorker(
                 }
             }
 
-            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.RenewMessageLockAsync(job);
+            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job))
+            {
+                try { await actions.RenewMessageLockAsync(job); }
+                catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+                {
+                    _logger.LogWarning("Lock lost before writing paths for message {MessageId}; it will be redelivered.", job.MessageId);
+                }
+            }
             await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
             if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
