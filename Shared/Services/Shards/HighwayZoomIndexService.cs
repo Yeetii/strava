@@ -113,16 +113,12 @@ public class HighwayZoomIndexService(
             isComplete,
             [.. retained.Select(k => new HighwayTileShardRef(k.x, k.y))]);
 
-        // Only persist the index when it is complete (all candidate shards were present).
-        // An incomplete index cached to blob would permanently hide highway segments from
-        // shards that didn't exist yet at build time, causing parts of highways to be
-        // invisible at this zoom level even after those shards are later populated.
-        if (isComplete)
-        {
-            var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
-            var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
-            await blob.UploadAsync(BinaryData.FromBytes(payload), overwrite: true, cancellationToken);
-        }
+        // Persist both complete and incomplete selections to avoid re-scanning all candidate
+        // canonical shards on every low-zoom request. Incomplete indexes are safe to cache
+        // because UpdateIndexesForShardAsync amends existing index blobs as shards materialize.
+        var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
+        var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
+        await blob.UploadAsync(BinaryData.FromBytes(payload), overwrite: true, cancellationToken);
 
         _logger.LogInformation(
             "Built highway shard index for z{Z}/{X}/{Y}. Referenced shards: {ShardCount}. IsComplete: {IsComplete}.",
