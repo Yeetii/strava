@@ -91,6 +91,60 @@ public class VisitedPathsWorkerTests
         Assert.Equal("line", visitedIds[0]);
     }
 
+    [Fact]
+    public void FindVisitedPaths_RequiresActivityInAllThreePathThirds()
+    {
+        var path = CreatePath(
+            "thirds",
+            new Position(0.00010, 0.00010),
+            new Position(0.00015, 0.00015),
+            new Position(0.00310, 0.00310),
+            new Position(0.00315, 0.00315),
+            new Position(0.00610, 0.00610),
+            new Position(0.00615, 0.00615));
+
+        var activityGrid = VisitedPathsWorker.BuildSpatialGrid([
+            new Coordinate(0.00010, 0.00010),
+            new Coordinate(0.00310, 0.00310),
+            new Coordinate(0.00610, 0.00610)
+        ]);
+
+        var index = VisitedPathsWorker.BuildPathGridIndex([path]);
+        var visitedIds = VisitedPathsWorker
+            .FindVisitedPaths(activityGrid, index)
+            .Select(f => f.Id.Value)
+            .ToList();
+
+        Assert.Single(visitedIds);
+        Assert.Equal("thirds", visitedIds[0]);
+    }
+
+    [Fact]
+    public void FindVisitedPaths_DoesNotCountPathWhenAnyThirdHasNoVisit()
+    {
+        var path = CreatePath(
+            "thirds-miss",
+            new Position(0.00010, 0.00010),
+            new Position(0.00015, 0.00015),
+            new Position(0.00310, 0.00310),
+            new Position(0.00315, 0.00315),
+            new Position(0.00610, 0.00610),
+            new Position(0.00615, 0.00615));
+
+        var activityGrid = VisitedPathsWorker.BuildSpatialGrid([
+            new Coordinate(0.00010, 0.00010),
+            new Coordinate(0.00610, 0.00610)
+        ]);
+
+        var index = VisitedPathsWorker.BuildPathGridIndex([path]);
+        var visitedIds = VisitedPathsWorker
+            .FindVisitedPaths(activityGrid, index)
+            .Select(f => f.Id.Value)
+            .ToList();
+
+        Assert.Empty(visitedIds);
+    }
+
     private static Feature CreatePath(string id, params Position[] points)
         => new(
             new LineString(points),

@@ -28,9 +28,21 @@ public class VisitedPathsWorker(
     // Grid cell size matches the proximity threshold for O(1) lookups
     private const double GridCellSize = ProximityThresholdDegrees;
 
+    internal sealed record PathSectionCells(
+        IReadOnlyList<(int LatCell, int LngCell)> First,
+        IReadOnlyList<(int LatCell, int LngCell)> Middle,
+        IReadOnlyList<(int LatCell, int LngCell)> Last);
+
     internal sealed record PathGridIndex(
         IReadOnlyList<Feature> Paths,
-        Dictionary<(int LatCell, int LngCell), List<int>> CellToPathIndices);
+        Dictionary<(int LatCell, int LngCell), List<int>> CellToPathIndices,
+        IReadOnlyList<PathSectionCells?> SectionCellsByPathIndex);
+
+    private sealed class ActivityLinkedDocumentProjection
+    {
+        public required string Id { get; init; }
+        public List<string>? ActivityIds { get; init; }
+    }
 
     private record ActivitySlim(string Id, string UserId, string? Polyline, string? SummaryPolyline);
 
@@ -119,11 +131,16 @@ public class VisitedPathsWorker(
 
             var activityGrid = BuildSpatialGrid(activityPoints);
             var visitedPaths = FindVisitedPaths(activityGrid, pathGridIndex).ToList();
+            var currentDocumentIds = visitedPaths
+                .Select(path => activity.UserId + "-" + path.Id.Value)
+                .ToHashSet(StringComparer.Ordinal);
+            var linkedDocs = await GetActivityLinkedDocuments(activity.UserId, activity.Id, cancellationToken);
 
             _logger.LogInformation("Activity {ActivityId} visits {PathCount} paths", activityId, visitedPaths.Count);
 
             if (visitedPaths.Count == 0)
             {
+                await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
                 if (ServiceBusRescheduler.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
@@ -191,6 +208,7 @@ public class VisitedPathsWorker(
                 }
             }
             await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
+            await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
             if (ServiceBusRescheduler.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
         }
@@ -224,6 +242,7 @@ public class VisitedPathsWorker(
     internal static PathGridIndex BuildPathGridIndex(IReadOnlyList<Feature> paths)
     {
         var cellToPathIndices = new Dictionary<(int LatCell, int LngCell), List<int>>();
+        var sectionCellsByPathIndex = new PathSectionCells?[paths.Count];
 
         for (var i = 0; i < paths.Count; i++)
         {
@@ -233,6 +252,8 @@ public class VisitedPathsWorker(
 
             if (!line.Coordinates.Any())
                 continue;
+
+            sectionCellsByPathIndex[i] = BuildSectionCells(line.Coordinates);
 
             // Avoid adding the same path multiple times for duplicate coordinates in the same cell.
             var touchedCells = new HashSet<(int LatCell, int LngCell)>();
@@ -252,7 +273,7 @@ public class VisitedPathsWorker(
             }
         }
 
-        return new PathGridIndex(paths, cellToPathIndices);
+        return new PathGridIndex(paths, cellToPathIndices, sectionCellsByPathIndex);
     }
 
     internal static IEnumerable<Feature> FindVisitedPaths(HashSet<(int, int)> activityGrid, PathGridIndex index)
@@ -271,12 +292,77 @@ public class VisitedPathsWorker(
 
                     foreach (var pathIndex in candidates)
                     {
-                        if (visitedPathIndices.Add(pathIndex))
-                            yield return index.Paths[pathIndex];
+                        if (!visitedPathIndices.Add(pathIndex))
+                            continue;
+
+                        if (!PathIsVisitedBySections(activityGrid, index.SectionCellsByPathIndex[pathIndex]))
+                            continue;
+
+                        yield return index.Paths[pathIndex];
                     }
                 }
             }
         }
+    }
+
+    private static bool PathIsVisitedBySections(HashSet<(int, int)> activityGrid, PathSectionCells? sectionCells)
+    {
+        if (sectionCells is null)
+            return false;
+
+        if (!SectionIsVisited(activityGrid, sectionCells.First))
+            return false;
+        if (!SectionIsVisited(activityGrid, sectionCells.Middle))
+            return false;
+        if (!SectionIsVisited(activityGrid, sectionCells.Last))
+            return false;
+
+        return true;
+    }
+
+    private static bool SectionIsVisited(HashSet<(int, int)> activityGrid, IReadOnlyList<(int LatCell, int LngCell)> sectionCells)
+    {
+        if (sectionCells.Count == 0)
+            return true;
+
+        foreach (var (latCell, lngCell) in sectionCells)
+        {
+            for (var dLat = -1; dLat <= 1; dLat++)
+            {
+                for (var dLng = -1; dLng <= 1; dLng++)
+                {
+                    if (activityGrid.Contains((latCell + dLat, lngCell + dLng)))
+                        return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static PathSectionCells BuildSectionCells(IEnumerable<Position> coordinates)
+    {
+        var points = coordinates.ToList();
+        var first = new HashSet<(int LatCell, int LngCell)>();
+        var middle = new HashSet<(int LatCell, int LngCell)>();
+        var last = new HashSet<(int LatCell, int LngCell)>();
+
+        var total = points.Count;
+        for (var index = 0; index < total; index++)
+        {
+            var point = points[index];
+            var cell = ((int)Math.Floor(point.Latitude / GridCellSize), (int)Math.Floor(point.Longitude / GridCellSize));
+            var section = (index * 3) / total;
+
+            if (section <= 0)
+                first.Add(cell);
+            else if (section == 1)
+                middle.Add(cell);
+            else
+                last.Add(cell);
+        }
+
+        return new PathSectionCells([.. first], [.. middle], [.. last]);
     }
 
     private async Task<List<ActivitySlim>> FetchActivitySlims(List<string> ids)
@@ -317,5 +403,60 @@ public class VisitedPathsWorker(
         var paths = (await _highwaysShardFeatureClient.GetFeaturesForShards(tileIndices)).ToList();
         _logger.LogInformation("Found {Count} nearby paths", paths.Count);
         return paths;
+    }
+
+    private async Task<List<ActivityLinkedDocumentProjection>> GetActivityLinkedDocuments(
+        string userId,
+        string activityId,
+        CancellationToken cancellationToken)
+    {
+        var query = new QueryDefinition(@"
+SELECT c.id, c.activityIds
+FROM c
+WHERE c.userId = @userId
+  AND ARRAY_CONTAINS(c.activityIds, @activityId)")
+            .WithParameter("@userId", userId)
+            .WithParameter("@activityId", activityId);
+
+        return (await _visitedPathsCollection.ExecuteQueryAsync<ActivityLinkedDocumentProjection>(
+            query,
+            cancellationToken: cancellationToken)).ToList();
+    }
+
+    private async Task CleanupStaleVisitedPathDocuments(
+        string userId,
+        string activityId,
+        ISet<string> currentDocumentIds,
+        IEnumerable<ActivityLinkedDocumentProjection> linkedDocs,
+        CancellationToken cancellationToken)
+    {
+        var partitionKey = new PartitionKey(userId);
+        var stalePatches = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
+        var staleDeletes = new List<string>();
+
+        foreach (var linkedDoc in linkedDocs)
+        {
+            if (currentDocumentIds.Contains(linkedDoc.Id))
+                continue;
+
+            var remainingActivityIds = (linkedDoc.ActivityIds ?? [])
+                .Where(id => !string.Equals(id, activityId, StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (remainingActivityIds.Count == 0)
+            {
+                staleDeletes.Add(linkedDoc.Id);
+                continue;
+            }
+
+            stalePatches.Add((linkedDoc.Id, [PatchOperation.Set("/activityIds", remainingActivityIds)]));
+        }
+
+        if (stalePatches.Count > 0)
+            await _visitedPathsCollection.ExecuteBatch(partitionKey, patches: stalePatches, cancellationToken: cancellationToken);
+
+        foreach (var staleDelete in staleDeletes)
+            await _visitedPathsCollection.DeleteDocument(staleDelete, partitionKey, cancellationToken);
     }
 }

@@ -30,6 +30,12 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender("activityprocessed");
     private const int MaxDegreeOfParallelism = 4;
 
+    private sealed class ActivityLinkedDocumentProjection
+    {
+        public required string Id { get; init; }
+        public List<string>? ActivityIds { get; init; }
+    }
+
     [Function("SummitsWorker")]
     public async Task Run(
         [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions, CancellationToken cancellationToken)
@@ -100,6 +106,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             var summits = CalculateSummitedPeaks(activity, peaks).ToList();
             if (summits.Count == 0)
             {
+                await CleanupStaleSummitedPeaksForActivity(activity, new HashSet<string>(StringComparer.Ordinal), cancellationToken);
                 await SendActivityProcessedEvent(activity, []);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
                 if (ServiceBusRescheduler.HasRealLockToken(job))
@@ -109,8 +116,12 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             }
             _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
             var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
+            var currentDocumentIds = summits
+                .Select(summit => BuildSummitedPeakDocumentId(activity.UserId, summit.Id))
+                .ToHashSet(StringComparer.Ordinal);
             await SendActivityProcessedEvent(activity, summits);
             await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
+            await CleanupStaleSummitedPeaksForActivity(activity, currentDocumentIds, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
             if (ServiceBusRescheduler.HasRealLockToken(job))
                 try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
@@ -212,6 +223,45 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     internal static string NormalizeSummitedPeakId(FeatureId peakId)
         => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, peakId.Value);
+
+    private async Task CleanupStaleSummitedPeaksForActivity(
+        Activity activity,
+        ISet<string> currentDocumentIds,
+        CancellationToken cancellationToken)
+    {
+        var query = new QueryDefinition(@"
+SELECT c.id, c.activityIds
+FROM c
+WHERE c.userId = @userId
+  AND ARRAY_CONTAINS(c.activityIds, @activityId)")
+            .WithParameter("@userId", activity.UserId)
+            .WithParameter("@activityId", activity.Id);
+
+        var linkedDocs = await _summitedPeaksCollection.ExecuteQueryAsync<ActivityLinkedDocumentProjection>(query, cancellationToken: cancellationToken);
+
+        foreach (var doc in linkedDocs)
+        {
+            if (currentDocumentIds.Contains(doc.Id))
+                continue;
+
+            var remainingActivityIds = (doc.ActivityIds ?? [])
+                .Where(id => !string.Equals(id, activity.Id, StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (remainingActivityIds.Count == 0)
+            {
+                await _summitedPeaksCollection.DeleteDocument(doc.Id, new PartitionKey(activity.UserId), cancellationToken);
+                continue;
+            }
+
+            await _summitedPeaksCollection.PatchDocument(
+                doc.Id,
+                new PartitionKey(activity.UserId),
+                [PatchOperation.Set("/activityIds", remainingActivityIds)],
+                cancellationToken: cancellationToken);
+        }
+    }
 
     private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities)
     {

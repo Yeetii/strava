@@ -34,6 +34,12 @@ public class VisitedAreasWorker(
         string? Wikidata,
         string? WikimediaCommons);
 
+    private sealed class ActivityLinkedDocumentProjection
+    {
+        public required string Id { get; init; }
+        public List<string>? ActivityIds { get; init; }
+    }
+
     [Function(nameof(VisitedAreasWorker))]
     public async Task Run(
         [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
@@ -133,6 +139,10 @@ public class VisitedAreasWorker(
                 .Concat(FindVisitedRegionAreas(nearbyRegions))
                 .Concat(FindVisitedCountriesFromRegions(nearbyRegions))
                 .ToList();
+            var currentDocumentIds = visitedAreas
+                .Select(area => activity.UserId + "-" + area.AreaId)
+                .ToHashSet(StringComparer.Ordinal);
+            var linkedDocs = await GetActivityLinkedDocuments(activity.UserId, activity.Id, cancellationToken);
 
             var visitedCountryCount = visitedAreas.Count(a => string.Equals(a.AreaType, "country", StringComparison.Ordinal));
             _logger.LogInformation(
@@ -145,6 +155,7 @@ public class VisitedAreasWorker(
 
             if (visitedAreas.Count == 0)
             {
+                await CleanupStaleVisitedAreaDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
                 if (hasRealLockToken) await actions.CompleteMessageAsync(job);
                 return;
@@ -202,6 +213,7 @@ public class VisitedAreasWorker(
                 string.Join(", ", documentIds));
             await _visitedAreasCollection.ExecuteBatch(partitionKey, creates: toCreate, patches: toPatch, cancellationToken: cancellationToken);
             _logger.LogInformation("Batch write complete for activity {ActivityId}", activityId);
+            await CleanupStaleVisitedAreaDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
             if (hasRealLockToken) await actions.CompleteMessageAsync(job);
         }
@@ -518,5 +530,60 @@ public class VisitedAreasWorker(
             return activity.SummaryPolyline;
 
         return GetRoutePolyline(activity);
+    }
+
+    private async Task<List<ActivityLinkedDocumentProjection>> GetActivityLinkedDocuments(
+        string userId,
+        string activityId,
+        CancellationToken cancellationToken)
+    {
+        var query = new QueryDefinition(@"
+SELECT c.id, c.activityIds
+FROM c
+WHERE c.userId = @userId
+  AND ARRAY_CONTAINS(c.activityIds, @activityId)")
+            .WithParameter("@userId", userId)
+            .WithParameter("@activityId", activityId);
+
+        return (await _visitedAreasCollection.ExecuteQueryAsync<ActivityLinkedDocumentProjection>(
+            query,
+            cancellationToken: cancellationToken)).ToList();
+    }
+
+    private async Task CleanupStaleVisitedAreaDocuments(
+        string userId,
+        string activityId,
+        ISet<string> currentDocumentIds,
+        IEnumerable<ActivityLinkedDocumentProjection> linkedDocs,
+        CancellationToken cancellationToken)
+    {
+        var partitionKey = new PartitionKey(userId);
+        var stalePatches = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
+        var staleDeletes = new List<string>();
+
+        foreach (var linkedDoc in linkedDocs)
+        {
+            if (currentDocumentIds.Contains(linkedDoc.Id))
+                continue;
+
+            var remainingActivityIds = (linkedDoc.ActivityIds ?? [])
+                .Where(id => !string.Equals(id, activityId, StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (remainingActivityIds.Count == 0)
+            {
+                staleDeletes.Add(linkedDoc.Id);
+                continue;
+            }
+
+            stalePatches.Add((linkedDoc.Id, [PatchOperation.Set("/activityIds", remainingActivityIds)]));
+        }
+
+        if (stalePatches.Count > 0)
+            await _visitedAreasCollection.ExecuteBatch(partitionKey, patches: stalePatches, cancellationToken: cancellationToken);
+
+        foreach (var staleDelete in staleDeletes)
+            await _visitedAreasCollection.DeleteDocument(staleDelete, partitionKey, cancellationToken);
     }
 }
