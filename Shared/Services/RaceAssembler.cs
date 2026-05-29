@@ -1,7 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using BAMCIS.GeoJSON;
 using Shared.Geo;
@@ -16,11 +13,7 @@ namespace Shared.Services;
 /// </summary>
 public static partial class RaceAssembler
 {
-    /// <summary>
-    /// Increment this whenever property-handling or merge logic changes so that stored
-    /// <see cref="RaceSlotHashes"/> from previous assembly runs are automatically invalidated.
-    /// </summary>
-    public const int AssemblyVersion = 7;
+    public const int DefaultZoom = 8;
 
     // Discovery source priority (highest → lowest).
     public static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "lopplistan", "loppkartan"];
@@ -844,7 +837,7 @@ public static partial class RaceAssembler
     {
         var geometry = new LineString(positions);
         var coord = GeometryCentroidHelper.GetCentroid(geometry);
-        var (x, y) = SlippyTileCalculator.WGS84ToTileIndex(coord, RaceCollectionClient.DefaultZoom);
+        var (x, y) = SlippyTileCalculator.WGS84ToTileIndex(coord, DefaultZoom);
 
         return new StoredFeature
         {
@@ -854,7 +847,7 @@ public static partial class RaceAssembler
             Geometry = geometry,
             X = x,
             Y = y,
-            Zoom = RaceCollectionClient.DefaultZoom,
+            Zoom = DefaultZoom,
             Properties = props,
         };
     }
@@ -863,7 +856,7 @@ public static partial class RaceAssembler
     {
         var geometry = new Point(new Position(lng, lat));
         var coord = new Coordinate(lng, lat);
-        var (x, y) = SlippyTileCalculator.WGS84ToTileIndex(coord, RaceCollectionClient.DefaultZoom);
+        var (x, y) = SlippyTileCalculator.WGS84ToTileIndex(coord, DefaultZoom);
 
         return new StoredFeature
         {
@@ -873,7 +866,7 @@ public static partial class RaceAssembler
             Geometry = geometry,
             X = x,
             Y = y,
-            Zoom = RaceCollectionClient.DefaultZoom,
+            Zoom = DefaultZoom,
             Properties = props,
         };
     }
@@ -945,40 +938,4 @@ public static partial class RaceAssembler
         return null;
     }
 
-    // ── Content hashing ───────────────────────────────────────────────────
-
-    /// <summary>
-    /// Computes separate MD5 hashes for the properties and geometry of an assembled race.
-    /// Used to detect what actually changed between assembly runs so writes can be skipped or
-    /// downgraded to a cheap properties-only patch.
-    /// </summary>
-    public static RaceSlotHashes ComputeHashes(StoredFeature race)
-        => new()
-        {
-            AssemblyVersion = AssemblyVersion,
-            PropertiesHash = ComputeMd5(SerializeProperties(race.Properties)),
-            GeometryHash = ComputeMd5(SerializeGeometry(race.Geometry)),
-        };
-
-    private static string SerializeProperties(IDictionary<string, dynamic> props)
-    {
-        // Sort keys so the hash is order-independent.
-        var sorted = new SortedDictionary<string, object?>(StringComparer.Ordinal);
-        foreach (var (k, v) in props)
-            sorted[k] = (object?)v;
-        return JsonSerializer.Serialize(sorted);
-    }
-
-    private static string SerializeGeometry(Geometry geometry) => geometry switch
-    {
-        LineString ls => string.Join(";", ls.Coordinates.Select(p => FormattableString.Invariant($"{p.Longitude},{p.Latitude}"))),
-        Point pt => FormattableString.Invariant($"{pt.Coordinates.Longitude},{pt.Coordinates.Latitude}"),
-        _ => geometry.Type.ToString(),
-    };
-
-    private static string ComputeMd5(string input)
-    {
-        var hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(hash).ToLowerInvariant();
-    }
 }

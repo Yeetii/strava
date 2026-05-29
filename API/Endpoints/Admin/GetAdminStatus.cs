@@ -57,7 +57,6 @@ public class GetAdminStatus(
         DatabaseConfig.VisitedPathsContainer,
         DatabaseConfig.VisitedAreasContainer,
         DatabaseConfig.PeaksGroupsContainer,
-        DatabaseConfig.RacesContainer,
         DatabaseConfig.OsmFeaturesContainer,
     ];
 

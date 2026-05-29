@@ -32,7 +32,7 @@ internal static class QueueActivityCollectionJobs
             await sender.SendMessageAsync(new ServiceBusMessage(ids[index])
             {
                 MessageId = BuildQueueAllMessageId(queueName, ids[index]),
-                ScheduledEnqueueTime = DateTimeOffset.UtcNow.Add(spacing * index)
+                // ScheduledEnqueueTime = DateTimeOffset.UtcNow.Add(spacing * index)
             });
         }
 
