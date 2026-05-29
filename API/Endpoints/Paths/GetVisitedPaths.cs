@@ -15,7 +15,6 @@ public class GetVisitedPaths(
     UserAuthenticationService userAuthService)
 {
     private sealed record VisitedPathDto(
-        string PathId,
         string? OsmId,
         string? Name,
         string? Type,
@@ -67,7 +66,6 @@ public class GetVisitedPaths(
                 var last = sortedDates.LastOrDefault();
 
                 return new VisitedPathDto(
-                    vp.PathId,
                     vp.OsmHighwayId,
                     vp.Name,
                     vp.Type,

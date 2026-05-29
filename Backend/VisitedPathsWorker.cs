@@ -131,14 +131,25 @@ public class VisitedPathsWorker(
 
             var activityGrid = BuildSpatialGrid(activityPoints);
             var visitedPaths = FindVisitedPaths(activityGrid, pathGridIndex).ToList();
-            var currentDocumentIds = visitedPaths
-                .Select(path => activity.UserId + "-" + path.Id.Value)
+            var visitedPathsByOsmId = visitedPaths
+                .Select(path => (Path: path, OsmHighwayId: GetOsmHighwayId(path)))
+                .Where(match => !string.IsNullOrWhiteSpace(match.OsmHighwayId))
+                .GroupBy(match => match.OsmHighwayId!, StringComparer.Ordinal)
+                .Select(group => (group.First().Path, OsmHighwayId: group.Key))
+                .ToList();
+
+            var currentDocumentIds = visitedPathsByOsmId
+                .Select(path => activity.UserId + "-" + path.OsmHighwayId)
                 .ToHashSet(StringComparer.Ordinal);
             var linkedDocs = await GetActivityLinkedDocuments(activity.UserId, activity.Id, cancellationToken);
 
-            _logger.LogInformation("Activity {ActivityId} visits {PathCount} paths", activityId, visitedPaths.Count);
+            _logger.LogInformation(
+                "Activity {ActivityId} visits {PathCount} paths ({OsmPathCount} by canonical osmId)",
+                activityId,
+                visitedPaths.Count,
+                visitedPathsByOsmId.Count);
 
-            if (visitedPaths.Count == 0)
+            if (visitedPathsByOsmId.Count == 0)
             {
                 await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
@@ -147,8 +158,8 @@ public class VisitedPathsWorker(
             }
 
             // Batch-read existing VisitedPath documents
-            var visitedPathIds = visitedPaths
-                .Select(p => activity.UserId + "-" + p.Id.Value)
+            var visitedPathIds = visitedPathsByOsmId
+                .Select(path => activity.UserId + "-" + path.OsmHighwayId)
                 .ToList();
             var existingDocs = (await _visitedPathsCollection.GetByIdsAsync(visitedPathIds))
                 .ToDictionary(d => d.Id);
@@ -157,13 +168,11 @@ public class VisitedPathsWorker(
             var toPatches = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
             var partitionKey = new PartitionKey(activity.UserId);
 
-            foreach (var pathFeature in visitedPaths)
+            foreach (var pathMatch in visitedPathsByOsmId)
             {
-                var pathId = pathFeature.Id.Value;
-                var osmHighwayId = pathFeature.Properties.TryGetValue("osmId", out var osmId)
-                    ? osmId?.ToString()
-                    : null;
-                var documentId = activity.UserId + "-" + pathId;
+                var pathFeature = pathMatch.Path;
+                var osmHighwayId = pathMatch.OsmHighwayId;
+                var documentId = activity.UserId + "-" + osmHighwayId;
 
                 if (existingDocs.TryGetValue(documentId, out var existing))
                 {
@@ -174,7 +183,7 @@ public class VisitedPathsWorker(
                         patchOperations.Add(PatchOperation.Add("/activityIds/-", activity.Id));
                     }
 
-                    if (string.IsNullOrWhiteSpace(existing.OsmHighwayId) && !string.IsNullOrWhiteSpace(osmHighwayId))
+                    if (!string.Equals(existing.OsmHighwayId, osmHighwayId, StringComparison.Ordinal))
                     {
                         patchOperations.Add(PatchOperation.Set("/osmHighwayId", osmHighwayId));
                     }
@@ -190,7 +199,6 @@ public class VisitedPathsWorker(
                     {
                         Id = documentId,
                         UserId = activity.UserId,
-                        PathId = pathId,
                         OsmHighwayId = osmHighwayId,
                         Name = pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
                         Type = pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
@@ -403,6 +411,15 @@ public class VisitedPathsWorker(
         var paths = (await _highwaysShardFeatureClient.GetFeaturesForShards(tileIndices)).ToList();
         _logger.LogInformation("Found {Count} nearby paths", paths.Count);
         return paths;
+    }
+
+    private static string? GetOsmHighwayId(Feature pathFeature)
+    {
+        if (!pathFeature.Properties.TryGetValue("osmId", out var osmId))
+            return null;
+
+        var value = osmId?.ToString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private async Task<List<ActivityLinkedDocumentProjection>> GetActivityLinkedDocuments(

@@ -7,7 +7,6 @@ public class VisitedPath : IDocument
     [JsonPropertyName("id")]
     public required string Id { get; set; }
     public required string UserId { get; set; }
-    public required string PathId { get; set; }
     public string? OsmHighwayId { get; set; }
     public string? Name { get; set; }
     public string? Type { get; set; }

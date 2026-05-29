@@ -28,3 +28,12 @@ Implementation notes:
 - Keep the retry-count application property on scheduled copies.
 - Use active Service Bus message counts, not scheduled counts, when deciding whether to defer.
 - Keep Cosmos hot-path checks lightweight; avoid Azure Monitor queries during worker execution.
+
+## Visited Path Identity
+
+Visited path identity must be based on **OSM way id** (`osmId`), not on shard-local feature ids.
+
+- In `VisitedPathsWorker`, treat `osmId` as canonical for dedupe and persistence.
+- `VisitedPath.Id` should be `"{userId}-{osmId}"`
+- Never persist shard-scoped hashed feature ids as visited-path identity. They vary by tile/shard and cause duplicate visited paths for the same OSM way.
+- Frontend matching should use `osmId` for stable joins across zoom levels and shard boundaries.
