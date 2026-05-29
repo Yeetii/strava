@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -155,6 +156,11 @@ var host = new HostBuilder()
         {
             var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
             return new ServiceBusClient(sbConnectionString);
+        });
+        services.AddSingleton(s =>
+        {
+            var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
+            return new ServiceBusAdministrationClient(sbConnectionString);
         });
         services.AddScoped(serviceProvider =>
         {

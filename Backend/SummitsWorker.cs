@@ -3,6 +3,7 @@ using Shared.Models;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
 using Microsoft.Azure.Cosmos;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.DependencyInjection;
 using Shared.Geo;
 using Shared.Constants;
@@ -21,6 +22,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
     [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
     ServiceBusClient serviceBusClient,
+    ServiceBusAdministrationClient serviceBusAdministrationClient,
     ISummitsCalculator _summitsCalculator,
     UserSyncStatusService _userSyncStatusService)
 {
@@ -32,13 +34,25 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     public async Task Run(
         [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions, CancellationToken cancellationToken)
     {
+        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
+                serviceBusAdministrationClient,
+                _serviceBusClient,
+                ServiceBusConfig.CalculateSummitsJobs,
+                jobs,
+                actions,
+                _logger,
+                cancellationToken))
+        {
+            return;
+        }
+
         var jobIds = jobs.Select(x => x.Body.ToString()).ToList();
         var activities = await _activitiesCollection.GetByIdsAsync(jobIds, cancellationToken);
         var activitiesById = activities.ToDictionary(x => x.Id, StringComparer.Ordinal);
         var peaks = (await FetchNearbyPeaks(activitiesById.Values)).ToList();
 
         // Renew locks after the potentially slow peak fetch before per-job processing
-        var realJobs = jobs.Where(ServiceBusCosmosRetryHelper.HasRealLockToken).ToList();
+        var realJobs = jobs.Where(ServiceBusRescheduler.HasRealLockToken).ToList();
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
@@ -88,7 +102,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             {
                 await SendActivityProcessedEvent(activity, []);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-                if (ServiceBusCosmosRetryHelper.HasRealLockToken(job))
+                if (ServiceBusRescheduler.HasRealLockToken(job))
                     try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
                 await actions.CompleteMessageAsync(job);
                 return;
@@ -98,13 +112,18 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             await SendActivityProcessedEvent(activity, summits);
             await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job))
+            if (ServiceBusRescheduler.HasRealLockToken(job))
                 try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
             await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
         {
-            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
+            {
+                ServiceBusRescheduler.RecordCosmosThrottle();
+            }
+
+            await ServiceBusRescheduler.HandleRetryAsync(
                 ex, actions, job, _serviceBusClient, ServiceBusConfig.CalculateSummitsJobs, _logger, cancellationToken);
             return;
         }

@@ -77,7 +77,7 @@ namespace Backend
             catch (Exception ex)
             {
                 var scheduledEnqueueTimeUtc = (ex as StravaRateLimitExceededException)?.RetryAtUtc;
-                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                await ServiceBusRescheduler.HandleRetryAsync(
                     ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, _logger, cancellationToken, maxRetryCount: 3, scheduledEnqueueTimeUtc: scheduledEnqueueTimeUtc);
                 return;
             }

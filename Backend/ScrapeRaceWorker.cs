@@ -1,4 +1,5 @@
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Backend.Scrapers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -21,6 +22,7 @@ public class ScrapeRaceWorker(
     IHttpClientFactory httpClientFactory,
     BlobOrganizerStore organizerClient,
     ServiceBusClient serviceBusClient,
+    ServiceBusAdministrationClient serviceBusAdministrationClient,
     ILogger<ScrapeRaceWorker> logger)
 {
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
@@ -44,6 +46,18 @@ public class ScrapeRaceWorker(
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
+        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
+                serviceBusAdministrationClient,
+                _serviceBusClient,
+                ServiceBusConfig.ScrapeRace,
+                messages,
+                actions,
+                _logger,
+                cancellationToken))
+        {
+            return;
+        }
+
         await Parallel.ForEachAsync(messages,
             new ParallelOptions { MaxDegreeOfParallelism = messages.Length, CancellationToken = cancellationToken },
             (message, ct) => new ValueTask(ProcessSingleAsync(message, actions, ct)));
@@ -125,7 +139,12 @@ public class ScrapeRaceWorker(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+            if (ex is Microsoft.Azure.Cosmos.CosmosException cosmosEx && cosmosEx.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                ServiceBusRescheduler.RecordCosmosThrottle();
+            }
+
+            await ServiceBusRescheduler.HandleRetryAsync(
                 ex, actions, message, _serviceBusClient, ServiceBusConfig.ScrapeRace, _logger, cancellationToken);
         }
     }
@@ -278,7 +297,7 @@ public class ScrapeRaceWorker(
 
     private async Task TryCompleteAsync(ServiceBusMessageActions actions, ServiceBusReceivedMessage message, CancellationToken ct)
     {
-        if (!ServiceBusCosmosRetryHelper.HasRealLockToken(message))
+        if (!ServiceBusRescheduler.HasRealLockToken(message))
         {
             _logger.LogDebug("Skipping message completion for {MessageId}: no real peek-lock token", message.MessageId);
             return;

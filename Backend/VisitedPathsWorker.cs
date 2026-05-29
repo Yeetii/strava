@@ -1,4 +1,5 @@
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Geo;
@@ -16,6 +17,7 @@ public class VisitedPathsWorker(
     CollectionClient<VisitedPath> _visitedPathsCollection,
     ShardFeatureClient _highwaysShardFeatureClient,
     ServiceBusClient serviceBusClient,
+    ServiceBusAdministrationClient serviceBusAdministrationClient,
     UserSyncStatusService _userSyncStatusService)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
@@ -39,6 +41,18 @@ public class VisitedPathsWorker(
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
+        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
+                serviceBusAdministrationClient,
+                _serviceBusClient,
+                Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs,
+                jobs,
+                actions,
+                _logger,
+                cancellationToken))
+        {
+            return;
+        }
+
         var ids = jobs.Select(x => x.Body.ToString()).ToList();
         var activities = await FetchActivitySlims(ids);
         var activitiesList = activities
@@ -52,7 +66,7 @@ public class VisitedPathsWorker(
             a => GeoSpatialFunctions.DecodePolyline(a.Polyline ?? a.SummaryPolyline).ToList());
 
         // Renew locks before the potentially slow shared data fetch
-        var realJobs = jobs.Where(ServiceBusCosmosRetryHelper.HasRealLockToken).ToList();
+        var realJobs = jobs.Where(ServiceBusRescheduler.HasRealLockToken).ToList();
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
@@ -99,7 +113,7 @@ public class VisitedPathsWorker(
                 {
                     await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
                 }
-                if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+                if (ServiceBusRescheduler.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
@@ -111,7 +125,7 @@ public class VisitedPathsWorker(
             if (visitedPaths.Count == 0)
             {
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-                if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+                if (ServiceBusRescheduler.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
@@ -154,7 +168,7 @@ public class VisitedPathsWorker(
                 }
             }
 
-            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job))
+            if (ServiceBusRescheduler.HasRealLockToken(job))
             {
                 try { await actions.RenewMessageLockAsync(job); }
                 catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
@@ -164,13 +178,18 @@ public class VisitedPathsWorker(
             }
             await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+            if (ServiceBusRescheduler.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
         {
-            if (ServiceBusCosmosRetryHelper.HasRealLockToken(job))
+            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
             {
-                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                ServiceBusRescheduler.RecordCosmosThrottle();
+            }
+
+            if (ServiceBusRescheduler.HasRealLockToken(job))
+            {
+                await ServiceBusRescheduler.HandleRetryAsync(
                     ex, actions, job, _serviceBusClient, Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, _logger, cancellationToken);
                 return;
             }

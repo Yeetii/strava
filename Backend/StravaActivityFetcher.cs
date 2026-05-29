@@ -40,7 +40,7 @@ namespace Backend
                         parseError,
                         bodyPreview);
 
-                    if (ServiceBusCosmosRetryHelper.HasRealLockToken(message))
+                    if (ServiceBusRescheduler.HasRealLockToken(message))
                     {
                         await actions.DeadLetterMessageAsync(
                             message,
@@ -86,7 +86,7 @@ namespace Backend
                 DateTimeOffset? scheduledEnqueueTimeUtc = ex is StravaRateLimitExceededException rateLimitExceededException
                     ? StravaActivityFetchScheduling.ResolveRetryScheduleUtc(rateLimitExceededException, existingActivity, fetchJob?.ActivityId ?? string.Empty, DateTimeOffset.UtcNow)
                     : null;
-                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                await ServiceBusRescheduler.HandleRetryAsync(
                     ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivityFetchJobs, _logger, cancellationToken, maxRetryCount: 3, scheduledEnqueueTimeUtc: scheduledEnqueueTimeUtc);
             }
         }

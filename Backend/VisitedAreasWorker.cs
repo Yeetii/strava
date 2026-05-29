@@ -1,4 +1,5 @@
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Geo;
@@ -18,6 +19,7 @@ public class VisitedAreasWorker(
     [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient _protectedAreasCollection,
     AdminBoundariesCollectionClient _adminBoundariesCollection,
     ServiceBusClient serviceBusClient,
+    ServiceBusAdministrationClient serviceBusAdministrationClient,
     UserSyncStatusService _userSyncStatusService)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
@@ -39,6 +41,18 @@ public class VisitedAreasWorker(
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
+        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
+                serviceBusAdministrationClient,
+                _serviceBusClient,
+                Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs,
+                jobs,
+                actions,
+                _logger,
+                cancellationToken))
+        {
+            return;
+        }
+
         var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
         var activitiesList = activities
@@ -65,7 +79,7 @@ public class VisitedAreasWorker(
         CancellationToken cancellationToken)
     {
         var activityId = job.Body.ToString();
-        var hasRealLockToken = ServiceBusCosmosRetryHelper.HasRealLockToken(job);
+        var hasRealLockToken = ServiceBusRescheduler.HasRealLockToken(job);
         try
         {
             var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
@@ -193,9 +207,14 @@ public class VisitedAreasWorker(
         }
         catch (Exception ex)
         {
+            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
+            {
+                ServiceBusRescheduler.RecordCosmosThrottle();
+            }
+
             if (hasRealLockToken)
             {
-                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                await ServiceBusRescheduler.HandleRetryAsync(
                     ex, actions, job, _serviceBusClient, Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs, _logger, cancellationToken);
                 return;
             }

@@ -1,4 +1,5 @@
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
@@ -12,6 +13,7 @@ public class AdminBoundaryEnrichmentWorker(
     AdminBoundaryMetricsEnricher enricher,
     CollectionClient<StoredFeature> storedFeaturesCollection,
     ServiceBusClient serviceBusClient,
+    ServiceBusAdministrationClient serviceBusAdministrationClient,
     ILogger<AdminBoundaryEnrichmentWorker> logger)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
@@ -22,6 +24,18 @@ public class AdminBoundaryEnrichmentWorker(
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
+        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
+                serviceBusAdministrationClient,
+                _serviceBusClient,
+                ServiceBusConfig.EnrichAdminBoundaryJobs,
+                messages,
+                actions,
+                logger,
+                cancellationToken))
+        {
+            return;
+        }
+
         var ids = messages.Select(m => m.Body.ToString()).ToList();
         logger.LogInformation("Processing {Count} admin boundary enrichment jobs", ids.Count);
 
@@ -43,7 +57,12 @@ public class AdminBoundaryEnrichmentWorker(
             }
             catch (Exception ex)
             {
-                await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+                if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
+                {
+                    ServiceBusRescheduler.RecordCosmosThrottle();
+                }
+
+                await ServiceBusRescheduler.HandleRetryAsync(
                     ex, actions, message, _serviceBusClient, ServiceBusConfig.EnrichAdminBoundaryJobs, logger, cancellationToken);
                 continue;
             }

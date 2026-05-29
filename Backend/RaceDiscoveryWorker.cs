@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
@@ -12,7 +13,9 @@ public class RaceDiscoveryWorker(
     DiscoverItraRaces itraDiscovery,
     DiscoverSkyrunningRaces skyrunningDiscovery,
     RaceDiscoveryService discoveryService,
-    ILogger<RaceDiscoveryWorker> logger)
+    ILogger<RaceDiscoveryWorker> logger,
+    ServiceBusAdministrationClient serviceBusAdministrationClient,
+    ServiceBusClient serviceBusClient)
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(10);
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web)
@@ -52,6 +55,19 @@ public class RaceDiscoveryWorker(
         }
 
         var normalizedMessage = discoveryMessage with { Agent = discoveryMessage.Agent.Trim().ToLowerInvariant() };
+
+        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
+                serviceBusAdministrationClient,
+                serviceBusClient,
+                ServiceBusConfig.RaceDiscoveryJobs,
+                message,
+                actions,
+                logger,
+                cancellationToken))
+        {
+            return;
+        }
+
         try
         {
             RaceDiscoveryMessage? nextMessage = normalizedMessage.Agent switch

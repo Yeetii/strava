@@ -2,6 +2,16 @@ namespace Shared.Constants
 {
     public static class ServiceBusConfig
     {
+        public static readonly string[] NonTimeCriticalQueues = [
+            CalculateSummitsJobs,
+            CalculateVisitedPathsJobs,
+            CalculateVisitedAreasJobs,
+            AccountDeleteJobs,
+            EnrichAdminBoundaryJobs,
+            RaceDiscoveryJobs,
+            ScrapeRace
+        ];
+
         public const string CalculateSummitsJobs = "calculateSummitsJobs";
         public const string CalculateVisitedPathsJobs = "calculateVisitedPathsJobs";
         public const string CalculateVisitedAreasJobs = "calculateVisitedAreasJobs";

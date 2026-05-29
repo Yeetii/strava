@@ -101,7 +101,7 @@ public class ScrapeRaceMistralWorker
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+            await ServiceBusRescheduler.HandleRetryAsync(
                 ex, actions, message, _serviceBusClient, ServiceBusConfig.MistralScrapeJobs, _logger, cancellationToken);
             return;
         }

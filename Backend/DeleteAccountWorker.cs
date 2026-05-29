@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
@@ -18,7 +19,8 @@ public class DeleteAccountWorker(
     CollectionClient<VisitedPath> _visitedPathsCollection,
     CollectionClient<VisitedArea> _visitedAreasCollection,
     CollectionClient<UserSyncItem> _userSyncItemsCollection,
-    ServiceBusClient _serviceBusClient)
+    ServiceBusClient _serviceBusClient,
+    ServiceBusAdministrationClient serviceBusAdministrationClient)
 {
     [Function(nameof(DeleteAccountWorker))]
     public async Task Run(
@@ -29,6 +31,18 @@ public class DeleteAccountWorker(
         var deleteJob = message.Body.ToObjectFromJson<AccountDeleteJob>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (deleteJob == null)
             throw new InvalidOperationException("Account delete job payload is invalid.");
+
+        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
+                serviceBusAdministrationClient,
+                _serviceBusClient,
+                ServiceBusConfig.AccountDeleteJobs,
+                message,
+                actions,
+                _logger,
+                cancellationToken))
+        {
+            return;
+        }
 
         try
         {
@@ -44,7 +58,12 @@ public class DeleteAccountWorker(
         }
         catch (Exception ex)
         {
-            await ServiceBusCosmosRetryHelper.HandleRetryAsync(
+            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
+            {
+                ServiceBusRescheduler.RecordCosmosThrottle();
+            }
+
+            await ServiceBusRescheduler.HandleRetryAsync(
                 ex,
                 actions,
                 message,
