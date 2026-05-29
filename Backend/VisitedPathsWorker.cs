@@ -143,15 +143,28 @@ public class VisitedPathsWorker(
             foreach (var pathFeature in visitedPaths)
             {
                 var pathId = pathFeature.Id.Value;
+                var osmHighwayId = pathFeature.Properties.TryGetValue("osmId", out var osmId)
+                    ? osmId?.ToString()
+                    : null;
                 var documentId = activity.UserId + "-" + pathId;
 
                 if (existingDocs.TryGetValue(documentId, out var existing))
                 {
+                    var patchOperations = new List<PatchOperation>();
+
                     if (!existing.ActivityIds.Contains(activity.Id))
                     {
-                        toPatches.Add((documentId, [
-                            PatchOperation.Add("/activityIds/-", activity.Id)
-                        ]));
+                        patchOperations.Add(PatchOperation.Add("/activityIds/-", activity.Id));
+                    }
+
+                    if (string.IsNullOrWhiteSpace(existing.OsmHighwayId) && !string.IsNullOrWhiteSpace(osmHighwayId))
+                    {
+                        patchOperations.Add(PatchOperation.Set("/osmHighwayId", osmHighwayId));
+                    }
+
+                    if (patchOperations.Count > 0)
+                    {
+                        toPatches.Add((documentId, patchOperations));
                     }
                 }
                 else
@@ -161,6 +174,7 @@ public class VisitedPathsWorker(
                         Id = documentId,
                         UserId = activity.UserId,
                         PathId = pathId,
+                        OsmHighwayId = osmHighwayId,
                         Name = pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
                         Type = pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
                         ActivityIds = [activity.Id]

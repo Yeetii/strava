@@ -16,11 +16,12 @@ public class GetVisitedPaths(
 {
     private sealed record VisitedPathDto(
         string PathId,
+        string? OsmId,
         string? Name,
         string? Type,
         int TimesVisited,
-        string[] ActivityIds,
-        string[] Dates);
+        string? First,
+        string? Last);
 
     [OpenApiOperation(tags: ["Paths"])]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
@@ -62,13 +63,17 @@ public class GetVisitedPaths(
                     .Select(d => d.ToString("O"))
                     .ToArray();
 
+                var first = sortedDates.FirstOrDefault();
+                var last = sortedDates.LastOrDefault();
+
                 return new VisitedPathDto(
                     vp.PathId,
+                    vp.OsmHighwayId,
                     vp.Name,
                     vp.Type,
                     vp.ActivityIds.Count,
-                    vp.ActivityIds.Order().ToArray(),
-                    sortedDates
+                    first,
+                    last
                 );
             })
             .OrderByDescending(p => p.TimesVisited)
