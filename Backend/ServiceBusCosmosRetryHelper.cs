@@ -13,11 +13,17 @@ public static class ServiceBusRescheduler
 {
     public const string RetryCountProperty = "ExceptionRetryCount";
     public const int DefaultMaxRetryCount = 10;
-    private static readonly TimeSpan MinRetryDelay = TimeSpan.FromMinutes(3);
-    private static readonly TimeSpan CosmosPressureWindow = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan QueueDepthCacheTtl = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan RuCacheTtl = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MinRetryDelay = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan CosmosPressureWindow = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan QueueDepthCacheTtl = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan RuCacheTtl = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan BatchMessageSpacing = TimeSpan.FromSeconds(5);
+    private const double RuCriticalRemainingFraction = 0.15;
+    private const double RuComfortableRemainingFraction = 0.35;
+    private const double DelayJitterRatio = 0.2;
+    private static readonly TimeSpan MaxBackpressureDelay = TimeSpan.FromMinutes(10);
+    private const int ScheduledLoadDivisor = 75;
+    private const long MaxScheduledLoadContribution = 20;
     private static long _lastCosmosThrottleUnixMilliseconds;
     private static readonly SemaphoreSlim QueueDepthCacheGate = new(1, 1);
     private static QueueDepthSnapshot? _queueDepthSnapshot;
@@ -128,7 +134,12 @@ public static class ServiceBusRescheduler
             cancellationToken);
 
         var backpressureDelay = await ComputeScheduleDelayAsync(
-            totalActiveMessages, totalScheduledMessages, logger, cancellationToken, skipRuCheck: isHighPriority);
+            totalActiveMessages,
+            totalScheduledMessages,
+            logger,
+            cancellationToken,
+            skipRuCheck: isHighPriority,
+            includeScheduledBacklog: false);
 
         if (backpressureDelay <= TimeSpan.Zero)
             return false;
@@ -274,34 +285,65 @@ public static class ServiceBusRescheduler
         ILogger logger,
         CancellationToken cancellationToken,
         bool skipRuCheck = false,
-        bool enforceMinimum = false)
+        bool enforceMinimum = false,
+        bool includeScheduledBacklog = true)
     {
         if (!skipRuCheck)
         {
             var ruRemaining = await GetRuRemainingFractionAsync(logger, cancellationToken);
-            if (ruRemaining.HasValue && ruRemaining.Value < 0.05)
+            if (ruRemaining.HasValue && ruRemaining.Value < RuCriticalRemainingFraction)
             {
                 var ruDelay = TimeSpan.FromMinutes(2);
                 return enforceMinimum && ruDelay < MinRetryDelay ? MinRetryDelay : ruDelay;
             }
+
+            // If RU telemetry says we're comfortably below budget and there is no recent
+            // throttle signal, do not defer at low active depth.
+            if (!IsCosmosUnderPressure && ruRemaining.HasValue && ruRemaining.Value >= RuComfortableRemainingFraction && active < 80)
+                return TimeSpan.Zero;
         }
 
-        var delay = GetBackpressureDelay(active, scheduled);
+        // Prefer immediate execution while Cosmos appears healthy. Low/medium queue depth
+        // should not defer unless we have a direct pressure signal or critical RU telemetry.
+        if (!IsCosmosUnderPressure)
+            return TimeSpan.Zero;
+
+        var scheduledForLoad = includeScheduledBacklog ? scheduled : 0;
+        var delay = GetBackpressureDelay(active, scheduledForLoad);
         return enforceMinimum && delay < MinRetryDelay ? MinRetryDelay : delay;
     }
 
     private static TimeSpan GetBackpressureDelay(long totalActiveMessages, long totalScheduledMessages)
     {
-        var total = totalActiveMessages + totalScheduledMessages;
-        return total switch
+        var scheduledContribution = totalScheduledMessages <= 0
+            ? 0L
+            : totalScheduledMessages / ScheduledLoadDivisor;
+        if (scheduledContribution > MaxScheduledLoadContribution)
+            scheduledContribution = MaxScheduledLoadContribution;
+
+        var effectiveLoad = totalActiveMessages + scheduledContribution;
+
+        var baseDelay = effectiveLoad switch
         {
-            < 50 => IsCosmosUnderPressure ? TimeSpan.FromMinutes(5) : TimeSpan.Zero,
-            < 200 => TimeSpan.FromMinutes(3),
-            < 500 => TimeSpan.FromMinutes(8),
-            < 1000 => TimeSpan.FromMinutes(15),
-            < 2000 => TimeSpan.FromMinutes(30),
-            _ => TimeSpan.FromHours(1),
+            < 10 => IsCosmosUnderPressure ? TimeSpan.FromSeconds(45) : TimeSpan.Zero,
+            < 30 => IsCosmosUnderPressure ? TimeSpan.FromMinutes(2) : TimeSpan.Zero,
+            < 80 => IsCosmosUnderPressure ? TimeSpan.FromMinutes(4) : TimeSpan.Zero,
+            < 200 => TimeSpan.FromMinutes(4),
+            _ => MaxBackpressureDelay,
         };
+
+        if (baseDelay == TimeSpan.Zero)
+            return TimeSpan.Zero;
+
+        // Spread retries a bit to avoid synchronized bursts after defer windows.
+        var jitterSeconds = baseDelay.TotalSeconds * DelayJitterRatio;
+        var jitter = (Random.Shared.NextDouble() * 2 - 1) * jitterSeconds;
+        var delayWithJitter = TimeSpan.FromSeconds(baseDelay.TotalSeconds + jitter);
+
+        if (delayWithJitter < TimeSpan.FromSeconds(15))
+            return TimeSpan.FromSeconds(15);
+
+        return delayWithJitter > MaxBackpressureDelay ? MaxBackpressureDelay : delayWithJitter;
     }
 
     private static async Task<double?> GetRuRemainingFractionAsync(ILogger logger, CancellationToken cancellationToken)
