@@ -4,6 +4,20 @@ Base URL: `https://peakshunters.erikmagnusson.com/api`
 
 Repository note: Cosmos container partition keys are not uniform across this codebase. For write-path and patch/delete conventions, see [COSMOS_CONTAINERS.md](/Users/erik/Code/Erik/strava/COSMOS_CONTAINERS.md).
 
+## OpenAPI Source of Truth
+
+Canonical OpenAPI is stored at `API/openapi/openapi.source.json`.
+
+How it is built:
+- Pull the generated OpenAPI document from the running Functions app (`/api/openapi/v3.json`).
+- Link and augment coverage from `bruno/**/*.bru` requests.
+
+Sync command (run from repo root):
+- `npm run openapi:sync`
+
+API endpoint exposing the canonical source file:
+- `GET /openapi/source.json`
+
 ## Authentication
 
 Authenticated endpoints require a `session` cookie obtained from `POST /{authCode}/login`.

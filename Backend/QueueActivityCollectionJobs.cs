@@ -2,6 +2,8 @@ using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Shared.Models;
 using Shared.Services;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Backend;
 
@@ -29,6 +31,7 @@ internal static class QueueActivityCollectionJobs
         {
             await sender.SendMessageAsync(new ServiceBusMessage(ids[index])
             {
+                MessageId = BuildQueueAllMessageId(queueName, ids[index]),
                 ScheduledEnqueueTime = DateTimeOffset.UtcNow.Add(spacing * index)
             });
         }
@@ -55,5 +58,19 @@ internal static class QueueActivityCollectionJobs
 
         return new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.userId = @userId")
             .WithParameter("@userId", userId);
+    }
+
+    internal static string BuildQueueAllMessageId(string queueName, string activityId)
+    {
+        var normalizedQueueName = string.IsNullOrWhiteSpace(queueName)
+            ? "unknown-queue"
+            : queueName.Trim().ToLowerInvariant();
+        var normalizedActivityId = string.IsNullOrWhiteSpace(activityId)
+            ? "empty"
+            : activityId.Trim();
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"queue-all|{normalizedQueueName}|{normalizedActivityId}"));
+        var hash = Convert.ToHexString(bytes[..12]).ToLowerInvariant();
+        return $"queue-all:{normalizedQueueName}:{hash}";
     }
 }

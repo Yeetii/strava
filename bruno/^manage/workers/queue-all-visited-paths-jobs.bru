@@ -1,0 +1,15 @@
+meta {
+  name: Queue All VisitedPaths Jobs
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{backendUrl}}/api/QueueAllVisitedPathsJobs?userId={{userId}}
+  body: none
+  auth: none
+}
+
+vars:pre-request {
+  userId: 11908635
+}

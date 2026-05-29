@@ -3,6 +3,8 @@ using Azure.Messaging.ServiceBus.Administration;
 using Shared.Constants;
 using Microsoft.Extensions.Logging;
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Backend;
 
@@ -157,17 +159,28 @@ public static class ServiceBusRescheduler
 
         var retryCount = GetRetryCount(message);
         var hasExplicitScheduledRetry = scheduledEnqueueTimeUtc.HasValue;
-        if (retryCount >= maxRetryCount && !hasExplicitScheduledRetry)
+        if (ShouldDeadLetter(retryCount, message.DeliveryCount, maxRetryCount, hasExplicitScheduledRetry))
         {
+            var deliveryLimitReached = message.DeliveryCount >= maxRetryCount;
+            var deadLetterReason = BuildRetryDeadLetterReason(exception, deliveryLimitReached);
+            var deadLetterDescription = BuildRetryDeadLetterDescription(
+                exception,
+                queueName,
+                retryCount,
+                maxRetryCount,
+                message.DeliveryCount,
+                hasExplicitScheduledRetry,
+                deliveryLimitReached);
+
             logger.LogError(exception,
-                "Retry limit reached for message {MessageId} on queue {QueueName}; dead-lettering",
-                message.MessageId, queueName);
+                "Retry limit reached for message {MessageId} on queue {QueueName}; dead-lettering with reason {DeadLetterReason}",
+                message.MessageId, queueName, deadLetterReason);
 
             try
             {
                 await actions.DeadLetterMessageAsync(message,
-                    deadLetterReason: "RetryLimitExceeded",
-                    deadLetterErrorDescription: $"Exceeded {maxRetryCount} retries for exception: {exception.Message}",
+                    deadLetterReason: deadLetterReason,
+                    deadLetterErrorDescription: deadLetterDescription,
                     cancellationToken: cancellationToken);
             }
             catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
@@ -277,7 +290,7 @@ public static class ServiceBusRescheduler
             SessionId = message.SessionId,
             To = message.To,
             TimeToLive = message.TimeToLive,
-            MessageId = Guid.NewGuid().ToString()
+            MessageId = BuildScheduledMessageId(message.MessageId, retryCount)
         };
 
         foreach (var kv in message.ApplicationProperties)
@@ -285,5 +298,41 @@ public static class ServiceBusRescheduler
 
         retryMessage.ApplicationProperties[RetryCountProperty] = retryCount;
         return retryMessage;
+    }
+
+    internal static string BuildScheduledMessageId(string sourceMessageId, int retryCount)
+    {
+        var normalizedSourceId = string.IsNullOrWhiteSpace(sourceMessageId)
+            ? "empty"
+            : sourceMessageId.Trim();
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"resched|{normalizedSourceId}|{retryCount}"));
+        var hash = Convert.ToHexString(bytes[..12]).ToLowerInvariant();
+        return $"resched:{retryCount}:{hash}";
+    }
+
+    internal static bool ShouldDeadLetter(int retryCount, int deliveryCount, int maxRetryCount, bool hasExplicitScheduledRetry)
+        => deliveryCount >= maxRetryCount
+            || (!hasExplicitScheduledRetry && retryCount >= maxRetryCount);
+
+    internal static string BuildRetryDeadLetterReason(Exception exception, bool deliveryLimitReached)
+    {
+        var exceptionType = exception.GetType().Name;
+        return deliveryLimitReached
+            ? $"DeliveryLimitExceeded_{exceptionType}"
+            : $"RetryLimitExceeded_{exceptionType}";
+    }
+
+    internal static string BuildRetryDeadLetterDescription(
+        Exception exception,
+        string queueName,
+        int retryCount,
+        int maxRetryCount,
+        int deliveryCount,
+        bool hasExplicitScheduledRetry,
+        bool deliveryLimitReached)
+    {
+        var limitKind = deliveryLimitReached ? "delivery" : "retry";
+        return $"Exceeded {limitKind} limit on queue '{queueName}'. DeliveryCount={deliveryCount}, ExceptionRetryCount={retryCount}, MaxRetryCount={maxRetryCount}, ExplicitSchedule={hasExplicitScheduledRetry}, ExceptionType={exception.GetType().Name}, Error={exception.Message}";
     }
 }

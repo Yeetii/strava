@@ -13,8 +13,7 @@ namespace API.Endpoints.User;
 public class DeleteAccount(UserAuthenticationService _userAuthService)
 {
     [OpenApiOperation(tags: ["User management"], Summary = "Submit an account delete job for the current user.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "Account delete job queued")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response or account delete job queued")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
     [Function(nameof(DeleteAccount))]
     public async Task<ReturnBindings> Run([HttpTrigger(AuthorizationLevel.Anonymous, "delete", "options", Route = "account")] HttpRequestData req)

@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "openapi:sync": "node Tools/sync-openapi-source.mjs"
+  },
   "dependencies": {
     "@protomaps/basemaps": "^5.7.2"
   }

@@ -1,0 +1,3462 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Strava API",
+    "description": "Canonical OpenAPI generated from API code and augmented with Bruno request coverage.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:7075/api"
+    }
+  ],
+  "paths": {
+    "/{authCode}/login": {
+      "post": {
+        "tags": [
+          "User management"
+        ],
+        "operationId": "PostLogin_Post",
+        "parameters": [
+          {
+            "name": "authCode",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The login response containing the username",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/postLoginResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "auth/login.bru"
+      }
+    },
+    "/{userId}/skiDays": {
+      "get": {
+        "tags": [
+          "Aggregates"
+        ],
+        "operationId": "GetSkiDays_Get",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The OK response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/skiDays"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "function_key": []
+          }
+        ],
+        "x-bruno-request-file": "aggregates/get-ski-days.bru"
+      }
+    },
+    "/{userId}/streaks": {
+      "get": {
+        "tags": [
+          "Aggregates"
+        ],
+        "operationId": "GetStreaks_Get",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The OK response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/streaks"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "function_key": []
+          }
+        ],
+        "x-bruno-request-file": "aggregates/get-streaks.bru"
+      }
+    },
+    "/account": {
+      "delete": {
+        "tags": [
+          "User management"
+        ],
+        "summary": "Submit an account delete job for the current user.",
+        "operationId": "DeleteAccount_Delete",
+        "responses": {
+          "204": {
+            "description": "CORS preflight response or account delete job queued"
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        }
+      }
+    },
+    "/activities": {
+      "get": {
+        "tags": [
+          "Activities"
+        ],
+        "operationId": "GetActivities_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of FeatureCollection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/featureCollection"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "activities/get-activities.bru"
+      }
+    },
+    "/activities/{x}/{y}": {
+      "get": {
+        "tags": [
+          "Activities"
+        ],
+        "operationId": "GetActivitiesByGrid_Get",
+        "parameters": [
+          {
+            "name": "x",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of FeatureCollection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/featureCollection"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "activities/get-activities-by-grid.bru"
+      }
+    },
+    "/activityStatuses": {
+      "get": {
+        "tags": [
+          "Activities"
+        ],
+        "operationId": "GetActivityStatuses_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of recent activity statuses to return. Defaults to 10, max 100.",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of Array of ActivityStatusDto",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/activityStatusDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "activities/get-activity-statuses.bru"
+      }
+    },
+    "/boundaries/{x}/{y}": {
+      "get": {
+        "tags": [
+          "AdminBoundaries"
+        ],
+        "operationId": "GetAdminBoundariesByGrid_Get",
+        "parameters": [
+          {
+            "name": "x",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "zoom",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "adminLevel",
+            "in": "query",
+            "description": "OSM admin_level (e.g. 2 = country, 4 = state/region). See https://wiki.openstreetmap.org/wiki/Key:admin_level",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "forceRefresh",
+            "in": "query",
+            "description": "When true, wipes the tile cache and re-fetches from Overpass. Requires x-admin-key header.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A GeoJson FeatureCollection with administrative boundaries for the given OSM admin_level.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/featureCollection"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "boundaries/get-boundaries-by-grid.bru"
+      }
+    },
+    "/garmin/courses": {
+      "get": {
+        "tags": [
+          "Garmin Courses"
+        ],
+        "summary": "List Garmin courses from the configured Garmin proxy service.",
+        "operationId": "GetGarminCourses_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Garmin courses response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "CORS preflight response"
+          },
+          "400": {
+            "description": "Invalid query parameters"
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        },
+        "x-bruno-request-file": "garmin-courses/list-garmin-courses.bru"
+      },
+      "post": {
+        "tags": [
+          "Garmin Courses"
+        ],
+        "summary": "Upload a Garmin course GPX via the configured Garmin proxy service.",
+        "operationId": "PostGarminCourse_Post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/gpx+xml": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Garmin course upload response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "CORS preflight response"
+          },
+          "400": {
+            "description": "GPX payload missing"
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        },
+        "x-bruno-request-file": "garmin-courses/upload-garmin-course.bru"
+      }
+    },
+    "/garmin/courses/{courseId}": {
+      "get": {
+        "tags": [
+          "Garmin Courses"
+        ],
+        "summary": "Get a Garmin course from the configured Garmin proxy service.",
+        "operationId": "GetGarminCourse_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "courseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Garmin course response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        },
+        "x-bruno-request-file": "garmin-courses/get-garmin-course.bru"
+      },
+      "delete": {
+        "tags": [
+          "Garmin Courses"
+        ],
+        "summary": "Delete a Garmin course via the configured Garmin proxy service.",
+        "operationId": "DeleteGarminCourse_Delete",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "courseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Garmin course delete response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        },
+        "x-bruno-request-file": "garmin-courses/delete-garmin-course.bru"
+      },
+      "put": {
+        "tags": [
+          "Garmin Courses"
+        ],
+        "summary": "Replace a Garmin course's route with new GPX via the configured Garmin proxy service.",
+        "operationId": "PutGarminCourse_Put",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "courseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/gpx+xml": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Garmin course update response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "CORS preflight response"
+          },
+          "400": {
+            "description": "GPX payload missing"
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        },
+        "x-bruno-request-file": "garmin-courses/update-garmin-course.bru"
+      }
+    },
+    "/garmin/courses/{courseId}/gpx": {
+      "get": {
+        "tags": [
+          "Garmin Courses"
+        ],
+        "summary": "Download a Garmin course GPX from the configured Garmin proxy service.",
+        "operationId": "GetGarminCourseGpx_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "courseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Garmin course GPX.",
+            "content": {
+              "application/gpx+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        },
+        "x-bruno-request-file": "garmin-courses/get-garmin-course-gpx.bru"
+      }
+    },
+    "/garmin/device-messages": {
+      "post": {
+        "tags": [
+          "Garmin Courses"
+        ],
+        "summary": "Send device messages to a Garmin device via the configured Garmin proxy service.",
+        "operationId": "PostGarminDeviceMessages_Post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Array of device message objects.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Device messages response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "CORS preflight response"
+          },
+          "400": {
+            "description": "Body missing or not a JSON array"
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        },
+        "x-bruno-request-file": "garmin-courses/send-garmin-device-messages.bru"
+      }
+    },
+    "/gridIndices": {
+      "get": {
+        "tags": [
+          "Peaks"
+        ],
+        "operationId": "GetGridIndices_Get",
+        "parameters": [
+          {
+            "name": "peakIds",
+            "in": "query",
+            "required": true,
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grid indices (x,y) containing the peaks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "peaks/get-grid-indices.bru"
+      }
+    },
+    "/logout": {
+      "post": {
+        "tags": [
+          "User management"
+        ],
+        "summary": "Clear the session cookie.",
+        "operationId": "PostLogout_Post",
+        "responses": {
+          "204": {
+            "description": "Session cookie cleared"
+          }
+        },
+        "x-bruno-request-file": "auth/logout.bru"
+      }
+    },
+    "/manage/adminBoundaries/corrupted": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "GetCorruptedAdminBoundaries_Get",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "IDs of admin boundary documents where properties are corrupted (name is an object instead of a string).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/admin-boundaries/get-corrupted-admin-boundaries.bru"
+      }
+    },
+    "/manage/adminBoundaries/emptyMarkers": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "WipeEmptyAdminBoundaryMarkers_Delete",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "adminLevel",
+            "in": "query",
+            "description": "OSM admin_level to wipe empty markers for (e.g. 2 or 4). When omitted, all admin levels are wiped.",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Number of empty markers deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/admin-boundaries/wipe-empty-admin-boundary-markers.bru"
+      }
+    },
+    "/manage/adminBoundaries/reEnrich": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "ReEnrichAdminBoundaries_Post",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Number of admin boundary documents queued for re-enrichment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/admin-boundaries/re-enrich-admin-boundaries.bru"
+      }
+    },
+    "/manage/countries": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "GetCountries_Get",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All stored admin_level=2 country documents plus a list of ISO codes not yet stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/countriesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/countries/get-countries.bru"
+      }
+    },
+    "/manage/countries/fetch": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "FetchCountries_Post",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "countryCodes",
+            "in": "query",
+            "description": "Comma-separated ISO 3166-1 alpha-2 country codes to fetch. When omitted, all missing countries are fetched.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "osmIds",
+            "in": "query",
+            "description": "Comma-separated OSM IDs (e.g. relation:2145268) to force-refetch.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of CountryFetchResult",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/countryFetchResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/countries/fetch-countries.bru"
+      }
+    },
+    "/manage/organizers/redirect-candidates": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get organizer redirect candidates based on similar ids and source URL mismatches.",
+        "operationId": "GetOrganizerRedirectCandidates_Get",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "testRedirects",
+            "in": "query",
+            "description": "Visit similar organizer URLs and report confirmed redirects.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "autoCreateRedirects",
+            "in": "query",
+            "description": "Automatically create redirects for confirmed cases whose target organizer already exists.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of OrganizerRedirectCandidateReport",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/organizerRedirectCandidateReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/organizers/Get Organizer Redirect Candidates.bru"
+      }
+    },
+    "/manage/organizers/redirects": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Redirect one organizer site to another organizer id.",
+        "operationId": "PostOrganizerRedirect_Post",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/postOrganizerRedirectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payload of PostOrganizerRedirectResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/postOrganizerRedirectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No description"
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/organizers/Add Organizer Redirect.bru"
+      }
+    },
+    "/manage/organizers/stats": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "GetOrganizerStats_Get",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of Object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/status/Organizer Stats.bru"
+      }
+    },
+    "/manage/osmfeatures/{kind}": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "WipeOsmFeaturesByKind_Delete",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "Feature kind to wipe: peak | path | protectedArea | adminBoundary | race",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "zoom",
+            "in": "query",
+            "description": "Optional tile zoom level to filter documents by.",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "Optional comma-separated document IDs to wipe. When omitted, all documents of the given kind are wiped.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Number of documents marked for expiry (ttl=1).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No description"
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/osm-features/wipe-osm-features-by-kind.bru"
+      }
+    },
+    "/manage/osmfeatures/moveZoom": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "MoveOsmFeaturesByZoom_Post",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Feature kind to move: peak | path | protectedArea | adminBoundary | race",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fromZoom",
+            "in": "query",
+            "description": "Source zoom level for documents to move.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "toZoom",
+            "in": "query",
+            "description": "Destination zoom level for documents to move.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "Optional comma-separated feature IDs to move. IDs may be provided with or without the kind prefix.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Summary of moved documents.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/moveZoomResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No description"
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/osm-features/move-osm-features-by-zoom.bru"
+      }
+    },
+    "/manage/queue/{jobType}": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "QueueActivityJobs_Post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobType",
+            "in": "path",
+            "description": "Job type: summits | visitedPaths | visitedAreas",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "query",
+            "description": "Optional target user id. When omitted, queues jobs for the authenticated session user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "description": "Optional ISO 8601 start date filter (inclusive)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "description": "Optional ISO 8601 end date filter (inclusive)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Number of jobs queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "^manage/activities/queue-activity-jobs.bru"
+      }
+    },
+    "/manage/queue/unprocessed/{jobType}": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "QueueUnprocessedActivityJobs_Post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jobType",
+            "in": "path",
+            "description": "Job type: summits | visitedPaths | visitedAreas",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "query",
+            "description": "Optional target user id. When omitted, queues jobs for the authenticated session user.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "description": "Optional ISO 8601 start date filter (inclusive)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "description": "Optional ISO 8601 end date filter (inclusive)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Number of unprocessed jobs queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "^manage/activities/queue-unprocessed-activity-jobs.bru"
+      }
+    },
+    "/manage/races/events": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "PostRaceEvent_Post",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/postRaceEventRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payload of PostRaceEventResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/postRaceEventResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No description"
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/races/Add Manual Race Event.bru"
+      }
+    },
+    "/manage/races/gpx": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Submit one or more GPX files for a race URL.",
+        "operationId": "PostManualGpx_Post",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/postManualGpxRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payload of PostManualGpxResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/postManualGpxResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No description"
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/races/Manual GPX Upload.bru"
+      }
+    },
+    "/manage/races/reNormalizeTypes": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "ReNormalizeRaceTypes_Post",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Number of races updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/races/re-normalize-race-types.bru"
+      }
+    },
+    "/manage/races/scrape/mistral": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Queue a manual Mistral scrape job for a race event URL.",
+        "operationId": "PostManualMistralScrape_Post",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/postManualMistralScrapeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payload of PostManualMistralScrapeResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/postManualMistralScrapeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No description"
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/races/Manual Mistral Scrape.bru"
+      }
+    },
+    "/manage/races/stats": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "GetRaceStats_Get",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of Object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/status/Race Stats.bru"
+      }
+    },
+    "/manage/status": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "GetAdminStatus_Get",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of AdminStatus",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/adminStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "^manage/status/get-admin-status.bru"
+      }
+    },
+    "/manage/users": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "GetUsersStatus_Get",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of Array of AdminUserStatus",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/adminUserStatus"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          }
+        }
+      }
+    },
+    "/manage/users/{userId}": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "RemoveUser_Delete",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "All data belonging to user has been removed"
+          }
+        },
+        "security": [
+          {
+            "function_key": []
+          }
+        ],
+        "x-bruno-request-file": "^manage/users/remove-user.bru"
+      }
+    },
+    "/manage/users/{userId}/stats": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "GetUserStats_Get",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of AdminUserStats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/adminUserStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No description"
+          },
+          "404": {
+            "description": "No description"
+          }
+        }
+      }
+    },
+    "/paths/{x}/{y}": {
+      "get": {
+        "tags": [
+          "paths"
+        ],
+        "summary": "Get Paths By Grid",
+        "operationId": "get_paths_x_y",
+        "responses": {
+          "200": {
+            "description": "Success response"
+          }
+        },
+        "x-source": "bruno",
+        "x-bruno-request-file": "paths/get-paths-by-grid.bru"
+      }
+    },
+    "/peaks": {
+      "get": {
+        "tags": [
+          "Peaks"
+        ],
+        "operationId": "GetPeaks_Get",
+        "parameters": [
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "radius",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A GeoJson FeatureCollection with peaks. If there is a valid session cookie, the peaks are populated with the summited property.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/featureCollection"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "peaks/get-peaks.bru"
+      }
+    },
+    "/peaks/{x}/{y}": {
+      "get": {
+        "tags": [
+          "Peaks"
+        ],
+        "operationId": "GetPeaksByGrid_Get",
+        "parameters": [
+          {
+            "name": "x",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "zoom",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A GeoJson FeatureCollection with peaks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/featureCollection"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "peaks/get-peaks-by-grid.bru"
+      }
+    },
+    "/peaksGroups": {
+      "get": {
+        "tags": [
+          "Peaks"
+        ],
+        "operationId": "GetAllPeaksGroups_Get",
+        "responses": {
+          "200": {
+            "description": "Payload of Array of PeaksGroup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/peaksGroup"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "peaks/get-peaks-groups.bru"
+      }
+    },
+    "/protectedAreas/{x}/{y}": {
+      "get": {
+        "tags": [
+          "ProtectedAreas"
+        ],
+        "operationId": "GetProtectedAreasByGrid_Get",
+        "parameters": [
+          {
+            "name": "x",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "zoom",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A GeoJson FeatureCollection with nature reserves and national parks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/featureCollection"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "protected-areas/get-protected-areas-by-grid.bru"
+      }
+    },
+    "/races/{organizerKey}/ttl": {
+      "get": {
+        "tags": [
+          "races"
+        ],
+        "summary": "Get Race TTL Status",
+        "operationId": "get_races_organizerKey_ttl",
+        "responses": {
+          "200": {
+            "description": "Success response"
+          }
+        },
+        "x-source": "bruno",
+        "x-bruno-request-file": "races/get-race-ttl-status.bru"
+      }
+    },
+    "/races/{x}/{y}": {
+      "get": {
+        "tags": [
+          "Races"
+        ],
+        "operationId": "GetRacesByGrid_Get",
+        "parameters": [
+          {
+            "name": "x",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "zoom",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A GeoJson FeatureCollection with trail running race routes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/featureCollection"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "races/get-races-by-grid.bru"
+      }
+    },
+    "/route": {
+      "post": {
+        "tags": [
+          "Routing"
+        ],
+        "operationId": "PostGraphHopperRoute_Post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "GraphHopper route response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "CORS preflight response"
+          }
+        },
+        "x-bruno-request-file": "routing/post-route.bru"
+      }
+    },
+    "/strava/routes": {
+      "get": {
+        "tags": [
+          "Strava Routes"
+        ],
+        "summary": "List the authenticated user's Strava routes.",
+        "operationId": "GetStravaRoutes_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of the user's Strava routes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/routeSummaryDto"
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "CORS preflight response"
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          }
+        },
+        "x-bruno-request-file": "strava-routes/list-strava-routes.bru"
+      }
+    },
+    "/strava/routes/{routeId}/gpx": {
+      "get": {
+        "tags": [
+          "Strava Routes"
+        ],
+        "summary": "Export a Strava route as a GPX file.",
+        "operationId": "GetStravaRouteGpx_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "routeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The route as a GPX file.",
+            "content": {
+              "application/gpx+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session is missing or invalid"
+          },
+          "404": {
+            "description": "Route not found"
+          }
+        },
+        "x-bruno-request-file": "strava-routes/get-strava-route-gpx.bru"
+      }
+    },
+    "/summitedPeaks": {
+      "get": {
+        "tags": [
+          "Peaks"
+        ],
+        "operationId": "GetAllSummitedPeaks_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A GeoJson FeatureCollection with peaks the user has summited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/featureCollection"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "peaks/get-summited-peaks.bru"
+      }
+    },
+    "/summitsStats": {
+      "get": {
+        "tags": [
+          "Aggregates"
+        ],
+        "operationId": "GetSummitsStats_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of SummitsStats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/summitsStats"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "aggregates/get-summits-stats.bru"
+      }
+    },
+    "/tiles/{z}/{x}/{y}.pbf": {
+      "get": {
+        "tags": [
+          "tiles"
+        ],
+        "summary": "Get Tile PBF",
+        "operationId": "get_tiles_z_x_y_pbf",
+        "responses": {
+          "200": {
+            "description": "Success response"
+          }
+        },
+        "x-source": "bruno",
+        "x-bruno-request-file": "tiles/get-tile-pbf.bru"
+      }
+    },
+    "/tiles/highways/{z}/{x}/{y}.pbf": {
+      "get": {
+        "tags": [
+          "Tiles"
+        ],
+        "operationId": "GetHighwayTilePbf_Get",
+        "parameters": [
+          {
+            "name": "z",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "x",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "forceRefresh",
+            "in": "query",
+            "description": "When true, wipes the highway shard cache for the tile and re-fetches from Overpass. Requires x-admin-key header.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Gzipped MVT tile"
+          },
+          "400": {
+            "description": "No description"
+          },
+          "401": {
+            "description": "No description"
+          }
+        },
+        "x-bruno-request-file": "tiles/get-highway-tile-pbf.bru"
+      }
+    },
+    "/user": {
+      "get": {
+        "tags": [
+          "User management"
+        ],
+        "summary": "Get the authenticated user's profile and Strava sync status.",
+        "operationId": "GetCurrentUser_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload of CurrentUserResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/currentUserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/userSync": {
+      "get": {
+        "tags": [
+          "User management"
+        ],
+        "operationId": "GetUserSync_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The authenticated user's synced Trailscope files and settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/userSyncPayload"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "CORS preflight response"
+          },
+          "400": {
+            "description": "Invalid sync payload.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "user-sync/get-user-sync.bru"
+      },
+      "post": {
+        "tags": [
+          "user-sync"
+        ],
+        "summary": "Post User Sync",
+        "operationId": "post_userSync",
+        "responses": {
+          "200": {
+            "description": "Success response"
+          }
+        },
+        "x-source": "bruno",
+        "x-bruno-request-file": "user-sync/post-user-sync.bru"
+      }
+    },
+    "/visitedAreas": {
+      "get": {
+        "tags": [
+          "VisitedAreas"
+        ],
+        "operationId": "GetVisitedAreas_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "areaType",
+            "in": "query",
+            "description": "Optional comma-separated filter by area type (e.g. national_park,nature_reserve,protected_area,region,country).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of areas the authenticated user has visited, including visit counts and dates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/visitedAreaDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "protected-areas/get-visited-protected-areas.bru"
+      }
+    },
+    "/visitedPaths": {
+      "get": {
+        "tags": [
+          "Paths"
+        ],
+        "operationId": "GetVisitedPaths_Get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of paths the authenticated user has been on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/visitedPathDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-bruno-request-file": "paths/get-visited-paths.bru"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "activityProcessingStatus": {
+        "type": "object",
+        "properties": {
+          "summitedPeaks": {
+            "type": "boolean"
+          },
+          "visitedPaths": {
+            "type": "boolean"
+          },
+          "visitedAreas": {
+            "type": "boolean"
+          },
+          "summitedPeaksDoneAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "visitedPathsDoneAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "visitedAreasDoneAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastUpdatedAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastProcessingError": {
+            "type": "string"
+          }
+        }
+      },
+      "activityStatusDto": {
+        "type": "object",
+        "properties": {
+          "activityId": {
+            "type": "string"
+          },
+          "activityName": {
+            "type": "string"
+          },
+          "startDateLocal": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summaryPolyline": {
+            "type": "string"
+          },
+          "processingStatus": {
+            "$ref": "#/components/schemas/activityProcessingStatus"
+          }
+        }
+      },
+      "adminRecentUserActivityStatus": {
+        "type": "object",
+        "properties": {
+          "activityId": {
+            "type": "string"
+          },
+          "activityName": {
+            "type": "string"
+          },
+          "startDateLocal": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "processingStatus": {
+            "$ref": "#/components/schemas/activityProcessingStatus"
+          }
+        }
+      },
+      "adminStatus": {
+        "type": "object",
+        "properties": {
+          "serviceBusQueues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/serviceBusQueueStatus"
+            }
+          },
+          "cosmosContainers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/cosmosContainerStatus"
+            }
+          },
+          "provisionedThroughput": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "liveRuPerSecond": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          }
+        }
+      },
+      "adminUserActivityProcessingSummary": {
+        "type": "object",
+        "properties": {
+          "totalActivities": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "withProcessingStatus": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "processedSummitedPeaks": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "processedVisitedPaths": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "processedVisitedAreas": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "withErrors": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastUpdatedAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "adminUserStats": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "activityCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastLoggedInAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "syncStatus": {
+            "$ref": "#/components/schemas/stravaSyncStatus"
+          },
+          "activityProcessingSummary": {
+            "$ref": "#/components/schemas/adminUserActivityProcessingSummary"
+          },
+          "recentActivities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/adminRecentUserActivityStatus"
+            }
+          }
+        }
+      },
+      "adminUserStatus": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "activityCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastLoggedInAtUtc": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "cosmosContainerStatus": {
+        "type": "object",
+        "properties": {
+          "containerName": {
+            "type": "string"
+          },
+          "documentCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "countriesResponse": {
+        "type": "object",
+        "properties": {
+          "countries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/countryEntry"
+            }
+          },
+          "missingCodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "countryEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string"
+          }
+        }
+      },
+      "countryFetchResult": {
+        "type": "object",
+        "properties": {
+          "discovered": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "alreadyStored": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "newlyFetched": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pointersCreated": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "currentUserResponse": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "syncStatus": {
+            "$ref": "#/components/schemas/stravaSyncStatus"
+          },
+          "foundTotals": {
+            "$ref": "#/components/schemas/foundTotalsResponse"
+          }
+        }
+      },
+      "feature": {
+        "type": "object",
+        "properties": {
+          "geometry": {
+            "$ref": "#/components/schemas/geometry"
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object"
+            },
+            "nullable": true
+          },
+          "id": {
+            "$ref": "#/components/schemas/featureId"
+          },
+          "type": {
+            "enum": [
+              "Point",
+              "MultiPoint",
+              "LineString",
+              "MultiLineString",
+              "Polygon",
+              "MultiPolygon",
+              "GeometryCollection",
+              "Feature",
+              "FeatureCollection"
+            ],
+            "type": "string",
+            "default": "Point"
+          },
+          "bbox": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "nullable": true
+          }
+        }
+      },
+      "featureCollection": {
+        "type": "object",
+        "properties": {
+          "features": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/feature"
+            },
+            "nullable": true
+          },
+          "type": {
+            "enum": [
+              "Point",
+              "MultiPoint",
+              "LineString",
+              "MultiLineString",
+              "Polygon",
+              "MultiPolygon",
+              "GeometryCollection",
+              "Feature",
+              "FeatureCollection"
+            ],
+            "type": "string",
+            "default": "Point"
+          },
+          "bbox": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "nullable": true
+          }
+        }
+      },
+      "featureId": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        },
+        "nullable": true
+      },
+      "foundTotalsResponse": {
+        "type": "object",
+        "properties": {
+          "summitedPeaks": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visitedPaths": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visitedAreas": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "geometry": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "Point",
+              "MultiPoint",
+              "LineString",
+              "MultiLineString",
+              "Polygon",
+              "MultiPolygon",
+              "GeometryCollection",
+              "Feature",
+              "FeatureCollection"
+            ],
+            "type": "string",
+            "default": "Point"
+          },
+          "bbox": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "nullable": true
+          }
+        },
+        "nullable": true
+      },
+      "jsonElement": {
+        "type": "object",
+        "properties": {
+          "valueKind": {
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "type": "integer",
+            "format": "int32",
+            "default": 0
+          },
+          "item": {
+            "$ref": "#/components/schemas/jsonElement"
+          }
+        },
+        "nullable": true
+      },
+      "manualGpxFile": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "distance": {
+            "type": "string"
+          }
+        }
+      },
+      "moveZoomResult": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "fromZoom": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "toZoom": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "scanned": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "moved": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "organizerConfirmedRedirect": {
+        "type": "object",
+        "properties": {
+          "sourceOrganizerKey": {
+            "type": "string"
+          },
+          "targetOrganizerKey": {
+            "type": "string"
+          },
+          "requestedUrl": {
+            "type": "string"
+          },
+          "finalUrl": {
+            "type": "string"
+          },
+          "targetOrganizerExists": {
+            "type": "boolean"
+          },
+          "autoCreated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "organizerRedirectCandidate": {
+        "type": "object",
+        "properties": {
+          "sourceOrganizerKey": {
+            "type": "string"
+          },
+          "targetOrganizerKey": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "matchKey": {
+            "type": "string"
+          },
+          "evidenceUrl": {
+            "type": "string"
+          }
+        }
+      },
+      "organizerRedirectCandidateReport": {
+        "type": "object",
+        "properties": {
+          "confirmedRedirects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/organizerConfirmedRedirect"
+            }
+          },
+          "totalOrganizers": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "slugToBareHostCandidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/organizerRedirectCandidate"
+            }
+          },
+          "verySimilarIdCandidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/organizerRedirectCandidate"
+            }
+          }
+        }
+      },
+      "peaksGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parentId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "amountOfPeaks": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "peakIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "boundrary": {
+            "$ref": "#/components/schemas/feature"
+          }
+        }
+      },
+      "postLoginResponse": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "syncStatus": {
+            "$ref": "#/components/schemas/stravaSyncStatus"
+          }
+        }
+      },
+      "postManualGpxRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "gpxFiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/manualGpxFile"
+            }
+          }
+        }
+      },
+      "postManualGpxResponse": {
+        "type": "object",
+        "properties": {
+          "eventKey": {
+            "type": "string"
+          },
+          "canonicalUrl": {
+            "type": "string"
+          },
+          "routesWritten": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "parseFailed": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "postManualMistralScrapeRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "postManualMistralScrapeResponse": {
+        "type": "object",
+        "properties": {
+          "eventKey": {
+            "type": "string"
+          },
+          "canonicalUrl": {
+            "type": "string"
+          }
+        }
+      },
+      "postOrganizerRedirectRequest": {
+        "type": "object",
+        "properties": {
+          "fromUrl": {
+            "type": "string"
+          },
+          "toUrl": {
+            "type": "string"
+          }
+        }
+      },
+      "postOrganizerRedirectResponse": {
+        "type": "object",
+        "properties": {
+          "sourceOrganizerKey": {
+            "type": "string"
+          },
+          "targetOrganizerKey": {
+            "type": "string"
+          },
+          "fromUrl": {
+            "type": "string"
+          },
+          "toUrl": {
+            "type": "string"
+          }
+        }
+      },
+      "postRaceEventRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scrape": {
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "postRaceEventResponse": {
+        "type": "object",
+        "properties": {
+          "eventKey": {
+            "type": "string"
+          },
+          "canonicalUrl": {
+            "type": "string"
+          }
+        }
+      },
+      "routeSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "idStr": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "distanceMeters": {
+            "type": "number",
+            "format": "float",
+            "nullable": true
+          },
+          "elevationGain": {
+            "type": "number",
+            "format": "float",
+            "nullable": true
+          },
+          "activityType": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "private": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "starred": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "summaryPolyline": {
+            "type": "string"
+          }
+        }
+      },
+      "serviceBusQueueStatus": {
+        "type": "object",
+        "properties": {
+          "queueName": {
+            "type": "string"
+          },
+          "activeMessageCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scheduledMessageCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "deadLetterMessageCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "skiDays": {
+        "type": "object",
+        "properties": {
+          "alpineSkiDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "backcountrySkiDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "nordicSkiDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "snowboardDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "backcountrySkiElevationGain": {
+            "type": "number",
+            "format": "double"
+          },
+          "alpineSkiVerticalDrop": {
+            "type": "number",
+            "format": "double"
+          },
+          "totalSkiDays": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "stravaProcessedActivityCounts": {
+        "type": "object",
+        "properties": {
+          "summitedPeaks": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visitedPaths": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visitedAreas": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "stravaSyncStatus": {
+        "type": "object",
+        "properties": {
+          "totalActivitiesOnStrava": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "syncedActivities": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "processedActivities": {
+            "$ref": "#/components/schemas/stravaProcessedActivityCounts"
+          },
+          "updatedAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "streaks": {
+        "type": "object",
+        "properties": {
+          "currentActivityStreak": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "longestActivityStreak": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "currentActivityStreakStartDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "longestActivityStreakStartDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "longestActivityStreakEndDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "currentRunningStreak": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "longestRunningStreak": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "currentRunningStreakStartDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "longestRunningStreakStartDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "longestRunningStreakEndDate": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "summitsStats": {
+        "type": "object",
+        "properties": {
+          "totalPeaksClimbed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalPeaksClimbedCategorized": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "mostVisitedPeaks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/visitedPeak"
+            }
+          }
+        }
+      },
+      "userSyncEntry": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "value": {
+            "$ref": "#/components/schemas/jsonElement"
+          }
+        }
+      },
+      "userSyncPayload": {
+        "type": "object",
+        "properties": {
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/userSyncEntry"
+            }
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/userSyncEntry"
+            }
+          }
+        }
+      },
+      "visitedAreaDto": {
+        "type": "object",
+        "properties": {
+          "areaId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "areaType": {
+            "type": "string"
+          },
+          "timesVisited": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "activityIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "wikidata": {
+            "type": "string"
+          },
+          "wikimediaCommons": {
+            "type": "string"
+          }
+        }
+      },
+      "visitedPathDto": {
+        "type": "object",
+        "properties": {
+          "pathId": {
+            "type": "string"
+          },
+          "osmId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "timesVisited": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "first": {
+            "type": "string"
+          },
+          "last": {
+            "type": "string"
+          }
+        }
+      },
+      "visitedPeak": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "elevation": {
+            "type": "number",
+            "format": "float",
+            "nullable": true
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "function_key": {
+        "type": "apiKey",
+        "name": "code",
+        "in": "query"
+      }
+    }
+  },
+  "x-source-of-truth": "code+bruno",
+  "x-generated-at": "2026-05-29T14:52:07.659Z"
+}
