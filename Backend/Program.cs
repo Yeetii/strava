@@ -2,8 +2,10 @@ using System.Configuration;
 using Microsoft.Extensions.Configuration;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
+using Azure.Monitor.Query;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -180,7 +182,16 @@ var host = new HostBuilder()
         services.AddSingleton<DiscoverTrailrunningSwedenRaces>();
         services.AddSingleton<DiscoverSkyrunningRaces>();
         services.AddSingleton<DiscoverLopplistanRaces>();
+
+        var cosmosResourceId = configuration.GetValue<string>("CosmosAccountResourceId");
+        if (!string.IsNullOrEmpty(cosmosResourceId))
+            services.AddSingleton(new MetricsQueryClient(new DefaultAzureCredential()));
     })
     .Build();
+
+ServiceBusRescheduler.Initialize(
+    host.Services.GetRequiredService<ServiceBusAdministrationClient>(),
+    metricsQueryClient: host.Services.GetService<MetricsQueryClient>(),
+    cosmosResourceId: host.Services.GetRequiredService<IConfiguration>().GetValue<string>("CosmosAccountResourceId"));
 
 host.Run();

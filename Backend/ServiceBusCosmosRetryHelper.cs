@@ -1,8 +1,9 @@
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
+using Azure.Monitor.Query;
+using Azure.Monitor.Query.Models;
 using Shared.Constants;
 using Microsoft.Extensions.Logging;
-using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -12,16 +13,39 @@ public static class ServiceBusRescheduler
 {
     public const string RetryCountProperty = "ExceptionRetryCount";
     public const int DefaultMaxRetryCount = 10;
-    private static readonly TimeSpan MinRetryDelay = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromHours(2);
+    private static readonly TimeSpan MinRetryDelay = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan CosmosPressureWindow = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan QueueDepthCacheTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RuCacheTtl = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan BatchMessageSpacing = TimeSpan.FromSeconds(5);
     private static long _lastCosmosThrottleUnixMilliseconds;
     private static readonly SemaphoreSlim QueueDepthCacheGate = new(1, 1);
     private static QueueDepthSnapshot? _queueDepthSnapshot;
+    private static readonly SemaphoreSlim RuCacheGate = new(1, 1);
+    private static RuSnapshot? _ruSnapshot;
+    private static MetricsQueryClient? _metricsQueryClient;
+    private static string? _cosmosResourceId;
+    private static ServiceBusAdministrationClient? _serviceBusAdministrationClient;
+    private static IReadOnlyCollection<string> _monitoredQueueNames = ServiceBusConfig.NonTimeCriticalQueues;
 
-    private sealed record QueueDepthSnapshot(DateTimeOffset CapturedAtUtc, long TotalActiveMessages);
+    private sealed record QueueDepthSnapshot(DateTimeOffset CapturedAtUtc, long TotalActiveMessages, long TotalScheduledMessages);
+    private sealed record RuSnapshot(DateTimeOffset CapturedAtUtc, double? RemainingFraction);
+
+    /// <summary>
+    /// Registers the Azure Monitor metrics client for live Cosmos RU/s checks.
+    /// Call once at startup. When not called, the RU capacity check is skipped.
+    /// </summary>
+    public static void Initialize(
+        ServiceBusAdministrationClient serviceBusAdministrationClient,
+        IReadOnlyCollection<string>? monitoredQueueNames = null,
+        MetricsQueryClient? metricsQueryClient = null,
+        string? cosmosResourceId = null)
+    {
+        _serviceBusAdministrationClient = serviceBusAdministrationClient;
+        _monitoredQueueNames = monitoredQueueNames ?? ServiceBusConfig.NonTimeCriticalQueues;
+        _metricsQueryClient = metricsQueryClient;
+        _cosmosResourceId = cosmosResourceId;
+    }
 
     /// <summary>
     /// False when the host injected a synthetic message (e.g. admin HTTP trigger): there is no
@@ -69,7 +93,8 @@ public static class ServiceBusRescheduler
         Microsoft.Azure.Functions.Worker.ServiceBusMessageActions actions,
         ILogger logger,
         CancellationToken cancellationToken,
-        IReadOnlyCollection<string>? monitoredQueueNames = null)
+        IReadOnlyCollection<string>? monitoredQueueNames = null,
+        bool isHighPriority = false)
         => TryDeferForBackpressureAsync(
             serviceBusAdministrationClient,
             serviceBusClient,
@@ -78,7 +103,8 @@ public static class ServiceBusRescheduler
             actions,
             logger,
             cancellationToken,
-            monitoredQueueNames);
+            monitoredQueueNames,
+            isHighPriority);
 
     public static async Task<bool> TryDeferForBackpressureAsync(
         ServiceBusAdministrationClient serviceBusAdministrationClient,
@@ -88,19 +114,22 @@ public static class ServiceBusRescheduler
         Microsoft.Azure.Functions.Worker.ServiceBusMessageActions actions,
         ILogger logger,
         CancellationToken cancellationToken,
-        IReadOnlyCollection<string>? monitoredQueueNames = null)
+        IReadOnlyCollection<string>? monitoredQueueNames = null,
+        bool isHighPriority = false)
     {
         var realMessages = messages.Where(HasRealLockToken).ToList();
         if (realMessages.Count == 0)
             return false;
 
-        var totalActiveMessages = await GetTotalActiveMessageCountAsync(
+        var (totalActiveMessages, totalScheduledMessages) = await GetQueueDepthAsync(
             serviceBusAdministrationClient,
-            monitoredQueueNames ?? ServiceBusConfig.NonTimeCriticalQueues,
+            monitoredQueueNames ?? _monitoredQueueNames,
             logger,
             cancellationToken);
 
-        var backpressureDelay = GetBackpressureDelay(totalActiveMessages);
+        var backpressureDelay = await ComputeScheduleDelayAsync(
+            totalActiveMessages, totalScheduledMessages, logger, cancellationToken, skipRuCheck: isHighPriority);
+
         if (backpressureDelay <= TimeSpan.Zero)
             return false;
 
@@ -128,10 +157,11 @@ public static class ServiceBusRescheduler
         }
 
         logger.LogWarning(
-            "Deferred {MessageCount} message(s) on queue {QueueName} due to Cosmos/queue backpressure. ActiveAcrossQueues={ActiveMessageCount}, BaseDelay={BaseDelay}, CosmosPressure={CosmosPressure}",
+            "Deferred {MessageCount} message(s) on queue {QueueName} due to Cosmos/queue backpressure. ActiveAcrossQueues={ActiveMessageCount}, ScheduledAcrossQueues={ScheduledMessageCount}, BaseDelay={BaseDelay}, CosmosPressure={CosmosPressure}",
             realMessages.Count,
             queueName,
             totalActiveMessages,
+            totalScheduledMessages,
             backpressureDelay,
             IsCosmosUnderPressure);
 
@@ -196,8 +226,13 @@ public static class ServiceBusRescheduler
         var scheduledEnqueueTime = scheduledEnqueueTimeUtc?.ToUniversalTime();
         if (scheduledEnqueueTime is null)
         {
-            var delayMilliseconds = Random.Shared.NextInt64((long)MinRetryDelay.TotalMilliseconds, (long)MaxRetryDelay.TotalMilliseconds + 1);
-            scheduledEnqueueTime = DateTimeOffset.UtcNow.AddMilliseconds(delayMilliseconds);
+            var now = DateTimeOffset.UtcNow;
+            var (active, scheduled) = _serviceBusAdministrationClient is not null
+                ? await GetQueueDepthAsync(_serviceBusAdministrationClient, _monitoredQueueNames, logger, cancellationToken)
+                : ReadCachedQueueDepth(now);
+
+            var retryDelay = await ComputeScheduleDelayAsync(active, scheduled, logger, cancellationToken, enforceMinimum: true);
+            scheduledEnqueueTime = now.Add(retryDelay);
         }
 
         var delay = scheduledEnqueueTime.Value - DateTimeOffset.UtcNow;
@@ -225,18 +260,121 @@ public static class ServiceBusRescheduler
         }
     }
 
-    private static TimeSpan GetBackpressureDelay(long totalActiveMessages)
-        => totalActiveMessages switch
-        {
-            < 50 => IsCosmosUnderPressure ? TimeSpan.FromMinutes(15) : TimeSpan.Zero,
-            < 200 => TimeSpan.FromMinutes(5),
-            < 500 => TimeSpan.FromMinutes(15),
-            < 1000 => TimeSpan.FromMinutes(30),
-            < 2000 => TimeSpan.FromHours(1),
-            _ => TimeSpan.FromHours(2),
-        };
+    private static (long Active, long Scheduled) ReadCachedQueueDepth(DateTimeOffset now)
+    {
+        var snapshot = _queueDepthSnapshot;
+        return snapshot is not null && now - snapshot.CapturedAtUtc <= QueueDepthCacheTtl
+            ? (snapshot.TotalActiveMessages, snapshot.TotalScheduledMessages)
+            : (0L, 0L);
+    }
 
-    private static async Task<long> GetTotalActiveMessageCountAsync(
+    private static async Task<TimeSpan> ComputeScheduleDelayAsync(
+        long active,
+        long scheduled,
+        ILogger logger,
+        CancellationToken cancellationToken,
+        bool skipRuCheck = false,
+        bool enforceMinimum = false)
+    {
+        if (!skipRuCheck)
+        {
+            var ruRemaining = await GetRuRemainingFractionAsync(logger, cancellationToken);
+            if (ruRemaining.HasValue && ruRemaining.Value < 0.05)
+            {
+                var ruDelay = TimeSpan.FromMinutes(2);
+                return enforceMinimum && ruDelay < MinRetryDelay ? MinRetryDelay : ruDelay;
+            }
+        }
+
+        var delay = GetBackpressureDelay(active, scheduled);
+        return enforceMinimum && delay < MinRetryDelay ? MinRetryDelay : delay;
+    }
+
+    private static TimeSpan GetBackpressureDelay(long totalActiveMessages, long totalScheduledMessages)
+    {
+        var total = totalActiveMessages + totalScheduledMessages;
+        return total switch
+        {
+            < 50 => IsCosmosUnderPressure ? TimeSpan.FromMinutes(5) : TimeSpan.Zero,
+            < 200 => TimeSpan.FromMinutes(3),
+            < 500 => TimeSpan.FromMinutes(8),
+            < 1000 => TimeSpan.FromMinutes(15),
+            < 2000 => TimeSpan.FromMinutes(30),
+            _ => TimeSpan.FromHours(1),
+        };
+    }
+
+    private static async Task<double?> GetRuRemainingFractionAsync(ILogger logger, CancellationToken cancellationToken)
+    {
+        if (_metricsQueryClient is null || string.IsNullOrEmpty(_cosmosResourceId))
+            return null;
+
+        var snapshot = _ruSnapshot;
+        var now = DateTimeOffset.UtcNow;
+        if (snapshot is not null && now - snapshot.CapturedAtUtc <= RuCacheTtl)
+            return snapshot.RemainingFraction;
+
+        await RuCacheGate.WaitAsync(cancellationToken);
+        try
+        {
+            snapshot = _ruSnapshot;
+            if (snapshot is not null && now - snapshot.CapturedAtUtc <= RuCacheTtl)
+                return snapshot.RemainingFraction;
+
+            double? remainingFraction = null;
+            try
+            {
+                var options = new MetricsQueryOptions
+                {
+                    Granularity = TimeSpan.FromMinutes(1),
+                    TimeRange = new QueryTimeRange(TimeSpan.FromMinutes(5))
+                };
+                options.Aggregations.Add(MetricAggregationType.Total);
+                options.Aggregations.Add(MetricAggregationType.Maximum);
+
+                var result = await _metricsQueryClient.QueryResourceAsync(
+                    _cosmosResourceId,
+                    ["TotalRequestUnits", "ProvisionedThroughput"],
+                    options,
+                    cancellationToken);
+
+                var ruSeries = result.Value.Metrics.FirstOrDefault(m => m.Name == "TotalRequestUnits")?.TimeSeries.FirstOrDefault();
+                var provisionedSeries = result.Value.Metrics.FirstOrDefault(m => m.Name == "ProvisionedThroughput")?.TimeSeries.FirstOrDefault();
+
+                var latestRu = ruSeries?.Values
+                    .Where(v => v.Total.HasValue)
+                    .OrderByDescending(v => v.TimeStamp)
+                    .FirstOrDefault()?.Total;
+
+                var latestProvisioned = provisionedSeries?.Values
+                    .Where(v => v.Maximum.HasValue)
+                    .OrderByDescending(v => v.TimeStamp)
+                    .FirstOrDefault()?.Maximum;
+
+                if (latestRu.HasValue && latestProvisioned.HasValue && latestProvisioned.Value > 0)
+                {
+                    // TotalRequestUnits is total RUs consumed in 1 minute; provisioned is per second.
+                    // Convert both to per-minute for comparison.
+                    var consumedPerMinute = latestRu.Value;
+                    var provisionedPerMinute = latestProvisioned.Value * 60;
+                    remainingFraction = Math.Max(0, 1.0 - consumedPerMinute / provisionedPerMinute);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to fetch live Cosmos RU/s from Azure Monitor for backpressure check");
+            }
+
+            _ruSnapshot = new RuSnapshot(now, remainingFraction);
+            return remainingFraction;
+        }
+        finally
+        {
+            RuCacheGate.Release();
+        }
+    }
+
+    private static async Task<(long Active, long Scheduled)> GetQueueDepthAsync(
         ServiceBusAdministrationClient serviceBusAdministrationClient,
         IReadOnlyCollection<string> monitoredQueueNames,
         ILogger logger,
@@ -245,32 +383,33 @@ public static class ServiceBusRescheduler
         var snapshot = _queueDepthSnapshot;
         var now = DateTimeOffset.UtcNow;
         if (snapshot is not null && now - snapshot.CapturedAtUtc <= QueueDepthCacheTtl)
-            return snapshot.TotalActiveMessages;
+            return (snapshot.TotalActiveMessages, snapshot.TotalScheduledMessages);
 
         await QueueDepthCacheGate.WaitAsync(cancellationToken);
         try
         {
             snapshot = _queueDepthSnapshot;
             if (snapshot is not null && now - snapshot.CapturedAtUtc <= QueueDepthCacheTtl)
-                return snapshot.TotalActiveMessages;
+                return (snapshot.TotalActiveMessages, snapshot.TotalScheduledMessages);
 
-            var counts = await Task.WhenAll(monitoredQueueNames.Select(async queueName =>
+            var results = await Task.WhenAll(monitoredQueueNames.Select(async queueName =>
             {
                 try
                 {
-                    var props = await serviceBusAdministrationClient.GetQueueRuntimePropertiesAsync(queueName);
-                    return props.Value.ActiveMessageCount;
+                    var props = await serviceBusAdministrationClient.GetQueueRuntimePropertiesAsync(queueName, cancellationToken);
+                    return (Active: props.Value.ActiveMessageCount, Scheduled: props.Value.ScheduledMessageCount);
                 }
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex, "Failed to fetch Service Bus runtime properties for queue {QueueName}", queueName);
-                    return 0L;
+                    return (Active: 0L, Scheduled: 0L);
                 }
             }));
 
-            var totalActiveMessages = counts.Sum();
-            _queueDepthSnapshot = new QueueDepthSnapshot(now, totalActiveMessages);
-            return totalActiveMessages;
+            var totalActive = results.Sum(r => r.Active);
+            var totalScheduled = results.Sum(r => r.Scheduled);
+            _queueDepthSnapshot = new QueueDepthSnapshot(now, totalActive, totalScheduled);
+            return (totalActive, totalScheduled);
         }
         finally
         {
