@@ -26,6 +26,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 {
     readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender("activityprocessed");
+    private const int MaxDegreeOfParallelism = 4;
 
     [Function("SummitsWorker")]
     public async Task Run(
@@ -47,21 +48,28 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             }
         }));
 
-        var processingTasks = jobs.Select(job =>
-        {
-            var activityId = job.Body.ToString();
-            if (!activitiesById.TryGetValue(activityId, out var activity))
+        await Parallel.ForEachAsync(
+            jobs,
+            new ParallelOptions
             {
-                _logger.LogWarning(
-                    "No activity document found for calculateSummits job {MessageId} (activity id: {ActivityId}); completing message.",
-                    job.MessageId,
-                    activityId);
-                return actions.CompleteMessageAsync(job, cancellationToken);
-            }
+                MaxDegreeOfParallelism = MaxDegreeOfParallelism,
+                CancellationToken = cancellationToken
+            },
+            async (job, ct) =>
+            {
+                var activityId = job.Body.ToString();
+                if (!activitiesById.TryGetValue(activityId, out var activity))
+                {
+                    _logger.LogWarning(
+                        "No activity document found for calculateSummits job {MessageId} (activity id: {ActivityId}); completing message.",
+                        job.MessageId,
+                        activityId);
+                    await actions.CompleteMessageAsync(job, ct);
+                    return;
+                }
 
-            return ProcessSummitJob(job, actions, peaks, activity, cancellationToken);
-        });
-        await Task.WhenAll(processingTasks.ToArray());
+                await ProcessSummitJob(job, actions, peaks, activity, ct);
+            });
     }
     private async Task ProcessSummitJob(ServiceBusReceivedMessage job, ServiceBusMessageActions actions, List<Feature> peaks, Activity activity, CancellationToken cancellationToken)
     {
@@ -123,22 +131,30 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     private static async Task<IEnumerable<SummitedPeak>> UpdateSummitedPeaksDocuments(CollectionClient<SummitedPeak> _summitedPeaksCollection, Activity activity, IEnumerable<Feature> summitedPeaks)
     {
+        var summitedPeakList = summitedPeaks.ToList();
+        if (summitedPeakList.Count == 0)
+            return [];
+
+        var existingDocs = (await _summitedPeaksCollection.GetByIdsAsync(
+            summitedPeakList.Select(peak => BuildSummitedPeakDocumentId(activity.UserId, peak.Id))))
+            .ToDictionary(doc => doc.Id, StringComparer.Ordinal);
+
         var documents = new List<SummitedPeak>();
-        foreach (var peak in summitedPeaks)
+        foreach (var peak in summitedPeakList)
         {
             var peakId = NormalizeSummitedPeakId(peak.Id);
             var documentId = BuildSummitedPeakDocumentId(activity.UserId, peak.Id);
-            var partitionKey = new PartitionKey(activity.UserId);
-               var summitedPeakDocument = await _summitedPeaksCollection.GetByIdMaybe(documentId, partitionKey)
-                   ?? new SummitedPeak
-                   {
-                       Id = documentId,
-                       Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName?.ToString() ?? "" : "",
-                       UserId = activity.UserId,
-                       PeakId = peakId,
-                       Elevation = TryParseElevation(peak.Properties),
-                       ActivityIds = []
-                   };
+            var summitedPeakDocument = existingDocs.TryGetValue(documentId, out var existing)
+                ? existing
+                : new SummitedPeak
+                {
+                    Id = documentId,
+                    Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName?.ToString() ?? "" : "",
+                    UserId = activity.UserId,
+                    PeakId = peakId,
+                    Elevation = TryParseElevation(peak.Properties),
+                    ActivityIds = []
+                };
             summitedPeakDocument.ActivityIds.Add(activity.Id);
             documents.Add(summitedPeakDocument);
         }
