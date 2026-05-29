@@ -17,6 +17,10 @@ public class AdminBoundaryEnrichmentWorker(
     ILogger<AdminBoundaryEnrichmentWorker> logger)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+    private const int MaxMessagesPerRun = 6;
+    private static readonly TimeSpan InvocationSafetyBuffer = TimeSpan.FromSeconds(75);
+    private static readonly TimeSpan SpilloverDelay = TimeSpan.FromMinutes(1);
+
     [Function(nameof(AdminBoundaryEnrichmentWorker))]
     public async Task Run(
         [ServiceBusTrigger(ServiceBusConfig.EnrichAdminBoundaryJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
@@ -36,24 +40,85 @@ public class AdminBoundaryEnrichmentWorker(
             return;
         }
 
-        var ids = messages.Select(m => m.Body.ToString()).ToList();
-        logger.LogInformation("Processing {Count} admin boundary enrichment jobs", ids.Count);
+        var processMessages = messages
+            .Take(MaxMessagesPerRun)
+            .ToList();
+        var overflowMessages = messages
+            .Skip(MaxMessagesPerRun)
+            .ToList();
 
-        var documents = await storedFeaturesCollection.GetByIdsAsync(ids);
+        if (overflowMessages.Count > 0)
+        {
+            await ServiceBusRescheduler.DeferMessagesAsync(
+                _serviceBusClient,
+                ServiceBusConfig.EnrichAdminBoundaryJobs,
+                overflowMessages,
+                actions,
+                logger,
+                cancellationToken,
+                SpilloverDelay,
+                "batch-size-limit");
+        }
+
+        if (processMessages.Count == 0)
+            return;
+
+        var invocationDeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(10) - InvocationSafetyBuffer;
+
+        var ids = processMessages
+            .Select(m => m.Body.ToString())
+            .ToList();
+        logger.LogInformation("Processing {Count} admin boundary enrichment jobs ({TotalReceived} received)", ids.Count, messages.Length);
+
+        var documents = await storedFeaturesCollection.GetByIdsAsync(ids.Distinct(StringComparer.Ordinal), cancellationToken);
+        var documentsById = documents.ToDictionary(document => document.Id, StringComparer.Ordinal);
 
         var patches = new List<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)>();
-        var completableMessages = new List<ServiceBusReceivedMessage>();
+        var patchedIds = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var document in documents)
+        foreach (var message in processMessages)
         {
-            var message = messages.First(m => m.Body.ToString() == document.Id);
+            if (DateTimeOffset.UtcNow >= invocationDeadlineUtc)
+            {
+                var spillover = processMessages
+                    .SkipWhile(m => m != message)
+                    .ToList();
+
+                await ServiceBusRescheduler.DeferMessagesAsync(
+                    _serviceBusClient,
+                    ServiceBusConfig.EnrichAdminBoundaryJobs,
+                    spillover,
+                    actions,
+                    logger,
+                    cancellationToken,
+                    SpilloverDelay,
+                    "invocation-time-budget");
+
+                break;
+            }
+
+            var boundaryId = message.Body.ToString();
+
+            if (!documentsById.TryGetValue(boundaryId, out var document))
+            {
+                logger.LogWarning("Admin boundary document {BoundaryId} not found; completing message {MessageId}", boundaryId, message.MessageId);
+                await actions.CompleteMessageAsync(message, cancellationToken);
+                continue;
+            }
+
+            if (patchedIds.Contains(boundaryId))
+            {
+                await actions.CompleteMessageAsync(message, cancellationToken);
+                continue;
+            }
+
             try
             {
                 logger.LogInformation("Enriching admin boundary {BoundaryId}", document.Id);
                 var ops = await enricher.CalculatePatchOperationsAsync(document, cancellationToken);
                 var pk = new PartitionKeyBuilder().Add((double)document.X).Add((double)document.Y).Build();
                 patches.Add((document.Id, pk, ops));
-                completableMessages.Add(message);
+                patchedIds.Add(boundaryId);
             }
             catch (Exception ex)
             {
@@ -68,9 +133,18 @@ public class AdminBoundaryEnrichmentWorker(
             }
         }
 
-        await storedFeaturesCollection.PatchDocuments(patches, cancellationToken: cancellationToken);
+        if (patches.Count > 0)
+        {
+            await storedFeaturesCollection.PatchDocuments(patches, cancellationToken: cancellationToken);
+        }
 
-        foreach (var message in completableMessages)
+        foreach (var message in processMessages)
+        {
+            var boundaryId = message.Body.ToString();
+            if (!patchedIds.Contains(boundaryId))
+                continue;
+
             await actions.CompleteMessageAsync(message, cancellationToken);
+        }
     }
 }

@@ -15,6 +15,7 @@ namespace Shared.Services
         readonly HttpClient _client = httpClient;
         readonly ILogger<OverpassClient> _logger = logger;
         private const int MaxAttemptsPerMirror = 2;
+        private static readonly TimeSpan TransientErrorRetryDelay = TimeSpan.FromSeconds(2);
         private const int RequiredEmptyConfirmations = 2;
         private const int DefaultMaxConcurrentRequests = 3;
         private static readonly TimeSpan BaseThrottleDelay = TimeSpan.FromMilliseconds(750);
@@ -69,6 +70,16 @@ namespace Shared.Services
                         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                         {
                             throw;
+                        }
+                        catch (Exception ex) when (IsTransientConnectionError(ex))
+                        {
+                            lastException = ex;
+                            _logger.LogWarning(ex, "Overpass mirror {Mirror} transient connection error on attempt {Attempt}. {Retry}.",
+                                mirror, attempt, attempt < MaxAttemptsPerMirror ? "Retrying" : "Moving to next mirror");
+                            if (attempt < MaxAttemptsPerMirror)
+                                await Task.Delay(TransientErrorRetryDelay, cancellationToken);
+                            else
+                                break;
                         }
                         catch (Exception ex)
                         {
@@ -157,6 +168,16 @@ namespace Shared.Services
                         {
                             throw;
                         }
+                        catch (Exception ex) when (IsTransientConnectionError(ex))
+                        {
+                            lastException = ex;
+                            _logger.LogWarning(ex, "Overpass mirror {Mirror} transient connection error for {Operation} on attempt {Attempt}. {Retry}.",
+                                mirror, operation, attempt, attempt < MaxAttemptsPerMirror ? "Retrying" : "Moving to next mirror");
+                            if (attempt < MaxAttemptsPerMirror)
+                                await Task.Delay(TransientErrorRetryDelay, cancellationToken);
+                            else
+                                break;
+                        }
                         catch (Exception ex)
                         {
                             lastException = ex;
@@ -204,6 +225,15 @@ namespace Shared.Services
         private static bool IsThrottledStatusCode(HttpStatusCode statusCode)
         {
             return ThrottledStatusCodes.Contains(statusCode);
+        }
+
+        private static bool IsTransientConnectionError(Exception ex)
+        {
+            if (ex is HttpRequestException { InnerException: System.IO.IOException or System.Net.Sockets.SocketException })
+                return true;
+            if (ex is System.IO.IOException or System.Net.Sockets.SocketException)
+                return true;
+            return false;
         }
 
         private static TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)

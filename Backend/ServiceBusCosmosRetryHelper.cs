@@ -179,6 +179,53 @@ public static class ServiceBusRescheduler
         return true;
     }
 
+    public static async Task<int> DeferMessagesAsync(
+        ServiceBusClient serviceBusClient,
+        string queueName,
+        IReadOnlyList<ServiceBusReceivedMessage> messages,
+        Microsoft.Azure.Functions.Worker.ServiceBusMessageActions actions,
+        ILogger logger,
+        CancellationToken cancellationToken,
+        TimeSpan baseDelay,
+        string reason)
+    {
+        var realMessages = messages.Where(HasRealLockToken).ToList();
+        if (realMessages.Count == 0)
+            return 0;
+
+        var scheduledBaseTime = DateTimeOffset.UtcNow.Add(baseDelay <= TimeSpan.Zero ? TimeSpan.FromSeconds(15) : baseDelay);
+        await using var sender = serviceBusClient.CreateSender(queueName);
+
+        for (var index = 0; index < realMessages.Count; index++)
+        {
+            var message = realMessages[index];
+            var scheduledEnqueueTime = scheduledBaseTime.Add(TimeSpan.FromSeconds(BatchMessageSpacing.TotalSeconds * index));
+            var deferredMessage = BuildScheduledMessage(message, GetRetryCount(message));
+
+            await sender.ScheduleMessageAsync(deferredMessage, scheduledEnqueueTime, cancellationToken);
+
+            try
+            {
+                await actions.CompleteMessageAsync(message, cancellationToken);
+            }
+            catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+            {
+                logger.LogWarning(ex,
+                    "Message lock already lost while completing deferred message {MessageId} on queue {QueueName}. Deferred copy was already scheduled.",
+                    message.MessageId, queueName);
+            }
+        }
+
+        logger.LogWarning(
+            "Deferred {MessageCount} message(s) on queue {QueueName} with base delay {BaseDelay}. Reason={Reason}",
+            realMessages.Count,
+            queueName,
+            baseDelay,
+            reason);
+
+        return realMessages.Count;
+    }
+
     public static async Task HandleRetryAsync(
         Exception exception,
         Microsoft.Azure.Functions.Worker.ServiceBusMessageActions actions,
