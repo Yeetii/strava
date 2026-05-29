@@ -1,7 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
+using Azure.Monitor.Query;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker.Extensions.OpenApi.Extensions;
 using Microsoft.Extensions.DependencyInjection;
@@ -183,6 +185,7 @@ var host = new HostBuilder()
             var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
             return new ServiceBusAdministrationClient(sbConnectionString);
         });
+        services.AddSingleton(new MetricsQueryClient(new DefaultAzureCredential()));
         services.AddScoped(serviceProvider =>
         {
             var usersCollection = serviceProvider.GetRequiredService<CollectionClient<Shared.Models.User>>();

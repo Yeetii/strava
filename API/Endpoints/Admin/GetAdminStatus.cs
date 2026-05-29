@@ -1,5 +1,7 @@
 using System.Net;
 using Azure.Messaging.ServiceBus.Administration;
+using Azure.Monitor.Query;
+using Azure.Monitor.Query.Models;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -23,11 +25,14 @@ public record CosmosContainerStatus(
 
 public record AdminStatus(
     IReadOnlyList<ServiceBusQueueStatus> ServiceBusQueues,
-    IReadOnlyList<CosmosContainerStatus> CosmosContainers);
+    IReadOnlyList<CosmosContainerStatus> CosmosContainers,
+    int? ProvisionedThroughput,
+    double? LiveRuPerSecond);
 
 public class GetAdminStatus(
     ServiceBusAdministrationClient serviceBusAdminClient,
     CosmosClient cosmosClient,
+    MetricsQueryClient metricsQueryClient,
     IConfiguration configuration,
     ILogger<GetAdminStatus> logger)
 {
@@ -71,11 +76,15 @@ public class GetAdminStatus(
 
         var queueTasks = QueueNames.Select(FetchQueueStatusAsync);
         var containerTasks = ContainerNames.Select(FetchContainerStatusAsync);
+        var throughputTask = FetchDatabaseThroughputAsync();
+        var liveRuTask = FetchLiveRuPerSecondAsync();
 
         var queueStatuses = await Task.WhenAll(queueTasks);
         var containerStatuses = await Task.WhenAll(containerTasks);
+        var provisionedThroughput = await throughputTask;
+        var liveRuPerSecond = await liveRuTask;
 
-        var status = new AdminStatus(queueStatuses, containerStatuses);
+        var status = new AdminStatus(queueStatuses, containerStatuses, provisionedThroughput, liveRuPerSecond);
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(status);
         return response;
@@ -132,4 +141,63 @@ public class GetAdminStatus(
             return new CosmosContainerStatus(containerName, -1);
         }
     }
+
+    private async Task<int?> FetchDatabaseThroughputAsync()
+    {
+        try
+        {
+            return await cosmosClient.GetDatabase(DatabaseConfig.CosmosDb).ReadThroughputAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to fetch Cosmos database throughput");
+            return null;
+        }
+    }
+
+    private async Task<double?> FetchLiveRuPerSecondAsync()
+    {
+        var resourceId = configuration.GetValue<string>("CosmosAccountResourceId");
+        if (string.IsNullOrEmpty(resourceId))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Query TotalRequestUnits over the last 5 minutes with 1-minute granularity.
+            // The metric reports RUs consumed per minute; dividing by 60 gives RU/s.
+            var options = new MetricsQueryOptions
+            {
+                Granularity = TimeSpan.FromMinutes(1),
+                TimeRange = new QueryTimeRange(TimeSpan.FromMinutes(5))
+            };
+            options.Aggregations.Add(MetricAggregationType.Total);
+
+            var result = await metricsQueryClient.QueryResourceAsync(
+                resourceId,
+                ["TotalRequestUnits"],
+                options);
+
+            var timeSeries = result.Value.Metrics.FirstOrDefault()?.TimeSeries.FirstOrDefault();
+            if (timeSeries is null)
+            {
+                return null;
+            }
+
+            // Take the most recent data point that has a value
+            var latest = timeSeries.Values
+                .Where(v => v.Total.HasValue)
+                .OrderByDescending(v => v.TimeStamp)
+                .FirstOrDefault();
+
+            return latest?.Total / 60.0;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to fetch live Cosmos RU/s from Azure Monitor");
+            return null;
+        }
+    }
 }
+
