@@ -1,0 +1,32 @@
+meta {
+  name: Cleanup Excluded Activity Types
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{backendUrl}}/api/manage/cleanup-excluded-activity-types
+  body: none
+  auth: none
+}
+
+params:query {
+  userId: 11908635
+  ~feature: all
+  ~dryRun: true
+  ~code: {{functionKey}}
+}
+
+docs {
+  Removes contributions from activity types that should not affect visited features
+  (virtual activities, water sports, ski resort, indoor/gym).
+
+  Query parameters:
+
+  - userId (required): the user whose data to clean up
+  - feature (optional): paths | peaks | areas | all (default: all)
+  - dryRun (optional): if true, returns counts without modifying data (default: false)
+  - code (optional): backend function key for environments that require function auth
+
+  Response includes excluded activity counts and how many documents were deleted or patched per feature.
+}

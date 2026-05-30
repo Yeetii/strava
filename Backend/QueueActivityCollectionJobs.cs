@@ -4,6 +4,7 @@ using Shared.Models;
 using Shared.Services;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Serialization;
 
 namespace Backend;
 
@@ -47,6 +48,38 @@ internal static class QueueActivityCollectionJobs
     {
         var activityIds = await activitiesClient.ExecuteQueryAsync<string>(BuildActivityIdsQueryDefinition(userId));
         await QueueActivityIdsAsync(activityIds, serviceBusClient, queueName);
+    }
+
+    public static async Task QueueActivitiesExcludingTypesAsync(
+        CollectionClient<Activity> activitiesClient,
+        ServiceBusClient serviceBusClient,
+        string queueName,
+        IReadOnlySet<string> excludedSportTypes,
+        string? userId = null)
+    {
+        var projections = await activitiesClient.ExecuteQueryAsync<ActivityIdProjection>(
+            BuildActivityProjectionsQueryDefinition(userId));
+        var activityIds = projections
+            .Where(p => string.IsNullOrEmpty(p.SportType) || !excludedSportTypes.Contains(p.SportType))
+            .Select(p => p.Id);
+        await QueueActivityIdsAsync(activityIds, serviceBusClient, queueName);
+    }
+
+    private sealed class ActivityIdProjection
+    {
+        [JsonPropertyName("id")]
+        public required string Id { get; init; }
+        [JsonPropertyName("sportType")]
+        public string? SportType { get; init; }
+    }
+
+    internal static QueryDefinition BuildActivityProjectionsQueryDefinition(string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+            return new QueryDefinition("SELECT c.id, c.sportType FROM c");
+
+        return new QueryDefinition("SELECT c.id, c.sportType FROM c WHERE c.userId = @userId")
+            .WithParameter("@userId", userId);
     }
 
     internal static QueryDefinition BuildActivityIdsQueryDefinition(string? userId)

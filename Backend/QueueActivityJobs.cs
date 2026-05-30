@@ -37,12 +37,15 @@ namespace Backend
         }
 
         internal static bool ShouldQueueSummits(Activity activity)
-            => activity.ProcessingStatus?.SummitedPeaks != true;
+            => activity.ProcessingStatus?.SummitedPeaks != true
+            && !ActivityTypeFilters.ExcludedFromPeaks.Contains(activity.SportType);
 
         internal static bool ShouldQueueVisitedPaths(Activity activity)
-            => activity.ProcessingStatus?.VisitedPaths != true;
+            => activity.ProcessingStatus?.VisitedPaths != true
+            && !ActivityTypeFilters.ExcludedFromPaths.Contains(activity.SportType);
 
         internal static bool ShouldQueueVisitedAreas(Activity activity)
-            => activity.ProcessingStatus?.VisitedAreas != true;
+            => activity.ProcessingStatus?.VisitedAreas != true
+            && !ActivityTypeFilters.ExcludedFromAreas.Contains(activity.SportType);
     }
 }

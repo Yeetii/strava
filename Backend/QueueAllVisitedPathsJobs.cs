@@ -13,10 +13,11 @@ namespace Backend
         public async Task Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
         {
-            await QueueActivityCollectionJobs.QueueAllActivitiesAsync(
+            await QueueActivityCollectionJobs.QueueActivitiesExcludingTypesAsync(
                 _cosmosClient,
                 serviceBusClient,
                 ServiceBusConfig.CalculateVisitedPathsJobs,
+                ActivityTypeFilters.ExcludedFromPaths,
                 GetUserIdFilter(req.Url));
         }
 

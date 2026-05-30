@@ -62,8 +62,51 @@ public record SummaryActivity(
 
 public static class SportTypes
 {
+    // Snow sports
     public static readonly string ALPINE_SKIING = "AlpineSki";
     public static readonly string BACKCOUNTRY_SKIING = "BackcountrySki";
     public static readonly string NORDIC_SKIING = "NordicSki";
     public static readonly string SNOWBOARDING = "Snowboard";
+
+    // Virtual
+    public static readonly string VIRTUAL_RIDE = "VirtualRide";
+    public static readonly string VIRTUAL_RUN = "VirtualRun";
+    public static readonly string VIRTUAL_ROW = "VirtualRow";
+
+    // Water sports
+    public static readonly string SWIM = "Swim";
+    public static readonly string CANOEING = "Canoeing";
+    public static readonly string KAYAKING = "Kayaking";
+    public static readonly string ROWING = "Rowing";
+    public static readonly string SAIL = "Sail";
+    public static readonly string SURFING = "Surfing";
+    public static readonly string WINDSURF = "Windsurf";
+    public static readonly string KITESURF = "Kitesurf";
+    public static readonly string STAND_UP_PADDLING = "StandUpPaddling";
+
+    // Ice
+    public static readonly string ICE_SKATE = "IceSkate";
+
+    // Indoor fitness / gym
+    public static readonly string WEIGHT_TRAINING = "WeightTraining";
+    public static readonly string YOGA = "Yoga";
+    public static readonly string CROSSFIT = "Crossfit";
+    public static readonly string ELLIPTICAL = "Elliptical";
+    public static readonly string STAIR_STEPPER = "StairStepper";
+    public static readonly string HIGH_INTENSITY_INTERVAL_TRAINING = "HighIntensityIntervalTraining";
+    public static readonly string DANCE = "Dance";
+    public static readonly string PILATES = "Pilates";
+    public static readonly string PHYSICAL_THERAPY = "PhysicalTherapy";
+
+    // Court / field sports
+    public static readonly string BADMINTON = "Badminton";
+    public static readonly string BASKETBALL = "Basketball";
+    public static readonly string SQUASH = "Squash";
+    public static readonly string TABLE_TENNIS = "TableTennis";
+    public static readonly string TENNIS = "Tennis";
+    public static readonly string RACQUETBALL = "Racquetball";
+    public static readonly string PICKLEBALL = "Pickleball";
+    public static readonly string SOCCER = "Soccer";
+    public static readonly string CRICKET = "Cricket";
+    public static readonly string GOLF = "Golf";
 }
