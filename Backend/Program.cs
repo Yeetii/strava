@@ -20,6 +20,7 @@ using Backend;
 using Shared.Services.Shards;
 
 var host = new HostBuilder()
+    .ConfigureAppConfiguration(c => c.AddJsonFile("local.settings.shared.json", optional: true))
     .ConfigureFunctionsWorkerDefaults()
     .ConfigureServices((hostingContext, services) =>
     {

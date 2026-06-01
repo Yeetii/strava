@@ -1,0 +1,6 @@
+{
+  "ApiUrl": "https://strava-tools-api.azurewebsites.net/api/",
+  "BackendApiUrl": "https://strava-tools-backend.azurewebsites.net/api/",
+  "MistralStudioApiUrl": "https://api.mistral.ai/v1/conversations",
+  "OverpassMaxConcurrency": "1"
+}
