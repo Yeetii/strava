@@ -74,6 +74,7 @@ public class ActivityProcessingStatus
     public bool SummitedPeaks { get; set; }
     public bool VisitedPaths { get; set; }
     public bool VisitedAreas { get; set; }
+    public bool SportTypeExcluded { get; set; }
     public DateTime? SummitedPeaksDoneAtUtc { get; set; }
     public DateTime? VisitedPathsDoneAtUtc { get; set; }
     public DateTime? VisitedAreasDoneAtUtc { get; set; }

@@ -18,6 +18,7 @@ namespace Backend
                 serviceBusClient,
                 ServiceBusConfig.CalculateVisitedPathsJobs,
                 ActivityTypeFilters.ExcludedFromPaths,
+                ActivitySyncStage.VisitedPaths,
                 GetUserIdFilter(req.Url));
         }
 

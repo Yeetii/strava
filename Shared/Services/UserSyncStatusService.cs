@@ -181,6 +181,7 @@ public class UserSyncStatusService(
             SummitedPeaks = current?.SummitedPeaks ?? false,
             VisitedPaths = current?.VisitedPaths ?? false,
             VisitedAreas = current?.VisitedAreas ?? false,
+            SportTypeExcluded = current?.SportTypeExcluded ?? false,
             SummitedPeaksDoneAtUtc = current?.SummitedPeaksDoneAtUtc,
             VisitedPathsDoneAtUtc = current?.VisitedPathsDoneAtUtc,
             VisitedAreasDoneAtUtc = current?.VisitedAreasDoneAtUtc,

@@ -18,6 +18,7 @@ namespace Backend
                 serviceBusClient,
                 ServiceBusConfig.CalculateSummitsJobs,
                 ActivityTypeFilters.ExcludedFromPeaks,
+                ActivitySyncStage.SummitedPeaks,
                 GetUserIdFilter(req.Url));
         }
 

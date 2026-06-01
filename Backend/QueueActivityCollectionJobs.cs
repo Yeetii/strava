@@ -55,30 +55,97 @@ internal static class QueueActivityCollectionJobs
         ServiceBusClient serviceBusClient,
         string queueName,
         IReadOnlySet<string> excludedSportTypes,
+        ActivitySyncStage stage,
         string? userId = null)
     {
         var projections = await activitiesClient.ExecuteQueryAsync<ActivityIdProjection>(
             BuildActivityProjectionsQueryDefinition(userId));
-        var activityIds = projections
-            .Where(p => string.IsNullOrEmpty(p.SportType) || !excludedSportTypes.Contains(p.SportType))
-            .Select(p => p.Id);
-        await QueueActivityIdsAsync(activityIds, serviceBusClient, queueName);
+
+        var included = new List<string>();
+        var excluded = new List<ActivityIdProjection>();
+        foreach (var p in projections)
+        {
+            if (string.IsNullOrEmpty(p.SportType) || !excludedSportTypes.Contains(p.SportType))
+                included.Add(p.Id);
+            else
+                excluded.Add(p);
+        }
+
+        await QueueActivityIdsAsync(included, serviceBusClient, queueName);
+        await MarkExcludedActivitiesAsync(activitiesClient, excluded, stage);
+    }
+
+    private static async Task MarkExcludedActivitiesAsync(
+        CollectionClient<Activity> activitiesClient,
+        List<ActivityIdProjection> excluded,
+        ActivitySyncStage stage)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var p in excluded)
+        {
+            var current = p.ProcessingStatus;
+            var stageAlreadyDone = stage switch
+            {
+                ActivitySyncStage.SummitedPeaks => current?.SummitedPeaks == true,
+                ActivitySyncStage.VisitedPaths => current?.VisitedPaths == true,
+                ActivitySyncStage.VisitedAreas => current?.VisitedAreas == true,
+                _ => false,
+            };
+            if (stageAlreadyDone && current?.SportTypeExcluded == true)
+                continue;
+
+            var next = new ActivityProcessingStatus
+            {
+                SummitedPeaks = current?.SummitedPeaks ?? false,
+                VisitedPaths = current?.VisitedPaths ?? false,
+                VisitedAreas = current?.VisitedAreas ?? false,
+                SummitedPeaksDoneAtUtc = current?.SummitedPeaksDoneAtUtc,
+                VisitedPathsDoneAtUtc = current?.VisitedPathsDoneAtUtc,
+                VisitedAreasDoneAtUtc = current?.VisitedAreasDoneAtUtc,
+                LastUpdatedAtUtc = now,
+                LastProcessingError = current?.LastProcessingError,
+                SportTypeExcluded = true,
+            };
+            switch (stage)
+            {
+                case ActivitySyncStage.SummitedPeaks:
+                    next.SummitedPeaks = true;
+                    next.SummitedPeaksDoneAtUtc = now;
+                    break;
+                case ActivitySyncStage.VisitedPaths:
+                    next.VisitedPaths = true;
+                    next.VisitedPathsDoneAtUtc = now;
+                    break;
+                case ActivitySyncStage.VisitedAreas:
+                    next.VisitedAreas = true;
+                    next.VisitedAreasDoneAtUtc = now;
+                    break;
+            }
+            await activitiesClient.PatchDocument(
+                p.Id,
+                new PartitionKey(p.UserId),
+                [PatchOperation.Set("/processingStatus", next)]);
+        }
     }
 
     private sealed class ActivityIdProjection
     {
         [JsonPropertyName("id")]
         public required string Id { get; init; }
+        [JsonPropertyName("userId")]
+        public required string UserId { get; init; }
         [JsonPropertyName("sportType")]
         public string? SportType { get; init; }
+        [JsonPropertyName("processingStatus")]
+        public ActivityProcessingStatus? ProcessingStatus { get; init; }
     }
 
     internal static QueryDefinition BuildActivityProjectionsQueryDefinition(string? userId)
     {
         if (string.IsNullOrWhiteSpace(userId))
-            return new QueryDefinition("SELECT c.id, c.sportType FROM c");
+            return new QueryDefinition("SELECT c.id, c.userId, c.sportType, c.processingStatus FROM c");
 
-        return new QueryDefinition("SELECT c.id, c.sportType FROM c WHERE c.userId = @userId")
+        return new QueryDefinition("SELECT c.id, c.userId, c.sportType, c.processingStatus FROM c WHERE c.userId = @userId")
             .WithParameter("@userId", userId);
     }
 

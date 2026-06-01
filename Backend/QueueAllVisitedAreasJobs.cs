@@ -18,6 +18,7 @@ namespace Backend
                 serviceBusClient,
                 ServiceBusConfig.CalculateVisitedAreasJobs,
                 ActivityTypeFilters.ExcludedFromAreas,
+                ActivitySyncStage.VisitedAreas,
                 GetUserIdFilter(req.Url));
         }
 
