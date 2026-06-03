@@ -1,0 +1,24 @@
+{
+    "version": "2.0",
+    "logging": {
+        "logLevel": {
+            "default": "Warning"
+        },
+        "applicationInsights": {
+            "samplingSettings": {
+                "isEnabled": true,
+                "excludedTypes": "Request"
+            },
+            "enableLiveMetricsFilters": true
+        }
+    },
+    "functionTimeout": "01:00:00",
+    "extensions": {
+        "serviceBus": {
+            "maxAutoLockRenewalDuration": "00:10:00",
+            "maxConcurrentCalls": 1,
+            "prefetchCount": 25,
+            "maxMessageBatchSize": 25
+        }
+    }
+}
