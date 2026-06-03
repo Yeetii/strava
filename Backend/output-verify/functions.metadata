@@ -1,0 +1,919 @@
+[
+  {
+    "name": "ActivityEventWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.ActivityEventWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "messages",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "activityprocessed",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "Many",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      },
+      {
+        "name": "$return",
+        "direction": "Out",
+        "type": "signalR",
+        "hubName": "peakshunters",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "AdminBoundaryEnrichmentWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.AdminBoundaryEnrichmentWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "messages",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "enrichAdminBoundaryJobs",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "Many",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "BackfillAdminBoundaryMetrics",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.BackfillAdminBoundaryMetrics.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "route": "boundaries/backfill",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "BackfillVisitedPathOsmHighwayIds",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.BackfillVisitedPathOsmHighwayIds.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "route": "manage/visited-paths/backfill-osm-highway-ids",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "BackfillVisitedPathOsmHighwayIdsAll",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.BackfillVisitedPathOsmHighwayIds.RunAllPages",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "route": "manage/visited-paths/backfill-osm-highway-ids/all",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "CleanupExcludedActivityTypes",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.CleanupExcludedActivityTypes.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "route": "manage/cleanup-excluded-activity-types",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "DeleteAccountWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DeleteAccountWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "message",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "accountDeleteJobs",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "One",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "DiscoverBetrailRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverBetrailRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverDuvRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverDuvRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverItraRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverItraRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverLoppkartanRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverLoppkartanRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverLopplistanRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverLopplistanRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverRunagainRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverRunagainRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverSkyrunningRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverSkyrunningRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverTraceDeTrailRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverTraceDeTrailRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverTrailrunningSwedenRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverTrailrunningSwedenRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 3 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "DiscoverUtmbRaces",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.DiscoverUtmbRaces.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 2 * * 1",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "EnrichNewAdminBoundaries",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.EnrichNewAdminBoundaries.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "changedDocuments",
+        "direction": "In",
+        "type": "cosmosDBTrigger",
+        "databaseName": "db",
+        "containerName": "osmFeatures",
+        "connection": "CosmosDBConnection",
+        "leaseContainerPrefix": "adminBoundaryMetrics",
+        "createLeaseContainerIfNotExists": true,
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "NewSummitedPeak",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.NewSummitedPeak.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "input",
+        "direction": "In",
+        "type": "cosmosDBTrigger",
+        "databaseName": "db",
+        "containerName": "summitedPeaks",
+        "connection": "CosmosDBConnection",
+        "createLeaseContainerIfNotExists": true,
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "direction": "Out",
+        "type": "signalR",
+        "hubName": "peakshunters",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "QueueActivityJobs",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.QueueActivityJobs.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "updatedActivities",
+        "direction": "In",
+        "type": "cosmosDBTrigger",
+        "databaseName": "db",
+        "containerName": "activities",
+        "connection": "CosmosDBConnection",
+        "leaseContainerPrefix": "activityJobs",
+        "createLeaseContainerIfNotExists": true,
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "QueueAllScrapeJobs",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.QueueAllScrapeJobs.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "timerInfo",
+        "direction": "In",
+        "type": "timerTrigger",
+        "schedule": "0 0 3 * * 2",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "QueueAllScrapeJobsHttp",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.QueueAllScrapeJobs.RunHttp",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "route": "manage/queue-all-scrape-jobs",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "QueueAllSummitJobs",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.QueueAllSummitJobs.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "get",
+          "post"
+        ],
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "QueueAllVisitedAreasJobs",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.QueueAllVisitedAreasJobs.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "get",
+          "post"
+        ],
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "QueueAllVisitedPathsJobs",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.QueueAllVisitedPathsJobs.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "get",
+          "post"
+        ],
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "RaceDiscoveryWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.RaceDiscoveryWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "message",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "raceDiscoveryJobs",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "One",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "RefreshStravaToken",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.RefreshStravaToken.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get"
+        ],
+        "route": "{userId}/accessToken",
+        "properties": {}
+      },
+      {
+        "name": "Result",
+        "type": "http",
+        "direction": "Out"
+      },
+      {
+        "name": "WriteToUser",
+        "direction": "Out",
+        "type": "cosmosDB",
+        "databaseName": "db",
+        "containerName": "users",
+        "connection": "CosmosDBConnection",
+        "createIfNotExists": true,
+        "partitionKey": "/id",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "RunSummitsForActivity",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.RunSummitsForActivity.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "route": "debug/summits/{activityId}",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "ScrapeRaceMistralWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.ScrapeRaceMistralWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "message",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "mistralScrape",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "One",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "ScrapeRaceWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.ScrapeRaceWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "messages",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "scrapeRace",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "Many",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "ScrapeRaceHttp",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.ScrapeRaceWorker.RunHttp",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "post"
+        ],
+        "route": "scrape/organizer",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "StoreCuratedPeaksGroups",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.StoreCuratedPeaksGroups.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "get"
+        ],
+        "route": "peaks/refine",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "direction": "Out",
+        "type": "cosmosDB",
+        "databaseName": "db",
+        "containerName": "peaksGroups",
+        "connection": "CosmosDBConnection",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "StravaActivitiesFetcher",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.StravaActivitiesFetcher.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "message",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "activitiesfetchjobs",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "One",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "StravaActivityFetcher",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.StravaActivityFetcher.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "message",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "activityFetchJobs",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "One",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "StravaWebhook",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.StravaWebhook.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Anonymous",
+        "methods": [
+          "get",
+          "post"
+        ],
+        "properties": {}
+      },
+      {
+        "name": "Response",
+        "type": "http",
+        "direction": "Out"
+      },
+      {
+        "name": "ActivityFetchJob",
+        "direction": "Out",
+        "type": "serviceBus",
+        "queueOrTopicName": "activityFetchJobs",
+        "entityType": "Queue",
+        "connection": "ServicebusConnection",
+        "properties": {}
+      }
+    ]
+  },
+  {
+    "name": "SummitsWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.SummitsWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "jobs",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "calculateSummitsJobs",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "Many",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "TestScrapeUrl",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.TestScrapeUrl.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "req",
+        "direction": "In",
+        "type": "httpTrigger",
+        "authLevel": "Function",
+        "methods": [
+          "get"
+        ],
+        "route": "scrape/test",
+        "properties": {}
+      },
+      {
+        "name": "$return",
+        "type": "http",
+        "direction": "Out"
+      }
+    ]
+  },
+  {
+    "name": "VisitedAreasWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.VisitedAreasWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "jobs",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "calculateVisitedAreasJobs",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "Many",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  },
+  {
+    "name": "VisitedPathsWorker",
+    "scriptFile": "Backend.dll",
+    "entryPoint": "Backend.VisitedPathsWorker.Run",
+    "language": "dotnet-isolated",
+    "properties": {
+      "IsCodeless": false
+    },
+    "bindings": [
+      {
+        "name": "jobs",
+        "direction": "In",
+        "type": "serviceBusTrigger",
+        "queueName": "calculateVisitedPathsJobs",
+        "connection": "ServicebusConnection",
+        "autoCompleteMessages": false,
+        "cardinality": "Many",
+        "properties": {
+          "supportsDeferredBinding": "True"
+        }
+      }
+    ]
+  }
+]

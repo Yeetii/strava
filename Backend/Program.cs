@@ -106,7 +106,8 @@ var host = new HostBuilder()
         {
             var cfg = serviceProvider.GetRequiredService<IConfiguration>();
             var connStr = cfg.GetValue<string>("BlobStorageConnection")
-                ?? throw new Exception("BlobStorageConnection is not configured");
+                ?? cfg.GetValue<string>("AzureWebJobsStorage")
+                ?? throw new Exception("Blob storage connection string is not configured");
             var containerName = BlobContainerNames.RaceOrganizers;
             var containerClient = new BlobContainerClient(connStr, containerName);
             containerClient.CreateIfNotExists();
@@ -117,7 +118,8 @@ var host = new HostBuilder()
         {
             var cfg = serviceProvider.GetRequiredService<IConfiguration>();
             var connStr = cfg.GetValue<string>("BlobStorageConnection")
-                ?? throw new Exception("BlobStorageConnection is not configured");
+                ?? cfg.GetValue<string>("AzureWebJobsStorage")
+                ?? throw new Exception("Blob storage connection string is not configured");
             var containerClient = new BlobContainerClient(connStr, BlobContainerNames.HighwaysShards);
             containerClient.CreateIfNotExists();
             return new HighwaysShardContainer(containerClient);
