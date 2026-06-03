@@ -14,6 +14,7 @@ local.settings.json
 *.userprefs
 
 # Build results
+*.dll
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
