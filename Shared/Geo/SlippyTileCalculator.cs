@@ -50,5 +50,31 @@ namespace Shared.Geo
             double n = Math.PI - 2.0 * Math.PI * y / Math.Pow(2.0, z);
             return Math.Atan(Math.Sinh(n)) * 180.0 / Math.PI;
         }
+
+        /// <summary>
+        /// Returns the tile keys at <paramref name="targetZoom"/> that intersect the given tile.
+        /// When z == targetZoom returns exactly [(x, y)]; when z &gt; targetZoom returns the
+        /// single parent tile; when z &lt; targetZoom expands to all child tiles.
+        /// </summary>
+        public static IReadOnlyList<(int x, int y)> GetIntersectingTileKeys(int z, int x, int y, int targetZoom)
+        {
+            if (z == targetZoom)
+                return [(x, y)];
+
+            if (z > targetZoom)
+            {
+                var scale = 1 << (z - targetZoom);
+                return [(x / scale, y / scale)];
+            }
+
+            var expansion = 1 << (targetZoom - z);
+            var minX = x * expansion;
+            var minY = y * expansion;
+            var result = new List<(int x, int y)>(expansion * expansion);
+            for (var currentX = minX; currentX < minX + expansion; currentX++)
+                for (var currentY = minY; currentY < minY + expansion; currentY++)
+                    result.Add((currentX, currentY));
+            return result;
+        }
     }
 }

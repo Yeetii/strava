@@ -29,6 +29,22 @@ Implementation notes:
 - Use active Service Bus message counts, not scheduled counts, when deciding whether to defer.
 - Keep Cosmos hot-path checks lightweight; avoid Azure Monitor queries during worker execution.
 
+## Backfill Pattern
+
+When a new field needs to be added to existing Cosmos documents:
+1. Add the field to the model as nullable so existing documents remain valid.
+2. Write the field on all new/patched documents in the worker going forward.
+3. Create a backfill Azure Function (HTTP POST) in `Backend/` that:
+   - Queries for documents missing the field (`WHERE NOT IS_DEFINED(c.field) OR IS_NULL(c.field)`).
+   - Collects `activityIds` from those documents and re-queues them onto the worker's Service Bus queue via `QueueActivityCollectionJobs.QueueActivityIdsAsync`.
+   - Supports pagination via `continuationToken` query param + `ExecuteQueryPageAsync`.
+   - Has both a single-page variant and an `/all` variant that loops until done.
+4. Add Bruno request files for both variants under `bruno/^manage/workers/`.
+
+**Before running a backfill locally:** the backfill re-queues onto the same Service Bus queue the production worker listens to. Disable or stop the remote (production) worker first to prevent it from consuming messages before the local worker can. Enable the relevant local worker in `local.settings.json` (`"AzureWebJobs.XxxWorker.Disabled": "0"`).
+
+See `BackfillVisitedPathTileIndex` and `BackfillVisitedPathOsmHighwayIds` in `Backend/` as reference implementations.
+
 ## Visited Path Identity
 
 Visited path identity must be based on **OSM way id** (`osmId`), not on shard-local feature ids.

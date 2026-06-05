@@ -120,25 +120,7 @@ public class BlobTileService(
     }
 
     internal static IReadOnlyList<(int x, int y)> GetIntersectingShardKeys(int z, int x, int y, int shardZoom)
-    {
-        if (z == shardZoom)
-            return [(x, y)];
-
-        if (z > shardZoom)
-        {
-            var scale = 1 << (z - shardZoom);
-            return [(x / scale, y / scale)];
-        }
-
-        var expansion = 1 << (shardZoom - z);
-        var minX = x * expansion;
-        var minY = y * expansion;
-        var result = new List<(int x, int y)>(expansion * expansion);
-        for (var currentX = minX; currentX < minX + expansion; currentX++)
-            for (var currentY = minY; currentY < minY + expansion; currentY++)
-                result.Add((currentX, currentY));
-        return result;
-    }
+        => Geo.SlippyTileCalculator.GetIntersectingTileKeys(z, x, y, shardZoom);
 
     internal static IEnumerable<Feature> FilterByZoom(IEnumerable<Feature> features, int zoom)
         => features.Where(feature => HighwayZoomRules.ShouldKeepFeature(feature, zoom));

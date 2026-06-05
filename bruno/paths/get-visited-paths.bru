@@ -5,11 +5,16 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/visitedPaths
+  url: {{baseUrl}}/visitedPaths/12/{{tileX}}/{{tileY}}
   body: none
   auth: none
 }
 
 headers {
   Cookie: session={{sessionId}}
+}
+
+vars:pre-request {
+  tileX: 2184
+  tileY: 1240
 }

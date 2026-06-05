@@ -216,11 +216,18 @@ Paths in a slippy tile (zoom 11), same data source as `/paths/{x}/{y}`.
 
 ---
 
-### `GET /visitedPaths`
+### `GET /visitedPaths/{z}/{x}/{y}`
 
 🔒 Authenticated
 
-All paths the current user has visited.
+Paths the current user has visited within the given slippy-map tile. Uses the same z12 shard zoom as highway tiles; request at any zoom and the endpoint resolves to the intersecting z12 tiles.
+
+**Path params**
+| Param | Type | Description |
+|---|---|---|
+| `z` | number | Zoom level |
+| `x` | number | Tile X |
+| `y` | number | Tile Y |
 
 **Response** `200 OK` `application/json`
 ```ts

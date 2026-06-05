@@ -11,4 +11,6 @@ public class VisitedPath : IDocument
     public string? Name { get; set; }
     public string? Type { get; set; }
     public required HashSet<string> ActivityIds { get; set; }
+    public int? TileX { get; set; }
+    public int? TileY { get; set; }
 }

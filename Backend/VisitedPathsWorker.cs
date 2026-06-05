@@ -174,6 +174,9 @@ public class VisitedPathsWorker(
                 var osmHighwayId = pathMatch.OsmHighwayId;
                 var documentId = activity.UserId + "-" + osmHighwayId;
 
+                var featureCentroid = GeometryCentroidHelper.GetCentroid(pathFeature.Geometry);
+                var (featureTileX, featureTileY) = SlippyTileCalculator.WGS84ToTileIndex(featureCentroid, _highwaysShardFeatureClient.CanonicalZoom);
+
                 if (existingDocs.TryGetValue(documentId, out var existing))
                 {
                     var patchOperations = new List<PatchOperation>();
@@ -186,6 +189,12 @@ public class VisitedPathsWorker(
                     if (!string.Equals(existing.OsmHighwayId, osmHighwayId, StringComparison.Ordinal))
                     {
                         patchOperations.Add(PatchOperation.Set("/osmHighwayId", osmHighwayId));
+                    }
+
+                    if (existing.TileX == null || existing.TileY == null)
+                    {
+                        patchOperations.Add(PatchOperation.Set("/tileX", featureTileX));
+                        patchOperations.Add(PatchOperation.Set("/tileY", featureTileY));
                     }
 
                     if (patchOperations.Count > 0)
@@ -202,7 +211,9 @@ public class VisitedPathsWorker(
                         OsmHighwayId = osmHighwayId,
                         Name = pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
                         Type = pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
-                        ActivityIds = [activity.Id]
+                        ActivityIds = [activity.Id],
+                        TileX = featureTileX,
+                        TileY = featureTileY
                     });
                 }
             }
