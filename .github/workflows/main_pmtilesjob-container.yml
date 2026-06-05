@@ -25,7 +25,7 @@ jobs:
           submodules: true
 
       - name: Login to Azure
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_EC2484218DDA436AA7B69FD2828FA153 }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6CB4BA37185D4E68AF0BA4324D4F7674 }}
