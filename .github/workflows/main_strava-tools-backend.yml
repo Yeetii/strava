@@ -56,6 +56,14 @@ jobs:
           zip -r ../output.zip .
           popd
 
+      - name: 'Remove WEBSITE_RUN_FROM_PACKAGE setting'
+        shell: bash
+        run: |
+          az webapp config appsettings delete \
+            --name 'strava-tools-backend' \
+            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
+            --setting-names WEBSITE_RUN_FROM_PACKAGE || true
+
       - name: 'Deploy Function App with Azure CLI'
         shell: bash
         run: |

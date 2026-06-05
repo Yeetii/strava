@@ -15,6 +15,7 @@ on:
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'API' # set this to the path to your web app project, defaults to the repository root
   DOTNET_VERSION: '8.0.x' # set this to the dotnet version to use
+  AZURE_RESOURCE_GROUP: 'strava'
 
 jobs:
   build-and-deploy:
@@ -46,11 +47,26 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_92CD9AE0BECC4B5EAC5989BFC3BC8FE8 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C5BFA9627B9B4DFABC49F24053BE9C9B }}
 
-      - name: 'Run Azure Functions Action'
-        uses: azure/webapps-deploy@v3
-        id: fa
-        with:
-          app-name: 'strava-tools-api'
-          slot-name: 'Production'
-          package: '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/output'
+      - name: 'Archive Function App output'
+        shell: bash
+        run: |
+          pushd './${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/output'
+          zip -r ../output.zip .
+          popd
+
+      - name: 'Remove WEBSITE_RUN_FROM_PACKAGE setting'
+        shell: bash
+        run: |
+          az webapp config appsettings delete \
+            --name 'strava-tools-api' \
+            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
+            --setting-names WEBSITE_RUN_FROM_PACKAGE || true
+
+      - name: 'Deploy Function App with Azure CLI'
+        shell: bash
+        run: |
+          az functionapp deployment source config-zip \
+            --name 'strava-tools-api' \
+            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
+            --src '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/output.zip'
           
