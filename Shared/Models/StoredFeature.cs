@@ -26,7 +26,30 @@ namespace Shared.Models
         [JsonConverter(typeof(GeometrySystemTextJsonConverter))]
         public required Geometry Geometry { get; set; }
 
+        /// <summary>
+        /// Cosmos item-level TTL override. <c>-1</c> means the item never expires (overrides the
+        /// container's DefaultTimeToLive). <c>null</c> means inherit the container default.
+        /// </summary>
+        [JsonPropertyName("ttl")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        [Newtonsoft.Json.JsonProperty("ttl", NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        public int? Ttl { get; set; }
+
+        /// <summary>
+        /// Pre-computed centroid of <see cref="Geometry"/>. Null for documents written before the
+        /// centroid backfill; use <see cref="ResolvedCentroid"/> to fall back to live computation.
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        public Coordinate? Centroid { get; set; }
+
+        /// <summary>Returns the stored <see cref="Centroid"/> if set; otherwise computes it live from <see cref="Geometry"/>.</summary>
         [JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
+        public Coordinate ResolvedCentroid => Centroid ?? GeometryCentroidHelper.GetCentroid(Geometry);
+
+        [JsonIgnore]
+        [Newtonsoft.Json.JsonIgnore]
         public string LogicalId => !string.IsNullOrWhiteSpace(FeatureId)
             ? FeatureId
             : NormalizeFeatureId(Kind, Id);
@@ -122,6 +145,7 @@ namespace Shared.Models
                 Y = y,
                 Zoom = zoom,
                 Geometry = center,
+                Centroid = new Coordinate((southWest.Lng + northEast.Lng) / 2, (southWest.Lat + northEast.Lat) / 2),
                 Properties = properties
             };
         }
@@ -140,6 +164,7 @@ namespace Shared.Models
             Geometry = feature.Geometry;
             Properties = feature.Properties;
             var coordinate = GeometryCentroidHelper.GetCentroid(feature.Geometry);
+            Centroid = coordinate;
 
             var (x, y) = SlippyTileCalculator.WGS84ToTileIndex(coordinate, zoom);
             X = x;
@@ -157,6 +182,7 @@ namespace Shared.Models
             FeatureId = featureId;
             Geometry = feature.Geometry;
             Properties = feature.Properties;
+            Centroid = GeometryCentroidHelper.GetCentroid(feature.Geometry);
             X = x;
             Y = y;
             Zoom = zoom;

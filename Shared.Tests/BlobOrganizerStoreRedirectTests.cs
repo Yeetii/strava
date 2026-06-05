@@ -197,7 +197,7 @@ public class BlobOrganizerStoreRedirectTests
                 Kind = FeatureKinds.Race,
                 X = 1,
                 Y = 2,
-                Zoom = RaceCollectionClient.DefaultZoom,
+                Zoom = RaceAssembler.DefaultZoom,
                 Geometry = new Point(new Position(12, 34)),
                 Properties = new Dictionary<string, dynamic> { ["name"] = "Stable race" },
             }

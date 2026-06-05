@@ -17,9 +17,10 @@ public class AdminBoundaryEnrichmentWorker(
     ILogger<AdminBoundaryEnrichmentWorker> logger)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
-    private const int MaxMessagesPerRun = 4;
     private static readonly TimeSpan InvocationSafetyBuffer = TimeSpan.FromSeconds(75);
     private static readonly TimeSpan SpilloverDelay = TimeSpan.FromMinutes(1);
+    /// <summary>How often to renew the Service Bus lock while a single boundary is being enriched.</summary>
+    private static readonly TimeSpan LockRenewalInterval = TimeSpan.FromSeconds(240);
 
     [Function(nameof(AdminBoundaryEnrichmentWorker))]
     public async Task Run(
@@ -28,6 +29,12 @@ public class AdminBoundaryEnrichmentWorker(
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
+        // Renew all locks immediately — messages may have been sitting in the Functions trigger's
+        // prefetch buffer while a prior invocation ran, leaving little lock time remaining.
+        // This must happen before backpressure deferral and overflow deferral, both of which need
+        // valid locks to complete/schedule messages.
+        await RenewLocksAsync(messages, actions, logger, cancellationToken);
+
         if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
                 serviceBusAdministrationClient,
                 _serviceBusClient,
@@ -40,37 +47,14 @@ public class AdminBoundaryEnrichmentWorker(
             return;
         }
 
-        var processMessages = messages
-            .Take(MaxMessagesPerRun)
-            .ToList();
-        var overflowMessages = messages
-            .Skip(MaxMessagesPerRun)
-            .ToList();
-
-        if (overflowMessages.Count > 0)
-        {
-            await ServiceBusRescheduler.DeferMessagesAsync(
-                _serviceBusClient,
-                ServiceBusConfig.EnrichAdminBoundaryJobs,
-                overflowMessages,
-                actions,
-                logger,
-                cancellationToken,
-                SpilloverDelay,
-                "batch-size-limit");
-        }
-
-        if (processMessages.Count == 0)
-            return;
-
         var invocationDeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(10) - InvocationSafetyBuffer;
 
-        var ids = processMessages
+        var ids = messages
             .Select(m => m.Body.ToString())
             .ToList();
-        logger.LogInformation("Processing {Count} admin boundary enrichment jobs ({TotalReceived} received)", ids.Count, messages.Length);
+        logger.LogInformation("[AdminBoundaryEnrichmentWorker] Processing {Count} admin boundary enrichment jobs ({TotalReceived} received)", ids.Count, messages.Length);
 
-        await RenewLocksAsync(processMessages, actions, logger, cancellationToken);
+        await RenewLocksAsync(messages, actions, logger, cancellationToken);
 
         IEnumerable<StoredFeature> documents;
         try
@@ -84,7 +68,7 @@ public class AdminBoundaryEnrichmentWorker(
                 ServiceBusRescheduler.RecordCosmosThrottle();
             }
 
-            await RetryMessagesAsync(ex, processMessages, actions, logger, cancellationToken);
+            await RetryMessagesAsync(ex, messages, actions, logger, cancellationToken);
             return;
         }
 
@@ -94,12 +78,12 @@ public class AdminBoundaryEnrichmentWorker(
         var messagesToCompleteAfterPatch = new List<ServiceBusReceivedMessage>();
         var patchedIds = new HashSet<string>(StringComparer.Ordinal);
 
-        for (var index = 0; index < processMessages.Count; index++)
+        for (var index = 0; index < messages.Length; index++)
         {
-            var message = processMessages[index];
+            var message = messages[index];
             if (DateTimeOffset.UtcNow >= invocationDeadlineUtc)
             {
-                var spillover = processMessages
+                var spillover = messages
                     .Skip(index)
                     .ToList();
 
@@ -120,14 +104,17 @@ public class AdminBoundaryEnrichmentWorker(
 
             if (!documentsById.TryGetValue(boundaryId, out var document))
             {
-                logger.LogWarning("Admin boundary document {BoundaryId} not found; completing message {MessageId}", boundaryId, message.MessageId);
+                logger.LogWarning("[AdminBoundaryEnrichmentWorker] Admin boundary document {BoundaryId} not found; completing message {MessageId}", boundaryId, message.MessageId);
                 await TryCompleteMessageAsync(message, actions, logger, cancellationToken);
                 continue;
             }
 
-            if (!EnrichNewAdminBoundaries.ShouldEnrich(document))
+            var forceEnrich = message.ApplicationProperties.TryGetValue(OsmFeaturesChangeTrigger.ForceEnrichProperty, out var forceVal)
+                && forceVal is true;
+
+            if (!forceEnrich && !OsmFeaturesChangeTrigger.ShouldEnrich(document))
             {
-                logger.LogInformation("Skipping already-enriched admin boundary {BoundaryId}", boundaryId);
+                logger.LogInformation("[AdminBoundaryEnrichmentWorker] Skipping already-enriched admin boundary {BoundaryId}", boundaryId);
                 await TryCompleteMessageAsync(message, actions, logger, cancellationToken);
                 continue;
             }
@@ -140,9 +127,11 @@ public class AdminBoundaryEnrichmentWorker(
 
             try
             {
-                await RenewLocksAsync([message], actions, logger, cancellationToken);
-                logger.LogInformation("Enriching admin boundary {BoundaryId}", document.Id);
-                var ops = await enricher.CalculatePatchOperationsAsync(document, cancellationToken);
+                logger.LogInformation("[AdminBoundaryEnrichmentWorker] Enriching admin boundary {BoundaryId}", document.Id);
+                var ops = await RunWithPeriodicLockRenewalAsync(
+                    message, actions, logger, LockRenewalInterval,
+                    ct => enricher.CalculatePatchOperationsAsync(document, ct),
+                    cancellationToken);
                 var pk = new PartitionKeyBuilder().Add((double)document.X).Add((double)document.Y).Build();
                 patches.Add((document.Id, pk, ops));
                 messagesToCompleteAfterPatch.Add(message);
@@ -156,7 +145,7 @@ public class AdminBoundaryEnrichmentWorker(
                     await ServiceBusRescheduler.HandleRetryAsync(
                         ex, actions, message, _serviceBusClient, ServiceBusConfig.EnrichAdminBoundaryJobs, logger, cancellationToken);
 
-                    var remaining = processMessages
+                    var remaining = messages
                         .Skip(index + 1)
                         .ToList();
                     if (remaining.Count > 0)
@@ -207,6 +196,53 @@ public class AdminBoundaryEnrichmentWorker(
         }
     }
 
+    /// <summary>
+    /// Runs <paramref name="work"/> while renewing the Service Bus lock for
+    /// <paramref name="message"/> every <paramref name="renewalInterval"/> in the background.
+    /// The background renewal loop is cancelled as soon as the work completes.
+    /// </summary>
+    private static async Task<T> RunWithPeriodicLockRenewalAsync<T>(
+        ServiceBusReceivedMessage message,
+        ServiceBusMessageActions actions,
+        ILogger logger,
+        TimeSpan renewalInterval,
+        Func<CancellationToken, Task<T>> work,
+        CancellationToken cancellationToken)
+    {
+        using var renewalCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        var renewalTask = Task.Run(async () =>
+        {
+            while (!renewalCts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(renewalInterval, renewalCts.Token);
+                    if (renewalCts.Token.IsCancellationRequested || !ServiceBusRescheduler.HasRealLockToken(message))
+                        break;
+                    await actions.RenewMessageLockAsync(message, cancellationToken);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost }
+                                        || ex.Message.Contains("MessageLockLost"))
+                {
+                    logger.LogWarning("[AdminBoundaryEnrichmentWorker] SB lock lost mid-enrichment for message {MessageId}; message will be redelivered.", message.MessageId);
+                    break;
+                }
+            }
+        }, CancellationToken.None);
+
+        try
+        {
+            return await work(cancellationToken);
+        }
+        finally
+        {
+            await renewalCts.CancelAsync();
+            await renewalTask;
+        }
+    }
+
     internal static async Task RenewLocksAsync(
         IEnumerable<ServiceBusReceivedMessage> messages,
         ServiceBusMessageActions actions,
@@ -221,7 +257,7 @@ public class AdminBoundaryEnrichmentWorker(
             }
             catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
             {
-                logger.LogWarning("Lock lost before continuing admin boundary enrichment for message {MessageId}; it will be redelivered.", message.MessageId);
+                logger.LogWarning("[AdminBoundaryEnrichmentWorker] Lock lost before continuing admin boundary enrichment for message {MessageId}; it will be redelivered.", message.MessageId);
             }
         }
     }
@@ -242,7 +278,7 @@ public class AdminBoundaryEnrichmentWorker(
         catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
         {
             logger.LogWarning(ex,
-                "Message lock already lost while completing admin boundary enrichment message {MessageId}; message will be redelivered.",
+                "[AdminBoundaryEnrichmentWorker] Message lock already lost while completing admin boundary enrichment message {MessageId}; message will be redelivered.",
                 message.MessageId);
         }
     }

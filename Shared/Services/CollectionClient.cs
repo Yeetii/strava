@@ -51,7 +51,7 @@ public enum CosmosWritePriority
 
 public class CollectionClient<T>(Container _container, ILoggerFactory loggerFactory) where T : IDocument
 {
-    private readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
+    protected readonly ILogger<CollectionClient<T>> _logger = loggerFactory.CreateLogger<CollectionClient<T>>();
 
     public sealed class RequestChargeAccumulator
     {
@@ -352,22 +352,47 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
     public async Task PatchDocuments(
         IEnumerable<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)> patches,
+        int maxDegreeOfParallelism = 1,
         CosmosWritePriority priority = CosmosWritePriority.Normal,
         CancellationToken cancellationToken = default)
     {
-        await CosmosWriteThrottle.WaitForTurnAsync(priority, cancellationToken);
-        try
+        var patchList = patches.ToList();
+        if (patchList.Count == 0) return;
+
+        if (maxDegreeOfParallelism <= 1)
         {
-            foreach (var (id, partitionKey, operations) in patches)
+            await CosmosWriteThrottle.WaitForTurnAsync(priority, cancellationToken);
+            try
             {
-                await _container.PatchItemAsync<T>(id, partitionKey, operations, cancellationToken: cancellationToken);
+                foreach (var (id, partitionKey, operations) in patchList)
+                {
+                    await _container.PatchItemAsync<T>(id, partitionKey, operations, cancellationToken: cancellationToken);
+                }
+                await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
             }
-            await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+            finally
+            {
+                CosmosWriteThrottle.Semaphore.Release();
+            }
+            return;
         }
-        finally
+
+        // Concurrent path: bypasses the global write throttle (same pattern as BulkUpsert).
+        // Only suitable for dedicated backfill / admin operations that own the container's RU budget.
+        using var concurrencySemaphore = new SemaphoreSlim(maxDegreeOfParallelism);
+        var tasks = patchList.Select(async patch =>
         {
-            CosmosWriteThrottle.Semaphore.Release();
-        }
+            await concurrencySemaphore.WaitAsync(cancellationToken);
+            try
+            {
+                await _container.PatchItemAsync<T>(patch.Id, patch.PartitionKey, patch.Operations, cancellationToken: cancellationToken);
+            }
+            finally
+            {
+                concurrencySemaphore.Release();
+            }
+        });
+        await Task.WhenAll(tasks);
     }
 
 

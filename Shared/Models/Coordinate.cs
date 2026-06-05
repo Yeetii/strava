@@ -1,7 +1,11 @@
+using System.Text.Json.Serialization;
+
 namespace Shared.Models;
 public class Coordinate(double lng, double lat)
 {
+    [JsonPropertyName("lat")]
     public double Lat { get; set; } = lat;
+    [JsonPropertyName("lng")]
     public double Lng { get; set; } = lng;
 
     public static Coordinate? ParseGeoJsonCoordinate(double[] lngLat)

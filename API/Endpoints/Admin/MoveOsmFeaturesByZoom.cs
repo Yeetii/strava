@@ -140,7 +140,7 @@ public class MoveOsmFeaturesByZoom(
 
                     var movedDocuments = batch.Select(document =>
                     {
-                        var centroid = GeometryCentroidHelper.GetCentroid(document.Geometry);
+                        var centroid = document.ResolvedCentroid;
                         var (targetX, targetY) = SlippyTileCalculator.WGS84ToTileIndex(centroid, toZoom);
                         return new StoredFeature
                         {
@@ -149,6 +149,7 @@ public class MoveOsmFeaturesByZoom(
                             FeatureId = document.FeatureId,
                             Geometry = document.Geometry,
                             Properties = document.Properties,
+                            Centroid = document.Centroid,
                             X = targetX,
                             Y = targetY,
                             Zoom = toZoom,
@@ -167,7 +168,7 @@ public class MoveOsmFeaturesByZoom(
 
                     foreach (var document in batch)
                     {
-                        var centroid = GeometryCentroidHelper.GetCentroid(document.Geometry);
+                        var centroid = document.ResolvedCentroid;
                         var (targetX, targetY) = SlippyTileCalculator.WGS84ToTileIndex(centroid, toZoom);
                         logger.LogInformation(
                             "Moved document {DocumentId} from zoom {FromZoom} ({X},{Y}) to zoom {ToZoom} ({TargetX},{TargetY})",

@@ -45,7 +45,7 @@ AND (
         var patches = new List<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)>();
         var failed = new List<string>();
 
-        foreach (var boundary in boundaries.Where(EnrichNewAdminBoundaries.ShouldEnrich))
+        foreach (var boundary in boundaries.Where(OsmFeaturesChangeTrigger.ShouldEnrich))
         {
             try
             {

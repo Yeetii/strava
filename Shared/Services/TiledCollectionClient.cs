@@ -49,6 +49,229 @@ public class TiledCollectionClient(
         return new MeasuredResult<IEnumerable<StoredFeature>>(features, requestChargeAccumulator.TotalRequestCharge);
     }
 
+    /// <summary>
+    /// Like <see cref="FetchByTilesMeasured"/> but returns only a projection of each document
+    /// (id, featureId, kind, x, y, zoom, centroid, properties) — no geometry.
+    /// Requires that all documents have a stored <c>centroid</c> field (see backfill).
+    /// </summary>
+    public async Task<MeasuredResult<IEnumerable<StoredFeatureSummary>>> FetchSlimByTilesMeasured(
+        IEnumerable<(int x, int y)> keys,
+        int? zoom = null,
+        bool followPointers = false,
+        bool populateMissingTiles = true,
+        CancellationToken cancellationToken = default)
+    {
+        var requestChargeAccumulator = new RequestChargeAccumulator();
+        var features = await FetchSlimByTilesCore(keys, zoom, followPointers, populateMissingTiles, requestChargeAccumulator, cancellationToken);
+        return new MeasuredResult<IEnumerable<StoredFeatureSummary>>(features, requestChargeAccumulator.TotalRequestCharge);
+    }
+
+    private const string SlimSelectClause =
+        "c.id, c.featureId, c.kind, c.x, c.y, c.zoom, c.centroid, c.properties";
+
+    private async Task<IEnumerable<StoredFeatureSummary>> FetchSlimByTilesCore(
+        IEnumerable<(int x, int y)> keys,
+        int? zoom,
+        bool followPointers,
+        bool populateMissingTiles,
+        RequestChargeAccumulator? requestChargeAccumulator,
+        CancellationToken cancellationToken)
+    {
+        if (!keys.Any())
+            return [];
+
+        var requestedZoom = zoom ?? _storeZoom;
+        var requestedKeys = keys.Distinct().ToList();
+
+        List<StoredFeatureSummary> canonicalDocs;
+        if (requestedZoom < _storeZoom)
+        {
+            // Use BETWEEN range queries instead of expanding each parent tile into child keys;
+            // e.g. 2968 z8 tiles → 119 queries instead of 189,952 key lookups.
+            canonicalDocs = (await QuerySlimByParentTiles(requestedKeys, requestedZoom, requestChargeAccumulator, cancellationToken)).ToList();
+        }
+        else
+        {
+            var storageKeys = GetStorageKeysForRequestedTiles(requestedKeys, requestedZoom);
+            canonicalDocs = (await QuerySlimByListOfKeys(storageKeys, _storeZoom, requestChargeAccumulator, cancellationToken)).ToList();
+
+            if (populateMissingTiles)
+            {
+                var missingStorageTiles = GetMissingTiles(canonicalDocs.Select(d => (d.X, d.Y)), storageKeys);
+                foreach (var (x, y) in missingStorageTiles)
+                {
+                    var fetched = await FetchMissingTile(x, y, _storeZoom, cancellationToken);
+                    canonicalDocs.AddRange(fetched.Select(StoredFeatureSummary.FromStoredFeature));
+                }
+            }
+        }
+
+        var exactRequestedDocs = requestedZoom != _storeZoom
+            ? [.. await QuerySlimByListOfKeys(requestedKeys, requestedZoom, requestChargeAccumulator, cancellationToken)]
+            : Enumerable.Empty<StoredFeatureSummary>();
+
+        var docs = canonicalDocs;
+        if (requestedZoom != _storeZoom)
+        {
+            docs = [.. FilterSlimToRequestedTiles(canonicalDocs, requestedKeys, requestedZoom)
+                , .. exactRequestedDocs];
+        }
+
+        var visibleDocuments = docs.Where(d => !d.Id.StartsWith("empty-")).ToList();
+
+        if (followPointers)
+            visibleDocuments = (await ResolveSlimPointers(visibleDocuments, cancellationToken)).ToList();
+
+        return visibleDocuments
+            .OrderBy(d => d.IsPointer)
+            .DistinctBy(d => d.LogicalId);
+    }
+
+    /// <summary>
+    /// Queries for documents at <see cref="_storeZoom"/> whose tile (x, y) falls within
+    /// any of the supplied <paramref name="parentKeys"/> at <paramref name="parentZoom"/>.
+    /// Uses BETWEEN conditions so the number of query parameters scales with parent-tile
+    /// count, not with the (potentially huge) number of child tiles.
+    /// </summary>
+    private async Task<IEnumerable<StoredFeatureSummary>> QuerySlimByParentTiles(
+        IEnumerable<(int x, int y)> parentKeys,
+        int parentZoom,
+        RequestChargeAccumulator? requestChargeAccumulator,
+        CancellationToken cancellationToken)
+    {
+        var keyList = parentKeys.Distinct().ToList();
+        if (keyList.Count == 0)
+            return [];
+
+        // 4 params per tile (xMin, xMax, yMin, yMax); stay well within Cosmos limits.
+        const int MaxParentKeysPerQuery = 25;
+        if (keyList.Count > MaxParentKeysPerQuery)
+        {
+            var allResults = new List<StoredFeatureSummary>();
+            foreach (var batch in keyList.Chunk(MaxParentKeysPerQuery))
+                allResults.AddRange(await QuerySlimByParentTiles(batch, parentZoom, requestChargeAccumulator, cancellationToken));
+            return allResults;
+        }
+
+        var zoomDelta = _storeZoom - parentZoom;
+        var scale = 1 << zoomDelta;
+
+        var conditions = string.Join(" OR ", keyList.Select((_, i) =>
+            $"(c.x >= @xMin{i} AND c.x <= @xMax{i} AND c.y >= @yMin{i} AND c.y <= @yMax{i})"));
+        var queryText = $"SELECT {SlimSelectClause} FROM c WHERE ({conditions}) AND c.zoom = @zoom AND c.kind = @kind";
+
+        var queryDefinition = new QueryDefinition(queryText)
+            .WithParameter("@zoom", _storeZoom)
+            .WithParameter("@kind", _kind);
+
+        for (var i = 0; i < keyList.Count; i++)
+        {
+            var (x, y) = keyList[i];
+            queryDefinition = queryDefinition
+                .WithParameter($"@xMin{i}", x * scale)
+                .WithParameter($"@xMax{i}", (x + 1) * scale - 1)
+                .WithParameter($"@yMin{i}", y * scale)
+                .WithParameter($"@yMax{i}", (y + 1) * scale - 1);
+        }
+
+        return await ExecuteQueryAsync<StoredFeatureSummary>(queryDefinition, null, requestChargeAccumulator, cancellationToken);
+    }
+
+    private async Task<IEnumerable<StoredFeatureSummary>> QuerySlimByListOfKeys(
+        IEnumerable<(int x, int y)> keys,
+        int zoom,
+        RequestChargeAccumulator? requestChargeAccumulator,
+        CancellationToken cancellationToken)
+    {
+        var keyList = keys.Distinct().ToList();
+        if (keyList.Count == 0)
+            return [];
+
+        if (keyList.Count > MaxKeysPerTileQuery)
+        {
+            var allResults = new List<StoredFeatureSummary>();
+            foreach (var batch in keyList.Chunk(MaxKeysPerTileQuery))
+            {
+                var batchResults = await QuerySlimByListOfKeys(batch, zoom, requestChargeAccumulator, cancellationToken);
+                allResults.AddRange(batchResults);
+            }
+            return allResults;
+        }
+
+        var keyConditions = string.Join(" OR ", keyList.Select((_, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
+        var queryText = $"SELECT {SlimSelectClause} FROM c WHERE ({keyConditions}) AND c.zoom = @zoom AND c.kind = @kind";
+
+        var queryDefinition = new QueryDefinition(queryText)
+            .WithParameter("@zoom", zoom)
+            .WithParameter("@kind", _kind);
+
+        int index = 0;
+        foreach (var (x, y) in keyList)
+        {
+            queryDefinition = queryDefinition
+                .WithParameter($"@x{index}", x)
+                .WithParameter($"@y{index}", y);
+            index++;
+        }
+
+        return await ExecuteQueryAsync<StoredFeatureSummary>(queryDefinition, null, requestChargeAccumulator, cancellationToken);
+    }
+
+    private IEnumerable<StoredFeatureSummary> FilterSlimToRequestedTiles(
+        IEnumerable<StoredFeatureSummary> storedDocuments,
+        IEnumerable<(int x, int y)> requestedKeys,
+        int requestedZoom)
+    {
+        var requestedTileSet = new HashSet<(int x, int y)>(requestedKeys);
+        return storedDocuments.Where(document =>
+        {
+            if (document.Id.StartsWith("empty-"))
+                return false;
+            if (document.Centroid == null)
+            {
+                _logger.LogWarning("[TiledCollectionClient] Skipping {Id} (kind={Kind}): no stored centroid — run the centroid backfill", document.Id, document.Kind);
+                return false;
+            }
+            var tile = SlippyTileCalculator.WGS84ToTileIndex(document.ResolvedCentroid, requestedZoom);
+            return requestedTileSet.Contains(tile);
+        });
+    }
+
+    private async Task<IEnumerable<StoredFeatureSummary>> ResolveSlimPointers(
+        IEnumerable<StoredFeatureSummary> documents,
+        CancellationToken cancellationToken)
+    {
+        var documentList = documents.ToList();
+        var pointedIds = documentList
+            .Where(d => d.IsPointer)
+            .Select(d => d.StoredDocumentId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (pointedIds.Count == 0)
+            return documentList;
+
+        var resolvedDocuments = (await GetByIdsAsync(pointedIds!, cancellationToken))
+            .GroupBy(document => document.Id, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToDictionary(document => document.Id, StringComparer.Ordinal);
+
+        return documentList
+            .Select(document =>
+            {
+                if (!document.IsPointer)
+                    return document;
+
+                var storedId = document.StoredDocumentId;
+                if (storedId != null && resolvedDocuments.TryGetValue(storedId, out var resolved))
+                    return StoredFeatureSummary.FromStoredFeature(resolved);
+
+                return document;
+            })
+            .Where(document => !document.IsPointer);
+    }
+
     private async Task<IEnumerable<StoredFeature>> FetchByTilesCore(
         IEnumerable<(int x, int y)> keys,
         string? filter,
@@ -72,7 +295,7 @@ public class TiledCollectionClient(
             ? [.. await QueryByListOfKeys(requestedKeys, requestedZoom, filter, filterParameters, requestChargeAccumulator, cancellationToken)]
             : Enumerable.Empty<StoredFeature>();
 
-        var missingStorageTiles = GetMissingTiles(canonicalDocs, storageKeys);
+        var missingStorageTiles = GetMissingTiles(canonicalDocs.Select(d => (d.X, d.Y)), storageKeys);
         foreach (var (x, y) in missingStorageTiles)
             canonicalDocs.AddRange(await FetchMissingTile(x, y, _storeZoom, cancellationToken));
 
@@ -95,6 +318,10 @@ public class TiledCollectionClient(
             .DistinctBy(d => d.LogicalId);
     }
 
+    // Cosmos SQL limits query parameters. Each tile requires 2 params (@x{i}, @y{i}) so
+    // large tile sets must be batched to avoid hitting the limit.
+    private const int MaxKeysPerTileQuery = 100;
+
     protected virtual async Task<IEnumerable<StoredFeature>> QueryByListOfKeys(
         IEnumerable<(int x, int y)> keys,
         int zoom,
@@ -104,8 +331,20 @@ public class TiledCollectionClient(
         CancellationToken cancellationToken = default)
     {
         var keyList = keys.Distinct().ToList();
-        if (!keyList.Any())
+        if (keyList.Count == 0)
             return [];
+
+        // Batch keys to stay within Cosmos query-parameter limits.
+        if (keyList.Count > MaxKeysPerTileQuery)
+        {
+            var allResults = new List<StoredFeature>();
+            foreach (var batch in keyList.Chunk(MaxKeysPerTileQuery))
+            {
+                var batchResults = await QueryByListOfKeys(batch, zoom, additionalFilter, additionalParameters, requestChargeAccumulator, cancellationToken);
+                allResults.AddRange(batchResults);
+            }
+            return allResults;
+        }
 
         var keyConditions = string.Join(" OR ", keyList.Select((_, i) => $"(c.x = @x{i} AND c.y = @y{i})"));
         var queryText = $"SELECT * FROM c WHERE ({keyConditions}) AND c.zoom = @zoom AND c.kind = @kind";
@@ -135,9 +374,9 @@ public class TiledCollectionClient(
         return await ExecuteQueryAsync<StoredFeature>(queryDefinition, null, requestChargeAccumulator, cancellationToken);
     }
 
-    protected static IEnumerable<(int x, int y)> GetMissingTiles(IEnumerable<StoredFeature> documents, IEnumerable<(int x, int y)> keys)
+    protected static IEnumerable<(int x, int y)> GetMissingTiles(IEnumerable<(int x, int y)> presentKeys, IEnumerable<(int x, int y)> keys)
     {
-        var keysInDocuments = new HashSet<(int x, int y)>(documents.Select(d => (d.X, d.Y)));
+        var keysInDocuments = new HashSet<(int x, int y)>(presentKeys);
         return keys.Where(k => !keysInDocuments.Contains((k.x, k.y)));
     }
 
@@ -186,8 +425,7 @@ public class TiledCollectionClient(
 
         return storedDocuments.Where(document =>
         {
-            var centroid = GeometryCentroidHelper.GetCentroid(document.Geometry);
-            var tile = SlippyTileCalculator.WGS84ToTileIndex(centroid, requestedZoom);
+            var tile = SlippyTileCalculator.WGS84ToTileIndex(document.ResolvedCentroid, requestedZoom);
             return requestedTileSet.Contains(tile);
         });
     }
@@ -706,6 +944,7 @@ public class TiledCollectionClient(
         if (_fetcher is null)
             return [];
 
+        _logger.LogDebug("[TiledCollectionClient] FetchMissingTile kind={Kind} tile={X},{Y}@z{Zoom} — calling Overpass", _kind, x, y, zoom);
         var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, zoom);
         var rawFeatures = await _fetcher(southWest, northEast, cancellationToken);
 

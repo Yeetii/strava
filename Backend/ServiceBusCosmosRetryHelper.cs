@@ -12,7 +12,7 @@ namespace Backend;
 public static class ServiceBusRescheduler
 {
     public const string RetryCountProperty = "ExceptionRetryCount";
-    public const int DefaultMaxRetryCount = 10;
+    public const int DefaultMaxRetryCount = 5;
     private static readonly TimeSpan MinRetryDelay = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan CosmosPressureWindow = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan QueueDepthCacheTtl = TimeSpan.FromSeconds(10);

@@ -61,6 +61,12 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
         return FindFeatureSummariesContainingAnyPoint(points, filter, filterParameters, cancellationToken);
     }
 
+    /// <summary>Finds all admin boundaries (any level) whose geometry contains any of the given points.</summary>
+    public Task<IEnumerable<StoredFeatureSummary>> FindBoundarySummariesContainingAnyPoint(
+        IEnumerable<Coordinate> points,
+        CancellationToken cancellationToken = default)
+        => FindFeatureSummariesContainingAnyPoint(points, null, null, cancellationToken);
+
     protected override async Task<IEnumerable<StoredFeature>> FetchMissingTile(int x, int y, int zoom, CancellationToken cancellationToken)
     {
         var adminLevel = _currentAdminLevel.Value ?? throw new InvalidOperationException("Admin level must be set before calling FetchMissingTile.");
@@ -268,6 +274,10 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             return;
         }
 
+        // Admin boundary documents are stable reference data — override the container's
+        // 30-day TTL with 6 months so they don't constantly expire and require re-enrichment.
+        document.Ttl = 15_552_000; // 180 days in seconds
+
         // Proactively simplify with RDP before the first write attempt.
         // admin_level=2 (countries): 0.01° ≈ 1 km, admin_level=4 (regions): 0.005° ≈ 500 m.
         var adminLevel = document.Properties.TryGetValue("adminLevel", out var lvl) ? lvl?.ToString() : null;
@@ -314,6 +324,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             X = document.X,
             Y = document.Y,
             Zoom = document.Zoom,
+            Ttl = document.Ttl,
             Geometry = GeometryDecimator.Simplify(document.Geometry, epsilon),
             Properties = new Dictionary<string, dynamic>(document.Properties)
             {
@@ -333,6 +344,7 @@ public class AdminBoundariesCollectionClient(Container container, ILoggerFactory
             X = document.X,
             Y = document.Y,
             Zoom = document.Zoom,
+            Ttl = document.Ttl,
             Geometry = GeometryDecimator.Decimate(document.Geometry, step),
             Properties = new Dictionary<string, dynamic>(document.Properties)
             {

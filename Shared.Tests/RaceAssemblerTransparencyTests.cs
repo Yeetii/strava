@@ -16,7 +16,7 @@ public class RaceAssemblerTransparencyTests
             Kind = FeatureKinds.Race,
             X = 12,
             Y = 34,
-            Zoom = RaceCollectionClient.DefaultZoom,
+            Zoom = RaceAssembler.DefaultZoom,
             Geometry = new LineString([
                 new Position(10, 20),
                 new Position(30, 40),
