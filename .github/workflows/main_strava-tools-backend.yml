@@ -15,6 +15,7 @@ on:
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'Backend' # set this to the path to your web app project, defaults to the repository root
   DOTNET_VERSION: '8.0.x' # set this to the dotnet version to use
+  AZURE_RESOURCE_GROUP: 'strava'
 
 jobs:
   build-and-deploy:
@@ -58,9 +59,8 @@ jobs:
       - name: 'Deploy Function App with Azure CLI'
         shell: bash
         run: |
-          RESOURCE_GROUP="$(az functionapp show --name 'strava-tools-backend' --query resourceGroup -o tsv)"
           az functionapp deployment source config-zip \
             --name 'strava-tools-backend' \
-            --resource-group "$RESOURCE_GROUP" \
+            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
             --src '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/output.zip'
           
