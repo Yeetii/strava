@@ -12,7 +12,7 @@
             "enableLiveMetricsFilters": true
         }
     },
-    "functionTimeout": "01:00:00",
+    "functionTimeout": "00:09:59",
     "extensions": {
         "serviceBus": {
             "maxAutoLockRenewalDuration": "00:10:00",
