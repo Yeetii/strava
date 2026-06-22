@@ -45,6 +45,7 @@ namespace Backend
 
             user.AccessToken = tokenResponse.AccessToken;
             user.TokenExpiresAt = tokenResponse.ExpiresAt;
+            user.StravaScope = tokenResponse.Scope ?? user.StravaScope;
 
             var result = req.CreateResponse(System.Net.HttpStatusCode.OK);
             await result.WriteStringAsync(tokenResponse.AccessToken);

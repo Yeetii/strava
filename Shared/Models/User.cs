@@ -11,6 +11,7 @@ public class User : IDocument
     public string? RefreshToken { get; set; }
     public string? AccessToken { get; set; }
     public long TokenExpiresAt { get; set; }
+    public string? StravaScope { get; set; }
     public StravaSyncStatus? SyncStatus { get; set; }
 
     [JsonPropertyName("_etag")]

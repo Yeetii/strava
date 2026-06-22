@@ -29,13 +29,21 @@ public class StravaTokenService(
 
         user.AccessToken = tokenResponse.AccessToken;
         user.TokenExpiresAt = tokenResponse.ExpiresAt;
+        var patchOperations = new List<PatchOperation>
+        {
+            PatchOperation.Set("/accessToken", tokenResponse.AccessToken),
+            PatchOperation.Set("/tokenExpiresAt", tokenResponse.ExpiresAt)
+        };
+        if (!string.IsNullOrWhiteSpace(tokenResponse.Scope))
+        {
+            user.StravaScope = tokenResponse.Scope;
+            patchOperations.Add(PatchOperation.Set("/stravaScope", tokenResponse.Scope));
+        }
+
         await _usersCollection.PatchDocument(
             user.Id,
             new PartitionKey(user.Id),
-            [
-                PatchOperation.Set("/accessToken", tokenResponse.AccessToken),
-                PatchOperation.Set("/tokenExpiresAt", tokenResponse.ExpiresAt)
-            ],
+            patchOperations,
             priority: CosmosWritePriority.High);
 
         return tokenResponse.AccessToken;

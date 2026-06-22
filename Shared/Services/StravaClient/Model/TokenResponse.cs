@@ -18,7 +18,9 @@ public class TokenResponse
     [JsonPropertyName("access_token")]
     public required string AccessToken { get; set; }
 
+    [JsonPropertyName("scope")]
+    public string? Scope { get; set; }
+
     [JsonPropertyName("athlete")]
     public Athlete? Athlete { get; set; }
 }
-

@@ -1,4 +1,5 @@
 using System.Net;
+using Azure.Messaging.ServiceBus;
 using Shared.Models;
 using Microsoft.Azure.Functions.Worker;
 using System.Text.Json.Serialization;
@@ -12,8 +13,14 @@ using Shared.Constants;
 
 namespace API.Endpoints;
 
-public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Shared.Models.User> _usersCollection, ILogger<PostLogin> _logger)
+public class PostLogin(
+    AuthenticationApi _authenticationApi,
+    CollectionClient<Shared.Models.User> _usersCollection,
+    ServiceBusClient serviceBusClient,
+    ILogger<PostLogin> _logger)
 {
+    private readonly ServiceBusSender _activitiesFetchSender = serviceBusClient.CreateSender(ServiceBusConfig.ActivitiesFetchJobs);
+
     [OpenApiOperation(tags: ["User management"])]
     [OpenApiParameter(name: "authCode", In = ParameterLocation.Path)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(PostLoginResponse), Description = "The login response containing the username")]
@@ -34,10 +41,10 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
         var tokenResponse = await _authenticationApi.TokenExcange(authCode);
         var refreshToken = tokenResponse.RefreshToken;
 
-        if (refreshToken == null)
+        if (refreshToken == null || tokenResponse.Athlete == null)
         {
             response.StatusCode = HttpStatusCode.BadRequest;
-            await response.WriteStringAsync("Auth token exchange did not provide refresh token");
+            await response.WriteStringAsync("Auth token exchange did not provide refresh token or athlete");
             return outputs;
         }
 
@@ -57,16 +64,9 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
         _logger.LogInformation("Logging in user {userId} ", userId);
         var userExist = await _usersCollection.GetByIdMaybe(userId, new Microsoft.Azure.Cosmos.PartitionKey(userId));
 
-        if (userExist == null)
-        {
-            _logger.LogInformation("Creating new user {userId}, sending activities fetch jobs", userId);
-            var fetchJob = new ActivitiesFetchJob { UserId = userId };
-            outputs.ActivitiesFetchJob = fetchJob;
-        }
-
         var syncStatus = userExist?.SyncStatus ?? UserSyncStatusService.CreateDefaultStatus();
 
-        outputs.User = new Shared.Models.User
+        var user = new Shared.Models.User
         {
             Id = userId,
             UserName = tokenResponse.Athlete.Username,
@@ -75,8 +75,18 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
             RefreshToken = refreshToken,
             AccessToken = tokenResponse.AccessToken,
             TokenExpiresAt = tokenResponse.ExpiresAt,
+            StravaScope = tokenResponse.Scope,
             SyncStatus = syncStatus,
         };
+        outputs.User = user;
+
+        if (userExist == null)
+        {
+            _logger.LogInformation("Creating new user {userId}, sending activities fetch jobs", userId);
+            await _usersCollection.UpsertDocument(user, priority: CosmosWritePriority.High);
+            await _activitiesFetchSender.SendMessageAsync(new ServiceBusMessage(System.Text.Json.JsonSerializer.Serialize(new ActivitiesFetchJob { UserId = userId })));
+            outputs.User = null;
+        }
 
         outputs.Session = new Session
         {
@@ -122,7 +132,5 @@ public class PostLogin(AuthenticationApi _authenticationApi, CollectionClient<Sh
         public Shared.Models.User? User { get; set; }
         [CosmosDBOutput(DatabaseConfig.CosmosDb, DatabaseConfig.SessionsContainer, Connection = "CosmosDBConnection", CreateIfNotExists = true, PartitionKey = "/id")]
         public Session? Session { get; set; }
-        [ServiceBusOutput("activitiesfetchjobs", Connection = "ServicebusConnection")]
-        public ActivitiesFetchJob? ActivitiesFetchJob { get; set; }
     }
 }

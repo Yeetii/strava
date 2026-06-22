@@ -26,6 +26,19 @@ public record AdminRecentUserActivityStatus(
     DateTime StartDateLocal,
     ActivityProcessingStatus ProcessingStatus);
 
+public record AdminStravaAuthStatus(
+    bool HasRefreshToken,
+    bool HasAccessToken,
+    DateTime? AccessTokenExpiresAtUtc,
+    bool AccessTokenExpired,
+    string? RawScope,
+    IReadOnlyList<string> Scopes,
+    bool HasRead,
+    bool HasReadAll,
+    bool HasActivityRead,
+    bool HasActivityReadAll,
+    bool HasActivityWrite);
+
 public record AdminUserStats(
     string UserId,
     string? Username,
@@ -33,6 +46,7 @@ public record AdminUserStats(
     string? LastName,
     int ActivityCount,
     DateTime? LastLoggedInAtUtc,
+    AdminStravaAuthStatus StravaAuthStatus,
     StravaSyncStatus SyncStatus,
     AdminUserActivityProcessingSummary ActivityProcessingSummary,
     IReadOnlyList<AdminRecentUserActivityStatus> RecentActivities);
@@ -124,6 +138,7 @@ public class GetUserStats(
             LastName: user.LastName,
             ActivityCount: activityCountTask.Result.FirstOrDefault(),
             LastLoggedInAtUtc: lastLoggedInAtUtc,
+            StravaAuthStatus: BuildStravaAuthStatus(user),
             SyncStatus: user.SyncStatus ?? UserSyncStatusService.CreateDefaultStatus(),
             ActivityProcessingSummary: summary,
             RecentActivities: activities
@@ -135,6 +150,32 @@ public class GetUserStats(
                     ProcessingStatus: activity.ProcessingStatus ?? new ActivityProcessingStatus()))
                 .ToArray()));
         return response;
+    }
+
+    public static AdminStravaAuthStatus BuildStravaAuthStatus(UserDocument user)
+    {
+        var scopes = (user.StravaScope ?? string.Empty)
+            .Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(scope => scope, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var scopeSet = scopes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var expiresAtUtc = user.TokenExpiresAt > 0
+            ? DateTimeOffset.FromUnixTimeSeconds(user.TokenExpiresAt).UtcDateTime
+            : (DateTime?)null;
+
+        return new AdminStravaAuthStatus(
+            HasRefreshToken: !string.IsNullOrWhiteSpace(user.RefreshToken),
+            HasAccessToken: !string.IsNullOrWhiteSpace(user.AccessToken),
+            AccessTokenExpiresAtUtc: expiresAtUtc,
+            AccessTokenExpired: expiresAtUtc.HasValue && expiresAtUtc.Value <= DateTime.UtcNow,
+            RawScope: user.StravaScope,
+            Scopes: scopes,
+            HasRead: scopeSet.Contains("read"),
+            HasReadAll: scopeSet.Contains("read_all"),
+            HasActivityRead: scopeSet.Contains("activity:read"),
+            HasActivityReadAll: scopeSet.Contains("activity:read_all"),
+            HasActivityWrite: scopeSet.Contains("activity:write"));
     }
 
     private bool IsAuthorized(HttpRequestData req)
