@@ -1,9 +1,8 @@
 using Shared.Models;
-using Shared.Services;
 
-namespace API.Utils;
+namespace Shared.Services;
 
-internal static class SummitedPeakConsolidator
+public static class SummitedPeakConsolidator
 {
     public static List<SummitedPeak> ConsolidateByPeakId(IEnumerable<SummitedPeak> summitedPeaks)
     {

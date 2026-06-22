@@ -9,7 +9,6 @@ using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Shared.Services;
-using API.Utils;
 
 namespace API
 {

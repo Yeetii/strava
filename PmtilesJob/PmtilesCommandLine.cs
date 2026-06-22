@@ -25,48 +25,12 @@ public static class PmtilesCommandLine
     {
         if (args.Length > 0 && string.Equals(args[0], "filter-outdoor", StringComparison.OrdinalIgnoreCase))
         {
-            var inputPath = GetOptionValue(args, "--input")
-                ?? configuration["Input"]
-                ?? throw new InvalidOperationException("The filter-outdoor command requires --input <path>.");
-            var outputPath = GetOptionValue(args, "--output")
-                ?? configuration["Output"]
-                ?? throw new InvalidOperationException("The filter-outdoor command requires --output <path>.");
-            var maximumZoom = ParseOptionalInt(
-                GetOptionValue(args, "--max-zoom")
-                ?? configuration["MaxZoom"],
-                "--max-zoom");
-            var excludeAllAttributes = HasOption(args, "--exclude-all-attributes")
-                || configuration.GetValue<bool>("ExcludeAllAttributes");
-
-            return new PmtilesCommandOptions(
-                PmtilesCommandKind.FilterOutdoor,
-                MaximumZoom: maximumZoom,
-                ExcludeAllAttributes: excludeAllAttributes,
-                InputPath: inputPath,
-                OutputPath: outputPath);
+            return ParseFilterCommand(args, configuration, PmtilesCommandKind.FilterOutdoor, "filter-outdoor");
         }
 
         if (args.Length > 0 && string.Equals(args[0], "filter-admin-boundaries", StringComparison.OrdinalIgnoreCase))
         {
-            var inputPath = GetOptionValue(args, "--input")
-                ?? configuration["Input"]
-                ?? throw new InvalidOperationException("The filter-admin-boundaries command requires --input <path>.");
-            var outputPath = GetOptionValue(args, "--output")
-                ?? configuration["Output"]
-                ?? throw new InvalidOperationException("The filter-admin-boundaries command requires --output <path>.");
-            var maximumZoom = ParseOptionalInt(
-                GetOptionValue(args, "--max-zoom")
-                ?? configuration["MaxZoom"],
-                "--max-zoom");
-            var excludeAllAttributes = HasOption(args, "--exclude-all-attributes")
-                || configuration.GetValue<bool>("ExcludeAllAttributes");
-
-            return new PmtilesCommandOptions(
-                PmtilesCommandKind.FilterAdminBoundaries,
-                MaximumZoom: maximumZoom,
-                ExcludeAllAttributes: excludeAllAttributes,
-                InputPath: inputPath,
-                OutputPath: outputPath);
+            return ParseFilterCommand(args, configuration, PmtilesCommandKind.FilterAdminBoundaries, "filter-admin-boundaries");
         }
 
         if (args.Length > 0 && string.Equals(args[0], "build-admin-areas", StringComparison.OrdinalIgnoreCase))
@@ -101,6 +65,33 @@ public static class PmtilesCommandLine
         }
 
         return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTilesFromOrganizers);
+    }
+
+    private static PmtilesCommandOptions ParseFilterCommand(
+        string[] args,
+        IConfiguration configuration,
+        PmtilesCommandKind commandKind,
+        string commandName)
+    {
+        var inputPath = GetOptionValue(args, "--input")
+            ?? configuration["Input"]
+            ?? throw new InvalidOperationException($"The {commandName} command requires --input <path>.");
+        var outputPath = GetOptionValue(args, "--output")
+            ?? configuration["Output"]
+            ?? throw new InvalidOperationException($"The {commandName} command requires --output <path>.");
+        var maximumZoom = ParseOptionalInt(
+            GetOptionValue(args, "--max-zoom")
+            ?? configuration["MaxZoom"],
+            "--max-zoom");
+        var excludeAllAttributes = HasOption(args, "--exclude-all-attributes")
+            || configuration.GetValue<bool>("ExcludeAllAttributes");
+
+        return new PmtilesCommandOptions(
+            commandKind,
+            MaximumZoom: maximumZoom,
+            ExcludeAllAttributes: excludeAllAttributes,
+            InputPath: inputPath,
+            OutputPath: outputPath);
     }
 
     private static bool HasOption(IEnumerable<string> args, string optionName)
