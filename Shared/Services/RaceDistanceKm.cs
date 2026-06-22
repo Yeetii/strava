@@ -17,7 +17,7 @@ public static class RaceDistanceKm
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
     private static readonly NumberStyles Float = NumberStyles.Float;
     private static readonly Regex DistanceListSeparatorRegex = new(
-        @"(?<!\d),(?!\d)|;",
+        @"(?<!\d),(?!\d)|(?<=\.\d),(?=\s*\d)|;",
         RegexOptions.Compiled);
 
     /// <summary>

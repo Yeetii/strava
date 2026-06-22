@@ -1,5 +1,3 @@
-using System.Drawing;
-using System.Linq.Expressions;
 using Shared.Models;
 
 namespace Shared.Geo
@@ -20,11 +18,12 @@ namespace Shared.Geo
         {
             var lon = coordinate.Lng;
             var lat = coordinate.Lat;
-            var x = (int)((lon + 180.0) / 360.0 * (1 << zoom));
-            var y = (int)((1.0 - Math.Log(Math.Tan(lat * Math.PI / 180.0) +
-                1.0 / Math.Cos(lat * Math.PI / 180.0)) / Math.PI) / 2.0 * (1 << zoom));
+            var tileCount = 1 << zoom;
+            var x = (int)Math.Floor((lon + 180.0) / 360.0 * tileCount);
+            var y = (int)Math.Floor((1.0 - Math.Log(Math.Tan(lat * Math.PI / 180.0) +
+                1.0 / Math.Cos(lat * Math.PI / 180.0)) / Math.PI) / 2.0 * tileCount);
 
-            return (x, y);
+            return (Math.Clamp(x, 0, tileCount - 1), Math.Clamp(y, 0, tileCount - 1));
         }
         public static (Coordinate sw, Coordinate ne) TileIndexToWGS84(int x, int y, int z = DefaultZoom)
         {

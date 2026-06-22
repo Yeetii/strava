@@ -28,7 +28,10 @@ namespace Shared.Services
             HttpStatusCode.GatewayTimeout
         ];
 
-        private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass-api.de/api/interpreter"];
+        private readonly string[] mirrors = [
+            "https://overpass.openstreetmap.fr/api/interpreter",
+            "https://overpass-api.de/api/interpreter"
+        ];
 
 
         private async Task<HttpResponseMessage> GetAsyncMultipleMirrors(string query, CancellationToken cancellationToken = default)

@@ -15,7 +15,7 @@ public class OverpassClientTests
         using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
         {
             ["overpass.openstreetmap.fr"] = [CreateOverpassJson([])],
-            ["overpass.private.coffee"] =
+            ["overpass-api.de"] =
             [
                 CreateOverpassJson([
                     new RawPath
@@ -28,8 +28,7 @@ public class OverpassClientTests
                         ]
                     }
                 ])
-            ],
-            ["overpass-api.de"] = [System.Net.HttpStatusCode.BadRequest]
+            ]
         }));
         var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);
 
@@ -45,7 +44,6 @@ public class OverpassClientTests
         using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
         {
             ["overpass.openstreetmap.fr"] = [CreateOverpassJson([])],
-            ["overpass.private.coffee"] = [System.Net.HttpStatusCode.BadRequest],
             ["overpass-api.de"] = [System.Net.HttpStatusCode.BadRequest]
         }));
         var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);

@@ -9,6 +9,8 @@ namespace Shared.Tests
         [InlineData(0, 0, 0, 0, 0)]
         [InlineData(26.48928, 46.36592, 5, 18, 11)]
         [InlineData(-60.26080, -18.13080, 7, 42, 70)]
+        [InlineData(-60.05624, -8.33317, 4, 5, 8)]
+        [InlineData(-72.62454, -6.16263, 13, 2443, 4236)]
         public void WGS84ToTileIndex_ShouldReturnCorrectTileIndex(double lon, double lat, int zoom, int expectedTileX, int expectedTileY)
         {
             var coordinate = new Coordinate(lon, lat);
