@@ -14,6 +14,7 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
 
     private const int ShardCacheMaxSize = 150;
     private readonly ConcurrentDictionary<string, (Shard Shard, long LastAccessTicks)> _shardCache = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _shardLocks = new();
     private readonly object _evictionLock = new();
     private static readonly string[] RenderValues =
     [
@@ -164,9 +165,18 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
             return cached.Shard;
         }
 
+        var shardLock = _shardLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await shardLock.WaitAsync(cancellationToken);
+
         Shard shard;
         try
         {
+            if (_shardCache.TryGetValue(cacheKey, out cached))
+            {
+                _shardCache[cacheKey] = (cached.Shard, DateTime.UtcNow.Ticks);
+                return cached.Shard;
+            }
+
             shard = await _shardRepository.GetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
         }
         catch (OperationCanceledException ex)
@@ -176,6 +186,10 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
         catch (Exception ex)
         {
             throw new InvalidOperationException($"Failed to load shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
+        }
+        finally
+        {
+            shardLock.Release();
         }
 
         _shardCache[cacheKey] = (shard, DateTime.UtcNow.Ticks);
@@ -209,10 +223,12 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
     private async Task DeleteShardWithContext((int x, int y) key, CancellationToken cancellationToken)
     {
         var cacheKey = $"{key.x}/{key.y}";
-        _shardCache.TryRemove(cacheKey, out _);
+        var shardLock = _shardLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await shardLock.WaitAsync(cancellationToken);
 
         try
         {
+            _shardCache.TryRemove(cacheKey, out _);
             await _shardRepository.DeleteShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
         }
         catch (OperationCanceledException ex)
@@ -222,6 +238,10 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
         catch (Exception ex)
         {
             throw new InvalidOperationException($"Failed to delete shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
+        }
+        finally
+        {
+            shardLock.Release();
         }
     }
 

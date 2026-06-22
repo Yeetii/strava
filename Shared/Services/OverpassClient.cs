@@ -28,7 +28,7 @@ namespace Shared.Services
             HttpStatusCode.GatewayTimeout
         ];
 
-        private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass-api.de/api/interpreter"];
+        private readonly string[] mirrors = ["https://overpass.openstreetmap.fr/api/interpreter", "https://overpass-api.de/api/interpreter"];
 
 
         private async Task<HttpResponseMessage> GetAsyncMultipleMirrors(string query, CancellationToken cancellationToken = default)
@@ -58,6 +58,13 @@ namespace Shared.Services
 
                             if (!IsThrottledStatusCode(response.StatusCode))
                             {
+                                response.Dispose();
+                                break;
+                            }
+
+                            if (attempt >= MaxAttemptsPerMirror)
+                            {
+                                _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on final attempt {Attempt}. Moving to next mirror.", mirror, (int)response.StatusCode, attempt);
                                 response.Dispose();
                                 break;
                             }
@@ -131,6 +138,12 @@ namespace Shared.Services
 
                                 if (!IsThrottledStatusCode(response.StatusCode))
                                     break;
+
+                                if (attempt >= MaxAttemptsPerMirror)
+                                {
+                                    _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on final attempt {Attempt}. Moving to next mirror.", mirror, (int)response.StatusCode, attempt);
+                                    break;
+                                }
 
                                 var delay = GetRetryDelay(response, attempt);
                                 _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on attempt {Attempt}. Retrying after {DelayMs}ms.", mirror, (int)response.StatusCode, attempt, delay.TotalMilliseconds);
