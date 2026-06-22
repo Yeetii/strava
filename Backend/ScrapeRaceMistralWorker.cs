@@ -43,7 +43,7 @@ public class ScrapeRaceMistralWorker
 
     [Function(nameof(ScrapeRaceMistralWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.MistralScrapeJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
+        [ServiceBusTrigger(ServiceBusConfig.MistralScrapeJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {

@@ -62,7 +62,7 @@ public class DeleteAccount(UserAuthenticationService _userAuthService)
         [HttpResult]
         public required HttpResponseData Response { get; set; }
 
-        [ServiceBusOutput(ServiceBusConfig.AccountDeleteJobs, Connection = "ServicebusConnection")]
+        [ServiceBusOutput(ServiceBusConfig.AccountDeleteJobs, Connection = "ServiceBusConnection")]
         public AccountDeleteJob? AccountDeleteJob { get; set; }
     }
 }

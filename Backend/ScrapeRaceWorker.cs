@@ -42,7 +42,7 @@ public class ScrapeRaceWorker(
 
     [Function(nameof(ScrapeRaceWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.ScrapeRace, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] messages,
+        [ServiceBusTrigger(ServiceBusConfig.ScrapeRace, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] messages,
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {

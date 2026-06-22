@@ -25,7 +25,7 @@ public class RaceDiscoveryWorker(
 
     [Function(nameof(RaceDiscoveryWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.RaceDiscoveryJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)]
+        [ServiceBusTrigger(ServiceBusConfig.RaceDiscoveryJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)]
         ServiceBusReceivedMessage message,
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)

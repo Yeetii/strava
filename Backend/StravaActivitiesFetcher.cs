@@ -16,14 +16,35 @@ namespace Backend
 
         [Function(nameof(StravaActivitiesFetcher))]
         public async Task Run(
-            [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
+            [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
             ServiceBusMessageActions actions,
             CancellationToken cancellationToken)
         {
-            var fetchJob = message.Body.ToObjectFromJson<ActivitiesFetchJob>();
             try
             {
-                var accessTokenResponse = await _apiClient.GetAsync($"{fetchJob.UserId}/accessToken");
+                if (!TryParseFetchJob(message, out var fetchJob, out var parseError))
+                {
+                    var bodyPreview = CreateBodyPreview(message.Body.ToString());
+                    _logger.LogError(
+                        "Invalid activities fetch payload. MessageId: {MessageId}, ContentType: {ContentType}, ParseError: {ParseError}, BodyPreview: {BodyPreview}",
+                        message.MessageId,
+                        message.ContentType,
+                        parseError,
+                        bodyPreview);
+
+                    if (ServiceBusRescheduler.HasRealLockToken(message))
+                    {
+                        await actions.DeadLetterMessageAsync(
+                            message,
+                            deadLetterReason: "InvalidActivitiesFetchPayload",
+                            deadLetterErrorDescription: parseError,
+                            cancellationToken: cancellationToken);
+                    }
+
+                    return;
+                }
+
+                var accessTokenResponse = await _apiClient.GetAsync($"{fetchJob.UserId}/accessToken", cancellationToken);
                 if (!accessTokenResponse.IsSuccessStatusCode)
                 {
                     var responseBody = await accessTokenResponse.Content.ReadAsStringAsync(cancellationToken);
@@ -81,6 +102,65 @@ namespace Backend
                     ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, _logger, cancellationToken, maxRetryCount: 3, scheduledEnqueueTimeUtc: scheduledEnqueueTimeUtc);
                 return;
             }
+        }
+
+        private static bool TryParseFetchJob(ServiceBusReceivedMessage message, out ActivitiesFetchJob fetchJob, out string error)
+        {
+            fetchJob = null!;
+            error = string.Empty;
+
+            var bodyText = message.Body.ToString();
+            if (string.IsNullOrWhiteSpace(bodyText))
+            {
+                error = "Message body is empty.";
+                return false;
+            }
+
+            try
+            {
+                using var jsonDocument = JsonDocument.Parse(bodyText);
+                if (jsonDocument.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    error = $"Expected a JSON object with 'userId', but got {jsonDocument.RootElement.ValueKind}.";
+                    return false;
+                }
+
+                if (jsonDocument.RootElement.TryGetProperty("input", out _))
+                {
+                    error = "Received admin invoke envelope ('input'). Expected raw ActivitiesFetchJob JSON in the message body: {\"userId\":\"...\"}.";
+                    return false;
+                }
+
+                var parsed = JsonSerializer.Deserialize<ActivitiesFetchJob>(bodyText, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (parsed is null)
+                {
+                    error = "Message body could not be deserialized into ActivitiesFetchJob.";
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(parsed.UserId))
+                {
+                    error = "Missing required field: userId.";
+                    return false;
+                }
+
+                fetchJob = parsed;
+                return true;
+            }
+            catch (JsonException ex)
+            {
+                error = $"Invalid JSON for ActivitiesFetchJob. {ex.Message}";
+                return false;
+            }
+        }
+
+        private static string CreateBodyPreview(string body)
+        {
+            const int maxLength = 300;
+            if (string.IsNullOrEmpty(body))
+                return "<empty>";
+
+            return body.Length <= maxLength ? body : body[..maxLength] + "...";
         }
     }
 }

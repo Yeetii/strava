@@ -48,7 +48,7 @@ public class VisitedPathsWorker(
 
     [Function(nameof(VisitedPathsWorker))]
     public async Task Run(
-        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
+        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)]
         ServiceBusReceivedMessage[] jobs,
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)

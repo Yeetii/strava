@@ -24,7 +24,7 @@ public class DeleteAccountWorker(
 {
     [Function(nameof(DeleteAccountWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.AccountDeleteJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
+        [ServiceBusTrigger(ServiceBusConfig.AccountDeleteJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {

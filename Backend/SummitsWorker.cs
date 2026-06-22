@@ -38,7 +38,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     [Function("SummitsWorker")]
     public async Task Run(
-        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions, CancellationToken cancellationToken)
+        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions, CancellationToken cancellationToken)
     {
         if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
                 serviceBusAdministrationClient,

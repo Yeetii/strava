@@ -22,7 +22,7 @@ namespace Backend
 
         [Function(nameof(StravaActivityFetcher))]
         public async Task Run(
-            [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServicebusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
+            [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
             ServiceBusMessageActions actions,
             CancellationToken cancellationToken)
         {

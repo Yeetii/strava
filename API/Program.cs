@@ -169,12 +169,12 @@ var host = new HostBuilder()
             });
         services.AddSingleton(serviceProvider =>
         {
-            var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
+            var sbConnectionString = configuration.GetValue<string>("ServiceBusConnection");
             return new ServiceBusClient(sbConnectionString);
         });
         services.AddSingleton(serviceProvider =>
         {
-            var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
+            var sbConnectionString = configuration.GetValue<string>("ServiceBusConnection");
             return new ServiceBusAdministrationClient(sbConnectionString);
         });
         services.AddSingleton(new MetricsQueryClient(new DefaultAzureCredential()));

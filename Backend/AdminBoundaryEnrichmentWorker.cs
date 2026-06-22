@@ -24,7 +24,7 @@ public class AdminBoundaryEnrichmentWorker(
 
     [Function(nameof(AdminBoundaryEnrichmentWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.EnrichAdminBoundaryJobs, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
+        [ServiceBusTrigger(ServiceBusConfig.EnrichAdminBoundaryJobs, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)]
         ServiceBusReceivedMessage[] messages,
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)

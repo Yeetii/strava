@@ -149,12 +149,12 @@ var host = new HostBuilder()
         });
         services.AddSingleton(s =>
         {
-            var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
+            var sbConnectionString = configuration.GetValue<string>("ServiceBusConnection");
             return new ServiceBusClient(sbConnectionString);
         });
         services.AddSingleton(s =>
         {
-            var sbConnectionString = configuration.GetValue<string>("ServicebusConnection");
+            var sbConnectionString = configuration.GetValue<string>("ServiceBusConnection");
             return new ServiceBusAdministrationClient(sbConnectionString);
         });
         services.AddScoped(serviceProvider =>

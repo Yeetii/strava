@@ -14,7 +14,7 @@ public class ActivityEventWorker(UserAuthenticationService _userAuthService, ILo
     [Function(nameof(ActivityEventWorker))]
     [SignalROutput(HubName = "peakshunters")]
     public async Task<IEnumerable<SignalRMessageAction>> Run(
-        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityProcessed, Connection = "ServicebusConnection", IsBatched = true, AutoCompleteMessages = false)]
+        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityProcessed, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)]
         ServiceBusReceivedMessage[] messages,
         ServiceBusMessageActions actions)
     {
@@ -59,4 +59,3 @@ public class ActivityEventWorker(UserAuthenticationService _userAuthService, ILo
         return signalRMessages;
     }
 }
-
