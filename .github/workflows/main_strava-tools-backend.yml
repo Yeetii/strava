@@ -16,7 +16,8 @@ env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'Backend' # set this to the path to your web app project, defaults to the repository root
   DOTNET_VERSION: '10.0.x' # set this to the dotnet version to use
   AZURE_RESOURCE_GROUP: 'strava'
-  AZURE_FUNCTIONAPP_NAME: 'strava-tools-backend'
+  AZURE_FUNCTIONAPP_NAME: 'strava-tools-backend-flex'
+  AZURE_SOURCE_FUNCTIONAPP_NAME: 'strava-tools-backend'
 
 jobs:
   build-and-deploy:
@@ -50,6 +51,25 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6CB4BA37185D4E68AF0BA4324D4F7674 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_99F738EDB16C45E081FBB7DFCD393188 }}
 
+      - name: 'Create Flex Function App if needed'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if az functionapp show \
+            --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
+            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
+            --output none 2>/dev/null; then
+            echo 'Target Flex Function App already exists.'
+            exit 0
+          fi
+
+          az functionapp flex-migration start \
+            --source-name '${{ env.AZURE_SOURCE_FUNCTIONAPP_NAME }}' \
+            --source-resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
+            --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
+            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}'
+
       - name: 'Configure Function App runtime settings'
         shell: bash
         run: |
@@ -61,8 +81,6 @@ jobs:
             --output json)
 
           is_linux=$(printf '%s' "$app_json" | jq -r '.reserved')
-          plan_id=$(printf '%s' "$app_json" | jq -r '.serverFarmId')
-
           az functionapp config appsettings set \
             --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
             --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
