@@ -1,19 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.Storage.Blobs" Version="12.25.0" />
-    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.42.0" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.29.0" />
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.61.0" />
     <PackageReference Include="GeoJSON" Version="2.3.1" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.9" />
   </ItemGroup>
 
   <ItemGroup>

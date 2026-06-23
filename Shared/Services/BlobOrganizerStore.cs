@@ -296,7 +296,11 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         var redirectedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var cutoffStr = cutoffUtc.ToString("o");
 
-        await foreach (var item in container.GetBlobsAsync(BlobTraits.Metadata, cancellationToken: cancellationToken))
+        await foreach (var item in container.GetBlobsAsync(
+            traits: BlobTraits.Metadata,
+            states: default,
+            prefix: default,
+            cancellationToken: cancellationToken))
         {
             if (item.Name.EndsWith(RedirectSuffix, StringComparison.Ordinal))
             {
@@ -470,7 +474,11 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var blobNames = new List<string>();
-        await foreach (var item in container.GetBlobsAsync(cancellationToken: cancellationToken))
+        await foreach (var item in container.GetBlobsAsync(
+            traits: default,
+            states: default,
+            prefix: default,
+            cancellationToken: cancellationToken))
         {
             if (item.Name.EndsWith(RedirectSuffix, StringComparison.Ordinal))
                 blobNames.Add(item.Name);
@@ -685,7 +693,12 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         var blobDownloads = 0;
         long cachedBytes = 0;
         long downloadedBytes = 0;
-        await foreach (var item in container.GetBlobsByHierarchyAsync(delimiter: "/", cancellationToken: cancellationToken))
+        await foreach (var item in container.GetBlobsByHierarchyAsync(
+            traits: default,
+            states: default,
+            delimiter: "/",
+            prefix: default,
+            cancellationToken: cancellationToken))
         {
             if (!item.IsPrefix || string.IsNullOrWhiteSpace(item.Prefix))
                 continue;
@@ -702,6 +715,8 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
                 var hasOrganizerBlob = false;
                 ETag? organizerBlobEtag = null;
                 await foreach (var item in container.GetBlobsByHierarchyAsync(
+                    traits: default,
+                    states: default,
                     delimiter: "/",
                     prefix: $"{organizerKey}/",
                     cancellationToken: cancellationToken))
@@ -811,7 +826,7 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
 
     private async Task DeletePrefixAsync(string prefix, CancellationToken cancellationToken)
     {
-        await foreach (var item in container.GetBlobsAsync(prefix: prefix, cancellationToken: cancellationToken))
+        await foreach (var item in container.GetBlobsAsync(traits: default, states: default, prefix: prefix, cancellationToken: cancellationToken))
         {
             await container.DeleteBlobIfExistsAsync(item.Name, cancellationToken: cancellationToken);
             TryDeleteLocalCache(item.Name);

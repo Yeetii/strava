@@ -1,22 +1,22 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.Storage.Blobs" Version="12.25.0" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.29.0" />
     <PackageReference Include="GeoJSON" Version="2.3.1" />
-    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.42.0" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
-    <PackageReference Include="Polly" Version="8.4.1" />
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.61.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.9" />
+    <PackageReference Include="Polly" Version="8.7.0" />
     <PackageReference Include="Polly.Contrib.WaitAndRetry" Version="1.1.1" />
   </ItemGroup>
 
