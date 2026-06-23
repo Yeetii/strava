@@ -27,7 +27,13 @@ public record AdminStatus(
     IReadOnlyList<ServiceBusQueueStatus> ServiceBusQueues,
     IReadOnlyList<CosmosContainerStatus> CosmosContainers,
     int? ProvisionedThroughput,
-    double? LiveRuPerSecond);
+    double? LiveRuPerSecond,
+    int NewActivitiesLast24Hours,
+    int ProcessedNewActivitiesLast24Hours);
+
+internal sealed record ActivityWindowCountsProjection(
+    int NewActivitiesLast24Hours,
+    int ProcessedNewActivitiesLast24Hours);
 
 public class GetAdminStatus(
     ServiceBusAdministrationClient serviceBusAdminClient,
@@ -77,13 +83,21 @@ public class GetAdminStatus(
         var containerTasks = ContainerNames.Select(FetchContainerStatusAsync);
         var throughputTask = FetchDatabaseThroughputAsync();
         var liveRuTask = FetchLiveRuPerSecondAsync();
+        var activityWindowCountsTask = FetchActivityWindowCountsAsync();
 
         var queueStatuses = await Task.WhenAll(queueTasks);
         var containerStatuses = await Task.WhenAll(containerTasks);
         var provisionedThroughput = await throughputTask;
         var liveRuPerSecond = await liveRuTask;
+        var activityWindowCounts = await activityWindowCountsTask;
 
-        var status = new AdminStatus(queueStatuses, containerStatuses, provisionedThroughput, liveRuPerSecond);
+        var status = new AdminStatus(
+            queueStatuses,
+            containerStatuses,
+            provisionedThroughput,
+            liveRuPerSecond,
+            activityWindowCounts.NewActivitiesLast24Hours,
+            activityWindowCounts.ProcessedNewActivitiesLast24Hours);
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(status);
         return response;
@@ -154,6 +168,57 @@ public class GetAdminStatus(
         }
     }
 
+    private async Task<ActivityWindowCountsProjection> FetchActivityWindowCountsAsync()
+    {
+        try
+        {
+            var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.ActivitiesContainer);
+            var sinceUtc = DateTime.UtcNow.AddHours(-24);
+            var newActivitiesTask = FetchScalarCountAsync(
+                container,
+                new QueryDefinition(
+                    "SELECT VALUE COUNT(1) FROM c WHERE c.startDateLocal >= @sinceUtc")
+                    .WithParameter("@sinceUtc", sinceUtc));
+
+            var processedNewActivitiesTask = FetchScalarCountAsync(
+                container,
+                new QueryDefinition(
+                    """
+                    SELECT VALUE COUNT(1)
+                    FROM c
+                    WHERE c.startDateLocal >= @sinceUtc
+                      AND IS_DEFINED(c.processingStatus)
+                      AND c.processingStatus.summitedPeaks = true
+                      AND c.processingStatus.visitedPaths = true
+                      AND c.processingStatus.visitedAreas = true
+                    """)
+                    .WithParameter("@sinceUtc", sinceUtc));
+
+            await Task.WhenAll(newActivitiesTask, processedNewActivitiesTask);
+
+            return new ActivityWindowCountsProjection(
+                newActivitiesTask.Result,
+                processedNewActivitiesTask.Result);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to fetch 24-hour activity window counts");
+            return new ActivityWindowCountsProjection(-1, -1);
+        }
+    }
+
+    private static async Task<int> FetchScalarCountAsync(Container container, QueryDefinition query)
+    {
+        using var iterator = container.GetItemQueryIterator<int>(query);
+        if (!iterator.HasMoreResults)
+        {
+            return 0;
+        }
+
+        var response = await iterator.ReadNextAsync();
+        return response.FirstOrDefault();
+    }
+
     private async Task<double?> FetchLiveRuPerSecondAsync()
     {
         var resourceId = configuration.GetValue<string>("CosmosAccountResourceId");
@@ -199,4 +264,3 @@ public class GetAdminStatus(
         }
     }
 }
-
