@@ -7,10 +7,10 @@ namespace Shared.Services.StravaClient;
 public class ActivitiesApi(HttpClient _stravaClient)
 {
     private static readonly int ActivitesPerPage = 200;
+    private const int MaxTransientReadAttempts = 2;
 
     public async Task<(IEnumerable<SummaryActivity>? activites, bool hasMorePages)> GetActivitiesByAthlete(string token, int page = 1, DateTime? before = null, DateTime? after = null)
     {
-
         var requestUri = $"athlete/activities?per_page={ActivitesPerPage}&page={page}";
 
         if (after.HasValue)
@@ -25,28 +25,27 @@ public class ActivitiesApi(HttpClient _stravaClient)
             requestUri += $"&before={epoch}";
         }
 
-        var request = new HttpRequestMessage
-        {
-            Method = HttpMethod.Get,
-            RequestUri = new Uri(_stravaClient.BaseAddress + requestUri),
-            Headers =
-                {
-                    { "Authorization", $"Bearer {token}" },
-                },
-        };
+        var body = await SendWithTransientReadRetry(
+            requestUri,
+            token,
+            static async response =>
+            {
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                    return null;
 
-        using var response = await _stravaClient.SendAsync(request);
-        if (response.StatusCode == HttpStatusCode.NotFound)
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    var responseBody = await response.Content.ReadAsStringAsync();
+                    throw CreateRateLimitExceededException(response, responseBody);
+                }
+
+                response.EnsureSuccessStatusCode();
+                return await response.Content.ReadAsStringAsync();
+            });
+
+        if (body is null)
             return (null, false);
 
-        if (response.StatusCode == HttpStatusCode.TooManyRequests)
-        {
-            var responseBody = await response.Content.ReadAsStringAsync();
-            throw CreateRateLimitExceededException(response, responseBody);
-        }
-
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadAsStringAsync();
         var activities = JsonSerializer.Deserialize<List<SummaryActivity>>(body);
 
         bool hasMorePages = activities?.Count == ActivitesPerPage;
@@ -57,31 +56,65 @@ public class ActivitiesApi(HttpClient _stravaClient)
     public async Task<DetailedActivity?> GetActivity(string token, string activityId)
     {
         var requestUri = $"activities/{activityId}";
-        var request = new HttpRequestMessage
-        {
-            Method = HttpMethod.Get,
-            RequestUri = new Uri(_stravaClient.BaseAddress + requestUri),
-            Headers =
+        var body = await SendWithTransientReadRetry(
+            requestUri,
+            token,
+            static async response =>
+            {
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                    return null;
+
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
                 {
-                    { "Authorization", $"Bearer {token}" },
-                },
-        };
-        using var response = await _stravaClient.SendAsync(request);
-        if (response.StatusCode == HttpStatusCode.NotFound)
+                    var responseBody = await response.Content.ReadAsStringAsync();
+                    throw CreateRateLimitExceededException(response, responseBody);
+                }
+
+                response.EnsureSuccessStatusCode();
+                return await response.Content.ReadAsStringAsync();
+            });
+
+        if (body is null)
             return null;
-
-        if (response.StatusCode == HttpStatusCode.TooManyRequests)
-        {
-            var responseBody = await response.Content.ReadAsStringAsync();
-            throw CreateRateLimitExceededException(response, responseBody);
-        }
-
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadAsStringAsync();
 
         var activity = JsonSerializer.Deserialize<DetailedActivity>(body);
 
         return activity;
+    }
+
+    private async Task<string?> SendWithTransientReadRetry(
+        string requestUri,
+        string token,
+        Func<HttpResponseMessage, Task<string?>> handleResponse)
+    {
+        for (var attempt = 1; attempt <= MaxTransientReadAttempts; attempt++)
+        {
+            using var request = CreateGetRequest(requestUri, token);
+            using var response = await _stravaClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+            try
+            {
+                return await handleResponse(response);
+            }
+            catch (Exception ex) when (attempt < MaxTransientReadAttempts && IsTransientConnectionError(ex))
+            {
+            }
+        }
+
+        throw new InvalidOperationException($"Unreachable retry state for Strava request '{requestUri}'.");
+    }
+
+    private HttpRequestMessage CreateGetRequest(string requestUri, string token)
+    {
+        return new HttpRequestMessage
+        {
+            Method = HttpMethod.Get,
+            RequestUri = new Uri(_stravaClient.BaseAddress + requestUri),
+            Headers =
+            {
+                { "Authorization", $"Bearer {token}" },
+            },
+        };
     }
 
     private static StravaRateLimitExceededException CreateRateLimitExceededException(HttpResponseMessage response, string responseBody)
@@ -145,5 +178,14 @@ public class ActivitiesApi(HttpClient _stravaClient)
 
         values = (fifteenMinute, daily);
         return true;
+    }
+
+    private static bool IsTransientConnectionError(Exception ex)
+    {
+        if (ex is HttpRequestException { InnerException: IOException or System.Net.Sockets.SocketException })
+            return true;
+        if (ex is IOException or System.Net.Sockets.SocketException)
+            return true;
+        return false;
     }
 }
