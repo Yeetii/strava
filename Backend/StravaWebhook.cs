@@ -6,6 +6,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
+using Shared.Models;
 
 
 namespace Backend
@@ -16,6 +17,10 @@ namespace Backend
         public required IActionResult Response { get; set;}
         [ServiceBusOutput(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServiceBusConnection")]
         public ActivityFetchJob? ActivityFetchJob { get; set; }
+        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.ActivityDeleteJobs, Connection = "ServiceBusConnection")]
+        public ActivityDeleteJob? ActivityDeleteJob { get; set; }
+        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.AccountDeleteJobs, Connection = "ServiceBusConnection")]
+        public AccountDeleteJob? AccountDeleteJob { get; set; }
     }
     public class StravaWebhook(ILogger<StravaWebhook> _logger, IConfiguration _configuration)
     {
@@ -41,19 +46,8 @@ namespace Backend
                 }
 
                 var data = JsonConvert.DeserializeObject<JObject>(requestBody);
-                var objectType = data?["object_type"]?.ToString();
-                var aspectType = data?["aspect_type"]?.ToString();
-                var activityId = data?["object_id"]?.ToString();
-                var userId = data?["owner_id"]?.ToString();
-                if (objectType == "activity" && (aspectType == "update" || aspectType == "create")
-                    && !string.IsNullOrEmpty(activityId) && !string.IsNullOrEmpty(userId))
-                {
-                    outputs.ActivityFetchJob = new ActivityFetchJob{ActivityId = activityId, UserId = userId};
-                }
-                else
-                {
+                if (!TryApplyWebhookEvent(data, outputs))
                     _logger.LogError("Unhandled webhook type");
-                }
                 outputs.Response = new ContentResult { Content = "EVENT_RECEIVED", StatusCode = (int)HttpStatusCode.OK };
                 return outputs;
             }
@@ -82,6 +76,38 @@ namespace Backend
             }
             outputs.Response = new BadRequestResult();
             return outputs;
+        }
+
+        internal static bool TryApplyWebhookEvent(JObject? data, OutputBindings outputs)
+        {
+            var objectType = data?["object_type"]?.ToString();
+            var aspectType = data?["aspect_type"]?.ToString();
+            var activityId = data?["object_id"]?.ToString();
+            var userId = data?["owner_id"]?.ToString();
+
+            if (objectType == "activity" && (aspectType == "update" || aspectType == "create")
+                && !string.IsNullOrEmpty(activityId) && !string.IsNullOrEmpty(userId))
+            {
+                outputs.ActivityFetchJob = new ActivityFetchJob{ActivityId = activityId, UserId = userId};
+                return true;
+            }
+
+            if (objectType == "activity" && aspectType == "delete"
+                && !string.IsNullOrEmpty(activityId) && !string.IsNullOrEmpty(userId))
+            {
+                outputs.ActivityDeleteJob = new ActivityDeleteJob{ActivityId = activityId, UserId = userId};
+                return true;
+            }
+
+            if (objectType == "athlete" && aspectType == "update"
+                && data?["updates"]?["authorized"]?.ToString() == "false"
+                && !string.IsNullOrEmpty(userId))
+            {
+                outputs.AccountDeleteJob = new AccountDeleteJob{UserId = userId};
+                return true;
+            }
+
+            return false;
         }
     }
 }

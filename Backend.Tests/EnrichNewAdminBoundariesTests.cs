@@ -12,7 +12,7 @@ public class EnrichNewAdminBoundariesTests
         var document = CreateBoundary();
         document.Properties["adminBoundaryMetricsVersion"] = AdminBoundaryMetricsEnricher.MetricsVersion;
 
-        var shouldEnrich = EnrichNewAdminBoundaries.ShouldEnrich(document);
+        var shouldEnrich = OsmFeaturesChangeTrigger.ShouldEnrich(document);
 
         Assert.False(shouldEnrich);
     }
@@ -23,7 +23,7 @@ public class EnrichNewAdminBoundariesTests
         var document = CreateBoundary();
         document.Properties["adminBoundaryMetricsVersion"] = AdminBoundaryMetricsEnricher.MetricsVersion - 1;
 
-        var shouldEnrich = EnrichNewAdminBoundaries.ShouldEnrich(document);
+        var shouldEnrich = OsmFeaturesChangeTrigger.ShouldEnrich(document);
 
         Assert.True(shouldEnrich);
     }
@@ -42,7 +42,7 @@ public class EnrichNewAdminBoundariesTests
             storedZoom: 6,
             storedDocumentId: "adminBoundary:4:boundary-1");
 
-        var shouldEnrich = EnrichNewAdminBoundaries.ShouldEnrich(document);
+        var shouldEnrich = OsmFeaturesChangeTrigger.ShouldEnrich(document);
 
         Assert.False(shouldEnrich);
     }

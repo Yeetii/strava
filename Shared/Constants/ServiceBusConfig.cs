@@ -6,6 +6,7 @@ namespace Shared.Constants
             CalculateSummitsJobs,
             CalculateVisitedPathsJobs,
             CalculateVisitedAreasJobs,
+            ActivityDeleteJobs,
             AccountDeleteJobs,
             EnrichAdminBoundaryJobs,
             RaceDiscoveryJobs,
@@ -18,6 +19,7 @@ namespace Shared.Constants
         public const string ActivitiesFetchJobs = "activitiesfetchjobs";
         public const string ActivityFetchJobs = "activityFetchJobs";
         public const string ActivityProcessed = "activityprocessed";
+        public const string ActivityDeleteJobs = "activityDeleteJobs";
         public const string ScrapeRace = "scrapeRace";
         public const string RaceDiscoveryJobs = "raceDiscoveryJobs";
         public const string MistralScrapeJobs = "mistralScrape";

@@ -52,7 +52,7 @@ public class DeleteAccountWorker(
             await _visitedAreasCollection.DeleteDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId);
             await _userSyncItemsCollection.DeleteDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId);
             await _sessionsCollection.DeleteDocumentsByKey("userId", deleteJob.UserId);
-            await _usersCollection.DeleteDocument(deleteJob.UserId, new PartitionKey(deleteJob.UserId));
+            await DeleteUserIfPresent(deleteJob, cancellationToken);
 
             await actions.CompleteMessageAsync(message, cancellationToken);
         }
@@ -71,6 +71,20 @@ public class DeleteAccountWorker(
                 ServiceBusConfig.AccountDeleteJobs,
                 _logger,
                 cancellationToken);
+        }
+    }
+
+    private async Task DeleteUserIfPresent(AccountDeleteJob deleteJob, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _usersCollection.DeleteDocument(deleteJob.UserId, new PartitionKey(deleteJob.UserId), cancellationToken);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _logger.LogInformation(
+                "User {UserId} was already deleted or not found.",
+                deleteJob.UserId);
         }
     }
 }
