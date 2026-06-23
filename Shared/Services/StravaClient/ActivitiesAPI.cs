@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Authentication;
 using System.Text.Json;
 using Shared.Services.StravaClient.Model;
 
@@ -7,7 +8,7 @@ namespace Shared.Services.StravaClient;
 public class ActivitiesApi(HttpClient _stravaClient)
 {
     private static readonly int ActivitesPerPage = 200;
-    private const int MaxTransientReadAttempts = 2;
+    private const int MaxTransientRequestAttempts = 2;
 
     public async Task<(IEnumerable<SummaryActivity>? activites, bool hasMorePages)> GetActivitiesByAthlete(string token, int page = 1, DateTime? before = null, DateTime? after = null)
     {
@@ -25,7 +26,7 @@ public class ActivitiesApi(HttpClient _stravaClient)
             requestUri += $"&before={epoch}";
         }
 
-        var body = await SendWithTransientReadRetry(
+        var body = await SendWithTransientRetry(
             requestUri,
             token,
             static async response =>
@@ -56,7 +57,7 @@ public class ActivitiesApi(HttpClient _stravaClient)
     public async Task<DetailedActivity?> GetActivity(string token, string activityId)
     {
         var requestUri = $"activities/{activityId}";
-        var body = await SendWithTransientReadRetry(
+        var body = await SendWithTransientRetry(
             requestUri,
             token,
             static async response =>
@@ -82,21 +83,20 @@ public class ActivitiesApi(HttpClient _stravaClient)
         return activity;
     }
 
-    private async Task<string?> SendWithTransientReadRetry(
+    private async Task<string?> SendWithTransientRetry(
         string requestUri,
         string token,
         Func<HttpResponseMessage, Task<string?>> handleResponse)
     {
-        for (var attempt = 1; attempt <= MaxTransientReadAttempts; attempt++)
+        for (var attempt = 1; attempt <= MaxTransientRequestAttempts; attempt++)
         {
-            using var request = CreateGetRequest(requestUri, token);
-            using var response = await _stravaClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-
             try
             {
+                using var request = CreateGetRequest(requestUri, token);
+                using var response = await _stravaClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                 return await handleResponse(response);
             }
-            catch (Exception ex) when (attempt < MaxTransientReadAttempts && IsTransientConnectionError(ex))
+            catch (Exception ex) when (attempt < MaxTransientRequestAttempts && IsTransientConnectionError(ex))
             {
             }
         }
@@ -182,10 +182,22 @@ public class ActivitiesApi(HttpClient _stravaClient)
 
     private static bool IsTransientConnectionError(Exception ex)
     {
-        if (ex is HttpRequestException { InnerException: IOException or System.Net.Sockets.SocketException })
+        if (ex is HttpRequestException && HasTransientConnectionCause(ex))
             return true;
-        if (ex is IOException or System.Net.Sockets.SocketException)
+        if (ex is IOException or System.Net.Sockets.SocketException or AuthenticationException)
             return true;
+
+        return false;
+    }
+
+    private static bool HasTransientConnectionCause(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is IOException or System.Net.Sockets.SocketException or AuthenticationException)
+                return true;
+        }
+
         return false;
     }
 }

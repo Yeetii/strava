@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Authentication;
 using System.Text;
 using Shared.Services.StravaClient;
 
@@ -100,6 +101,45 @@ public class ActivitiesApiTests
         Assert.Equal(1, handler.SendCount);
     }
 
+    [Fact]
+    public async Task GetActivity_RetriesOnceWhenSslHandshakeFails()
+    {
+        using var handler = new SequenceHttpMessageHandler(
+            new HttpRequestException(
+                "The SSL connection could not be established, see inner exception.",
+                new AuthenticationException("Authentication failed because the remote party closed the transport stream.")),
+            CreateOkResponse("""
+                {
+                  "id": 123,
+                  "athlete": { "id": 42 },
+                  "name": "Morning Run",
+                  "type": "Run",
+                  "sport_type": "Run",
+                  "start_date": "2024-01-01T00:00:00Z",
+                  "start_date_local": "2024-01-01T01:00:00Z",
+                  "timezone": "(GMT+01:00) Europe/Stockholm",
+                  "map": { "id": "m1", "polyline": "", "summary_polyline": "" },
+                  "photos": { "primary": { "id": null, "unique_id": "", "urls": { "100": "", "600": "" } } },
+                  "highlighted_kudosers": [],
+                  "segment_efforts": [],
+                  "splits_metric": [],
+                  "laps": [],
+                  "gear": { "id": "g1", "name": "Shoes" }
+                }
+                """));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://www.strava.com/api/v3/")
+        };
+        var api = new ActivitiesApi(httpClient);
+
+        var activity = await api.GetActivity("token", "123");
+
+        Assert.NotNull(activity);
+        Assert.Equal(123, activity!.Id);
+        Assert.Equal(2, handler.SendCount);
+    }
+
     private static HttpResponseMessage CreateOkResponse(string content)
         => CreateResponse(HttpStatusCode.OK, content);
 
@@ -116,9 +156,9 @@ public class ActivitiesApiTests
         return response;
     }
 
-    private sealed class SequenceHttpMessageHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
+    private sealed class SequenceHttpMessageHandler(params object[] responses) : HttpMessageHandler
     {
-        private readonly Queue<HttpResponseMessage> _responses = new(responses);
+        private readonly Queue<object> _responses = new(responses);
         public int SendCount { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -127,7 +167,13 @@ public class ActivitiesApiTests
             if (_responses.Count == 0)
                 throw new InvalidOperationException("No more responses configured.");
 
-            return Task.FromResult(_responses.Dequeue());
+            var next = _responses.Dequeue();
+            return next switch
+            {
+                HttpResponseMessage response => Task.FromResult(response),
+                Exception exception => Task.FromException<HttpResponseMessage>(exception),
+                _ => throw new InvalidOperationException($"Unsupported response type {next.GetType().FullName}.")
+            };
         }
     }
 
