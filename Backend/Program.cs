@@ -21,7 +21,7 @@ using Shared.Services.Shards;
 
 var host = new HostBuilder()
     .ConfigureAppConfiguration(c => c.AddJsonFile("local.settings.shared.json", optional: true))
-    .ConfigureFunctionsWorkerDefaults()
+    .ConfigureFunctionsWebApplication()
     .ConfigureServices((hostingContext, services) =>
     {
         var configuration = hostingContext.Configuration;

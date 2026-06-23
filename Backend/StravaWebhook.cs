@@ -1,7 +1,10 @@
+using System.Net;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
 
 
@@ -10,7 +13,7 @@ namespace Backend
     public class OutputBindings
     {
         [HttpResult]
-        public required HttpResponseData Response { get; set;}
+        public required IActionResult Response { get; set;}
         [ServiceBusOutput(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServiceBusConnection")]
         public ActivityFetchJob? ActivityFetchJob { get; set; }
     }
@@ -18,31 +21,46 @@ namespace Backend
     {
         [Function(nameof(StravaWebhook))]
         public async Task<OutputBindings> Run(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequestData req)
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = null)] HttpRequest req)
         {
-            var outputs = new OutputBindings(){Response = req.CreateResponse()}; 
+            var outputs = new OutputBindings(){Response = new StatusCodeResult((int)HttpStatusCode.OK)}; 
             // Where webhook updates from strava are received
-            if (req.Method == "POST")
+            if (HttpMethods.IsPost(req.Method))
             {
                 _logger.LogInformation("Webhook event received!");
-                string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-                dynamic? data = JsonConvert.DeserializeObject(requestBody);
-                if (data?.object_type == "activity" && (data?.aspect_type == "update" || data?.aspect_type == "create"))
+                string requestBody;
+                try
                 {
-                    outputs.ActivityFetchJob = new ActivityFetchJob{ActivityId = data.object_id, UserId = data.owner_id};
+                    requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+                }
+                catch (BadHttpRequestException ex)
+                {
+                    _logger.LogWarning(ex, "Strava webhook request body could not be read.");
+                    outputs.Response = new BadRequestResult();
+                    return outputs;
+                }
+
+                var data = JsonConvert.DeserializeObject<JObject>(requestBody);
+                var objectType = data?["object_type"]?.ToString();
+                var aspectType = data?["aspect_type"]?.ToString();
+                var activityId = data?["object_id"]?.ToString();
+                var userId = data?["owner_id"]?.ToString();
+                if (objectType == "activity" && (aspectType == "update" || aspectType == "create")
+                    && !string.IsNullOrEmpty(activityId) && !string.IsNullOrEmpty(userId))
+                {
+                    outputs.ActivityFetchJob = new ActivityFetchJob{ActivityId = activityId, UserId = userId};
                 }
                 else
                 {
                     _logger.LogError("Unhandled webhook type");
                 }
-                outputs.Response.StatusCode = System.Net.HttpStatusCode.OK;
-                await outputs.Response.WriteStringAsync("EVENT_RECEIVED");
+                outputs.Response = new ContentResult { Content = "EVENT_RECEIVED", StatusCode = (int)HttpStatusCode.OK };
                 return outputs;
             }
             // Only used to create new webhook subscription at Strava
-            else if (req.Method == "GET")
+            else if (HttpMethods.IsGet(req.Method))
             {
-                string verifyToken = _configuration.GetValue<string>("stravaVerifyToken");
+                string? verifyToken = _configuration.GetValue<string>("stravaVerifyToken");
 
                 string? mode = req.Query["hub.mode"];
                 string? token = req.Query["hub.verify_token"];
@@ -51,14 +69,18 @@ namespace Backend
                     && mode == "subscribe" && token == verifyToken)
                 {
                     _logger.LogInformation("Webhook verified!");
-                    outputs.Response.StatusCode = System.Net.HttpStatusCode.OK;
-                    await outputs.Response.WriteStringAsync("{\"hub.challenge\": \"" + challenge + "\"}");
+                    outputs.Response = new ContentResult
+                    {
+                        Content = "{\"hub.challenge\": \"" + challenge + "\"}",
+                        ContentType = "application/json",
+                        StatusCode = (int)HttpStatusCode.OK
+                    };
                     return outputs;
                 }
-                outputs.Response.StatusCode = System.Net.HttpStatusCode.Forbidden;
+                outputs.Response = new StatusCodeResult((int)HttpStatusCode.Forbidden);
                 return outputs;
             }
-            outputs.Response.StatusCode = System.Net.HttpStatusCode.BadRequest;
+            outputs.Response = new BadRequestResult();
             return outputs;
         }
     }
