@@ -17,7 +17,8 @@ env:
   DOTNET_VERSION: '10.0.x' # set this to the dotnet version to use
   AZURE_RESOURCE_GROUP: 'strava'
   AZURE_FUNCTIONAPP_NAME: 'strava-tools-backend-flex'
-  AZURE_SOURCE_FUNCTIONAPP_NAME: 'strava-tools-backend'
+  AZURE_STORAGE_ACCOUNT_NAME: 'stravaa8c2'
+  AZURE_FLEX_LOCATION: 'swedencentral'
 
 jobs:
   build-and-deploy:
@@ -64,39 +65,28 @@ jobs:
             exit 0
           fi
 
-          az functionapp flex-migration start \
-            --source-name '${{ env.AZURE_SOURCE_FUNCTIONAPP_NAME }}' \
-            --source-resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
+          az functionapp create \
+            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
             --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
-            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}'
+            --storage-account '${{ env.AZURE_STORAGE_ACCOUNT_NAME }}' \
+            --flexconsumption-location '${{ env.AZURE_FLEX_LOCATION }}' \
+            --runtime dotnet-isolated \
+            --runtime-version 10.0
 
       - name: 'Configure Function App runtime settings'
         shell: bash
         run: |
           set -euo pipefail
 
-          app_json=$(az functionapp show \
-            --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
-            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
-            --output json)
-
-          is_linux=$(printf '%s' "$app_json" | jq -r '.reserved')
           az functionapp config appsettings set \
             --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
             --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
-            --settings FUNCTIONS_WORKER_RUNTIME=dotnet-isolated FUNCTIONS_EXTENSION_VERSION=~4
+            --settings FUNCTIONS_EXTENSION_VERSION=~4 WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED=1
 
-          if [ "$is_linux" = "true" ]; then
-            az functionapp config set \
-              --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
-              --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
-              --linux-fx-version 'DOTNET-ISOLATED|10.0'
-          else
-            az functionapp config set \
-              --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
-              --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
-              --net-framework-version 'v10.0'
-          fi
+          az functionapp runtime config set \
+            --name '${{ env.AZURE_FUNCTIONAPP_NAME }}' \
+            --resource-group '${{ env.AZURE_RESOURCE_GROUP }}' \
+            --runtime-version 10.0
 
       - name: 'Deploy Function App'
         uses: Azure/functions-action@v1
