@@ -22,6 +22,8 @@ public class DeleteAccountWorker(
     ServiceBusClient _serviceBusClient,
     ServiceBusAdministrationClient serviceBusAdministrationClient)
 {
+    private const int DeleteExpiryTtlSeconds = 1;
+
     [Function(nameof(DeleteAccountWorker))]
     public async Task Run(
         [ServiceBusTrigger(ServiceBusConfig.AccountDeleteJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
@@ -46,11 +48,11 @@ public class DeleteAccountWorker(
 
         try
         {
-            await _summitedPeaksCollection.DeleteDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId);
-            await _activitiesCollection.DeleteDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId);
-            await _visitedPathsCollection.DeleteDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId);
-            await _visitedAreasCollection.DeleteDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId);
-            await _userSyncItemsCollection.DeleteDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId);
+            await _summitedPeaksCollection.ExpireDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId, DeleteExpiryTtlSeconds, cancellationToken);
+            await _activitiesCollection.ExpireDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId, DeleteExpiryTtlSeconds, cancellationToken);
+            await _visitedPathsCollection.ExpireDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId, DeleteExpiryTtlSeconds, cancellationToken);
+            await _visitedAreasCollection.ExpireDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId, DeleteExpiryTtlSeconds, cancellationToken);
+            await _userSyncItemsCollection.ExpireDocumentsByKey("userId", deleteJob.UserId, deleteJob.UserId, DeleteExpiryTtlSeconds, cancellationToken);
             await _sessionsCollection.DeleteDocumentsByKey("userId", deleteJob.UserId);
             await DeleteUserIfPresent(deleteJob, cancellationToken);
 

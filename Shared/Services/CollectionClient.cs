@@ -264,6 +264,13 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         await Task.WhenAll(tasks);
     }
 
+    public async Task ExpireDocumentsByKey(string key, string value, string? partitionKey = null, int ttlSeconds = 1, CancellationToken cancellationToken = default)
+    {
+        var references = await GetDocumentDeleteReferencesByKey(key, value, cancellationToken);
+        var tasks = references.Select(reference => ExpireDocumentByCandidates(reference, value, partitionKey, ttlSeconds, cancellationToken));
+        await Task.WhenAll(tasks);
+    }
+
     private sealed class DocumentDeleteReference
     {
         public required string Id { get; init; }
@@ -308,6 +315,45 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
 
         _logger.LogWarning(
             "Unable to delete document {DocumentId} in {DocumentType} by key-based lookup after trying {CandidateCount} partition key candidates. This may indicate a partition-key mismatch or that the document was already deleted.",
+            reference.Id,
+            typeof(T).Name,
+            candidateKeys.Count);
+    }
+
+    private async Task ExpireDocumentByCandidates(
+        DocumentDeleteReference reference,
+        string queryValue,
+        string? explicitPartitionKey,
+        int ttlSeconds,
+        CancellationToken cancellationToken)
+    {
+        var candidateKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in new[] { explicitPartitionKey, reference.KeyValue, reference.Id, queryValue })
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                candidateKeys.Add(candidate);
+            }
+        }
+
+        foreach (var candidate in candidateKeys)
+        {
+            try
+            {
+                await PatchDocument(
+                    reference.Id,
+                    new PartitionKey(candidate),
+                    [PatchOperation.Set("/ttl", ttlSeconds)],
+                    cancellationToken: cancellationToken);
+                return;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+            }
+        }
+
+        _logger.LogWarning(
+            "Unable to mark document {DocumentId} in {DocumentType} for expiry after trying {CandidateCount} partition key candidates. This may indicate a partition-key mismatch, TTL not being enabled on the container, or that the document was already deleted.",
             reference.Id,
             typeof(T).Name,
             candidateKeys.Count);
