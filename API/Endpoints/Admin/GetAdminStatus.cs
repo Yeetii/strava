@@ -42,30 +42,6 @@ public class GetAdminStatus(
     IConfiguration configuration,
     ILogger<GetAdminStatus> logger)
 {
-    private static readonly string[] QueueNames =
-    [
-        ServiceBusConfig.CalculateSummitsJobs,
-        ServiceBusConfig.CalculateVisitedPathsJobs,
-        ServiceBusConfig.CalculateVisitedAreasJobs,
-        ServiceBusConfig.ActivitiesFetchJobs,
-        ServiceBusConfig.ActivityFetchJobs,
-        ServiceBusConfig.ActivityProcessed,
-        ServiceBusConfig.ScrapeRace,
-    ];
-
-    private static readonly string[] ContainerNames =
-    [
-        DatabaseConfig.SummitedPeaksContainer,
-        DatabaseConfig.ActivitiesContainer,
-        DatabaseConfig.UsersContainer,
-        DatabaseConfig.UserSyncItemsContainer,
-        DatabaseConfig.SessionsContainer,
-        DatabaseConfig.VisitedPathsContainer,
-        DatabaseConfig.VisitedAreasContainer,
-        DatabaseConfig.PeaksGroupsContainer,
-        DatabaseConfig.OsmFeaturesContainer,
-    ];
-
     [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(AdminStatus))]
@@ -79,8 +55,8 @@ public class GetAdminStatus(
             return req.CreateResponse(HttpStatusCode.Unauthorized);
         }
 
-        var queueTasks = QueueNames.Select(FetchQueueStatusAsync);
-        var containerTasks = ContainerNames.Select(FetchContainerStatusAsync);
+        var queueTasks = ServiceBusConfig.AllQueues.Select(FetchQueueStatusAsync);
+        var containerTasks = DatabaseConfig.AllContainers.Select(FetchContainerStatusAsync);
         var throughputTask = FetchDatabaseThroughputAsync();
         var liveRuTask = FetchLiveRuPerSecondAsync();
         var activityWindowCountsTask = FetchActivityWindowCountsAsync();

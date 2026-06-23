@@ -2,6 +2,15 @@ namespace Shared.Constants
 {
     public static class DatabaseConfig
     {
+        public static readonly string[] AllContainers = typeof(DatabaseConfig)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(field => field is { IsLiteral: true, FieldType: not null }
+                && field.FieldType == typeof(string)
+                && field.Name.EndsWith("Container", StringComparison.Ordinal))
+            .Select(field => (string)field.GetRawConstantValue()!)
+            .OrderBy(containerName => containerName)
+            .ToArray();
+
         public const string CosmosDb = "db";
         public const string SummitedPeaksContainer = "summitedPeaks";
         public const string ActivitiesContainer = "activities";
