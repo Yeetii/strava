@@ -16,6 +16,20 @@
 			}
 		},
 		{
+			"label": "clean (backend functions)",
+			"command": "dotnet",
+			"args": [
+				"clean",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"type": "process",
+			"problemMatcher": "$msCompile",
+			"options": {
+				"cwd": "${workspaceFolder}/Backend"
+			}
+		},
+		{
 			"label": "build (functions)",
 			"command": "dotnet",
 			"args": [
@@ -35,6 +49,21 @@
 			}
 		},
 		{
+			"label": "build (backend functions)",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"type": "process",
+			"dependsOn": "clean (backend functions)",
+			"problemMatcher": "$msCompile",
+			"options": {
+				"cwd": "${workspaceFolder}/Backend"
+			}
+		},
+		{
 			"label": "clean release (functions)",
 			"command": "dotnet",
 			"args": [
@@ -48,6 +77,22 @@
 			"problemMatcher": "$msCompile",
 			"options": {
 				"cwd": "${workspaceFolder}/API"
+			}
+		},
+		{
+			"label": "clean release (backend functions)",
+			"command": "dotnet",
+			"args": [
+				"clean",
+				"--configuration",
+				"Release",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"type": "process",
+			"problemMatcher": "$msCompile",
+			"options": {
+				"cwd": "${workspaceFolder}/Backend"
 			}
 		},
 		{
@@ -68,10 +113,39 @@
 			}
 		},
 		{
+			"label": "publish (backend functions)",
+			"command": "dotnet",
+			"args": [
+				"publish",
+				"--configuration",
+				"Release",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"type": "process",
+			"dependsOn": "clean release (backend functions)",
+			"problemMatcher": "$msCompile",
+			"options": {
+				"cwd": "${workspaceFolder}/Backend"
+			}
+		},
+		{
+			"label": "start API functions",
 			"type": "func",
 			"dependsOn": "build (functions)",
 			"options": {
-				"cwd": "${workspaceFolder}/API/bin/Debug/net8.0"
+				"cwd": "${workspaceFolder}/API/bin/Debug/net10.0"
+			},
+			"command": "host start",
+			"isBackground": true,
+			"problemMatcher": "$func-dotnet-watch"
+		},
+		{
+			"label": "start backend functions",
+			"type": "func",
+			"dependsOn": "build (backend functions)",
+			"options": {
+				"cwd": "${workspaceFolder}/Backend/bin/Debug/net10.0"
 			},
 			"command": "host start",
 			"isBackground": true,

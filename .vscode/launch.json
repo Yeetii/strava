@@ -2,9 +2,17 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Attach to .NET Functions",
+            "name": "Attach to API Functions",
             "type": "coreclr",
             "request": "attach",
+            "preLaunchTask": "start API functions",
+            "processId": "${command:azureFunctions.pickProcess}"
+        },
+        {
+            "name": "Attach to Backend Functions",
+            "type": "coreclr",
+            "request": "attach",
+            "preLaunchTask": "start backend functions",
             "processId": "${command:azureFunctions.pickProcess}"
         }
     ]
