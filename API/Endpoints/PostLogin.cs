@@ -78,15 +78,17 @@ public class PostLogin(
             StravaScope = tokenResponse.Scope,
             SyncStatus = syncStatus,
         };
-        outputs.User = user;
+        var shouldQueueInitialActivitiesFetch = ShouldQueueInitialActivitiesFetch(userExist);
 
-        if (userExist == null)
+        await _usersCollection.UpsertDocument(user, priority: CosmosWritePriority.High);
+
+        if (shouldQueueInitialActivitiesFetch)
         {
-            _logger.LogInformation("Creating new user {userId}, sending activities fetch jobs", userId);
-            await _usersCollection.UpsertDocument(user, priority: CosmosWritePriority.High);
+            _logger.LogInformation("Queueing initial activities fetch for user {userId}", userId);
             await _activitiesFetchSender.SendMessageAsync(new ServiceBusMessage(System.Text.Json.JsonSerializer.Serialize(new ActivitiesFetchJob { UserId = userId })));
-            outputs.User = null;
         }
+
+        outputs.User = null;
 
         outputs.Session = new Session
         {
@@ -105,6 +107,16 @@ public class PostLogin(
         });
 
         return outputs;
+    }
+
+    public static bool ShouldQueueInitialActivitiesFetch(Shared.Models.User? existingUser)
+    {
+        if (existingUser == null)
+            return true;
+
+        var syncStatus = existingUser.SyncStatus;
+        return syncStatus == null
+            || (!syncStatus.TotalActivitiesOnStrava.HasValue && syncStatus.SyncedActivities == 0);
     }
 
     public class PostLoginResponse
