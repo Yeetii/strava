@@ -8,7 +8,7 @@ namespace Shared.Services.StravaClient;
 public class ActivitiesApi(HttpClient _stravaClient)
 {
     private static readonly int ActivitesPerPage = 200;
-    private const int MaxTransientRequestAttempts = 2;
+    private const int MaxTransientRequestAttempts = 4;
 
     public async Task<(IEnumerable<SummaryActivity>? activites, bool hasMorePages)> GetActivitiesByAthlete(string token, int page = 1, DateTime? before = null, DateTime? after = null)
     {
@@ -88,6 +88,8 @@ public class ActivitiesApi(HttpClient _stravaClient)
         string token,
         Func<HttpResponseMessage, Task<string?>> handleResponse)
     {
+        Exception? lastTransientException = null;
+
         for (var attempt = 1; attempt <= MaxTransientRequestAttempts; attempt++)
         {
             try
@@ -98,11 +100,16 @@ public class ActivitiesApi(HttpClient _stravaClient)
             }
             catch (Exception ex) when (attempt < MaxTransientRequestAttempts && IsTransientConnectionError(ex))
             {
+                lastTransientException = ex;
+                await Task.Delay(GetTransientRetryDelay(attempt));
             }
         }
 
-        throw new InvalidOperationException($"Unreachable retry state for Strava request '{requestUri}'.");
+        throw lastTransientException ?? new InvalidOperationException($"Unreachable retry state for Strava request '{requestUri}'.");
     }
+
+    private static TimeSpan GetTransientRetryDelay(int attempt)
+        => TimeSpan.FromMilliseconds(250 * attempt);
 
     private HttpRequestMessage CreateGetRequest(string requestUri, string token)
     {

@@ -82,6 +82,46 @@ public class ActivitiesApiTests
     }
 
     [Fact]
+    public async Task GetActivitiesByAthlete_RetriesMultipleTimesWhenResponseBodyReadFailsRepeatedly()
+    {
+        var successJson = """
+            [
+              {
+                "athlete": { "id": 42 },
+                "name": "Morning Run",
+                "type": "Run",
+                "sport_type": "Run",
+                "id": 123,
+                "start_date": "2024-01-01T00:00:00Z",
+                "start_date_local": "2024-01-01T01:00:00Z",
+                "timezone": "(GMT+01:00) Europe/Stockholm",
+                "location_country": "Sweden",
+                "map": { "id": "m1", "polyline": "", "summary_polyline": "" },
+                "visibility": "everyone"
+              }
+            ]
+            """;
+
+        using var handler = new SequenceHttpMessageHandler(
+            CreateOkResponse(new ThrowOnFirstReadContent(successJson)),
+            CreateOkResponse(new ThrowOnFirstReadContent(successJson)),
+            CreateOkResponse(new ThrowOnFirstReadContent(successJson)),
+            CreateOkResponse(successJson));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://www.strava.com/api/v3/")
+        };
+        var api = new ActivitiesApi(httpClient);
+
+        var (activities, hasMorePages) = await api.GetActivitiesByAthlete("token");
+
+        var activity = Assert.Single(activities!);
+        Assert.Equal(123, activity.Id);
+        Assert.False(hasMorePages);
+        Assert.Equal(4, handler.SendCount);
+    }
+
+    [Fact]
     public async Task GetActivity_DoesNotRetryRateLimitResponses()
     {
         using var handler = new SequenceHttpMessageHandler(
