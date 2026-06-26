@@ -16,10 +16,13 @@
 			"path": "Shared.Benchmarks"
 		},
 		{
-			"path": "API.Tests"
+			"path": "Backend.Tests"
 		},
 		{
-			"path": "Backend.Tests"
+			"path": "PmtilesJob"
+		},
+		{
+			"path": "PmtilesJob.Tests"
 		}
 	],
 	"settings": {

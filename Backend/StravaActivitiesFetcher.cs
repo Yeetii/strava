@@ -219,7 +219,8 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
 
         private static bool IsTransientConnectionError(Exception ex)
         {
-            if (ex is HttpRequestException && HasTransientConnectionCause(ex))
+            if (ex is HttpRequestException httpRequestException
+                && (HasTransientConnectionCause(httpRequestException) || IsTransientHttpRequestMessage(httpRequestException)))
                 return true;
             if (ex is IOException or System.Net.Sockets.SocketException or System.Security.Authentication.AuthenticationException)
                 return true;
@@ -236,6 +237,13 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
             }
 
             return false;
+        }
+
+        private static bool IsTransientHttpRequestMessage(HttpRequestException ex)
+        {
+            return ex.Message.Contains("Error while copying content to a stream", StringComparison.Ordinal)
+                || ex.Message.Contains("The response ended prematurely", StringComparison.Ordinal)
+                || ex.Message.Contains("The SSL connection could not be established", StringComparison.Ordinal);
         }
     }
 }
