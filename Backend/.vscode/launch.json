@@ -5,6 +5,7 @@
       "name": "Attach to Backend",
       "type": "coreclr",
       "request": "attach",
+      "preLaunchTask": "start backend functions",
       "processId": "${command:azureFunctions.pickProcess}"
     }
   ]
