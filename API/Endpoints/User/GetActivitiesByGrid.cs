@@ -4,14 +4,14 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Services;
 using API.Utils;
+using Shared.Models;
 
 namespace API.Endpoints.User;
 
-public class GetActivitiesByGrid([FromKeyedServices(FeatureKinds.Path)] TiledCollectionClient _pathsCollectionClient)
+public class GetActivitiesByGrid(TiledCollectionClient<Activity> _activitiesCollection)
 {
     [OpenApiOperation(tags: ["Activities"])]
     [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(double), Required = true)]
@@ -25,7 +25,7 @@ public class GetActivitiesByGrid([FromKeyedServices(FeatureKinds.Path)] TiledCol
     {
         try
         {
-            var activities = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
+            var activities = await _activitiesCollection.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
             var featureCollection = new FeatureCollection(activities.Select(a => a.ToFeature()));
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(featureCollection);

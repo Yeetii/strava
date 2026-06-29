@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 
 namespace Shared.Models
 {
-    public class StoredFeature : IStoredInGrid, IDocument
+    public class StoredFeature : TiledDocument
     {
         public const string PointerFlagProperty = "isPointer";
         public const string PointerFeatureIdProperty = "pointerFeatureId";
@@ -16,12 +16,8 @@ namespace Shared.Models
         public const string PointerStoredYProperty = "storedY";
         public const string PointerStoredZoomProperty = "storedZoom";
 
-        public required string Id { get; set; }
         public string? FeatureId { get; set; }
         public string? Kind { get; set; }
-        public required int X { get; set; }
-        public required int Y { get; set; }
-        public int Zoom { get; set; }
         public IDictionary<string, dynamic> Properties { get; set; } = new Dictionary<string, dynamic>();
         [JsonConverter(typeof(GeometrySystemTextJsonConverter))]
         public required Geometry Geometry { get; set; }
@@ -34,19 +30,6 @@ namespace Shared.Models
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         [Newtonsoft.Json.JsonProperty("ttl", NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
         public int? Ttl { get; set; }
-
-        /// <summary>
-        /// Pre-computed centroid of <see cref="Geometry"/>. Null for documents written before the
-        /// centroid backfill; use <see cref="ResolvedCentroid"/> to fall back to live computation.
-        /// </summary>
-        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
-        public Coordinate? Centroid { get; set; }
-
-        /// <summary>Returns the stored <see cref="Centroid"/> if set; otherwise computes it live from <see cref="Geometry"/>.</summary>
-        [JsonIgnore]
-        [Newtonsoft.Json.JsonIgnore]
-        public Coordinate ResolvedCentroid => Centroid ?? GeometryCentroidHelper.GetCentroid(Geometry);
 
         [JsonIgnore]
         [Newtonsoft.Json.JsonIgnore]
@@ -257,5 +240,7 @@ namespace Shared.Models
                 .ToDictionary(p => p.Name, p => ConvertJsonElement(p.Value)),
             _ => element.GetRawText()
         };
+
+        protected override Coordinate ResolveCentroid() => GeometryCentroidHelper.GetCentroid(Geometry);
     }
 }

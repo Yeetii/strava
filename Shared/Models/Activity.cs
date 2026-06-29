@@ -4,9 +4,8 @@ using System.Text.Json.Serialization;
 
 namespace Shared.Models;
 
-public class Activity : IDocument
+public class Activity : TiledDocument
 {
-    public required string Id { get; set; }
     public required string UserId { get; set; }
     public required string Name { get; set; }
     public string? Description { get; set; }
@@ -57,6 +56,9 @@ public class Activity : IDocument
             ["athleteCount"] = AthleteCount,
             ["averageSpeed"] = AverageSpeed,
             ["maxSpeed"] = MaxSpeed,
+            ["x"] = X,
+            ["y"] = Y,
+            ["zoom"] = Zoom,
         };
         
         var decodedPolyline = GeoSpatialFunctions.DecodePolyline(SummaryPolyline ?? "");
@@ -66,6 +68,20 @@ public class Activity : IDocument
             throw new Exception("Activity does not contain a valid polyline with multiple points.");
         }
         return new Feature(new LineString(positions), properties, null, new FeatureId(Id));
+    }
+
+    protected override Coordinate ResolveCentroid()
+    {
+        var points = GeoSpatialFunctions.DecodePolyline(Polyline ?? SummaryPolyline ?? string.Empty).ToList();
+        if (points.Count == 0)
+            throw new Exception("Activity does not contain a valid polyline with multiple points.");
+
+        if (points.Count % 2 == 1)
+            return points[points.Count / 2];
+
+        var first = points[(points.Count / 2) - 1];
+        var second = points[points.Count / 2];
+        return new Coordinate((first.Lng + second.Lng) / 2, (first.Lat + second.Lat) / 2);
     }
 }
 

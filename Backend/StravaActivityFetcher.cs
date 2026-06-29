@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
@@ -14,9 +16,10 @@ namespace Backend
         public required string ActivityId { get; set; }
     }
 
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient, UserSyncStatusService _userSyncStatusService)
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient, UserSyncStatusService _userSyncStatusService, IConfiguration configuration)
     {
         private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+        private readonly int _activityTileZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
         readonly HttpClient _backendApiClient = httpClientFactory.CreateClient("backendApiClient");
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -71,7 +74,7 @@ namespace Backend
                 }
 
                 await _activitiesCollection.UpsertDocument(
-                    ActivityMapper.MapDetailedActivity(activity, existingActivity),
+                    ActivityMapper.MapDetailedActivity(activity, _activityTileZoom, existingActivity),
                     priority: CosmosWritePriority.High,
                     cancellationToken: cancellationToken);
                 if (existingActivity == null)

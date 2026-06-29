@@ -19,6 +19,18 @@ public class CollectionClientBuilder(IServiceCollection services)
         return this;
     }
 
+    public CollectionClientBuilder AddTiledCollection<T>(string databaseName, string containerName, int storeZoom = 11) where T : TiledDocument
+    {
+        services.AddSingleton(serviceProvider =>
+        {
+            var cosmosClient = serviceProvider.GetRequiredService<CosmosClient>();
+            var container = cosmosClient.GetContainer(databaseName, containerName);
+            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+            return new TiledCollectionClient<T>(container, loggerFactory, storeZoom);
+        });
+        return this;
+    }
+
     /// <summary>
     /// Registers all Overpass-backed feature caches against a single shared container, keyed by
     /// <see cref="FeatureKinds"/>. Consumers inject with <c>[FromKeyedServices(FeatureKinds.X)] TiledCollectionClient</c>.

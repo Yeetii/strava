@@ -1,6 +1,8 @@
 using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
@@ -8,9 +10,10 @@ using System.Text.Json;
 
 namespace Backend
 {
-public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient, UserSyncStatusService _userSyncStatusService)
+public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient, UserSyncStatusService _userSyncStatusService, IConfiguration configuration)
 {
         private const int MaxAccessTokenRequestAttempts = 3;
+        private readonly int _activityTileZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
         private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
         readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
         readonly ServiceBusSender _activitiesFetchSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs);
@@ -100,7 +103,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
                 var mappedActivities = activitiesList.Select(activity =>
                 {
                     existingActivities.TryGetValue(activity.Id.ToString(), out var existingActivity);
-                    return ActivityMapper.MapSummaryActivity(activity, existingActivity);
+                    return ActivityMapper.MapSummaryActivity(activity, _activityTileZoom, existingActivity);
                 });
 
                 await _activitiesCollection.BulkUpsert(
