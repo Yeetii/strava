@@ -31,18 +31,15 @@ public class HighwayZoomIndexService(
         }
 
         var cached = await TryReadIndexAsync(z, x, y, cancellationToken);
-        if (cached is not null && cached.IsComplete)
+        if (cached is not null)
             return cached;
 
         var built = await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
         return built;
     }
 
-    public virtual async Task UpdateIndexesForShardAsync(int shardX, int shardY, Shard shard, CancellationToken cancellationToken = default)
+    public virtual async Task SyncIndexesForShardAsync(int shardX, int shardY, Shard? shard, CancellationToken cancellationToken = default)
     {
-        if (shard is null)
-            throw new ArgumentNullException(nameof(shard));
-
         for (var z = 0; z < _canonicalZoom; z++)
         {
             var shift = _canonicalZoom - z;
@@ -54,7 +51,7 @@ public class HighwayZoomIndexService(
             if (index is null)
                 continue;
 
-            var shouldInclude = shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z));
+            var shouldInclude = shard?.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z)) == true;
             var existingIndex = index.Shards.FindIndex(reference => reference.X == shardX && reference.Y == shardY);
             var changed = false;
 
@@ -84,6 +81,12 @@ public class HighwayZoomIndexService(
                 shardY,
                 shouldInclude);
         }
+    }
+
+    public virtual Task UpdateIndexesForShardAsync(int shardX, int shardY, Shard shard, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(shard);
+        return SyncIndexesForShardAsync(shardX, shardY, shard, cancellationToken);
     }
 
     public virtual async Task<HighwayTileShardSelection> RebuildIndexAsync(int z, int x, int y, CancellationToken cancellationToken = default)

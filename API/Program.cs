@@ -103,7 +103,7 @@ var host = new HostBuilder()
                 async (x, y, shard, cancellationToken) =>
                 {
                     var zoomIndexService = serviceProvider.GetRequiredService<HighwayZoomIndexService>();
-                    await zoomIndexService.UpdateIndexesForShardAsync(x, y, shard, cancellationToken);
+                    await zoomIndexService.SyncIndexesForShardAsync(x, y, shard, cancellationToken);
                 });
         });
         services.AddSingleton(serviceProvider =>

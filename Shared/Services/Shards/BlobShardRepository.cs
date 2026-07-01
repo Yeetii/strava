@@ -13,14 +13,14 @@ public class BlobShardRepository(
     Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> fetchFeatures,
     int canonicalZoom = 12,
     int overlapBufferMeters = 200,
-    Func<int, int, Shard, CancellationToken, Task>? onShardMaterialized = null) : IShardRepository
+    Func<int, int, Shard?, CancellationToken, Task>? onShardChanged = null) : IShardRepository
 {
     private readonly BlobContainerClient _container = container;
     private readonly ILogger<BlobShardRepository> _logger = logger;
     private readonly Func<Coordinate, Coordinate, CancellationToken, Task<IEnumerable<Feature>>> _fetchFeatures = fetchFeatures;
     private readonly int _canonicalZoom = canonicalZoom;
     private readonly int _overlapBufferMeters = overlapBufferMeters;
-    private readonly Func<int, int, Shard, CancellationToken, Task>? _onShardMaterialized = onShardMaterialized;
+    private readonly Func<int, int, Shard?, CancellationToken, Task>? _onShardChanged = onShardChanged;
 
     public int CanonicalZoom => _canonicalZoom;
 
@@ -47,7 +47,7 @@ public class BlobShardRepository(
                 {
                     var bytes = ShardBinarySerializer.Serialize(rebuilt);
                     await blob.UploadAsync(BinaryData.FromBytes(bytes), overwrite: true, cancellationToken);
-                    await NotifyShardMaterializedAsync(x, y, rebuilt, cancellationToken);
+                    await NotifyShardChangedAsync(x, y, rebuilt, cancellationToken);
                     _logger.LogInformation("Replaced empty shard z{Zoom}/{X}/{Y} with {Count} features.", z, x, y, rebuilt.Owned.Count);
                     return rebuilt;
                 }
@@ -60,7 +60,7 @@ public class BlobShardRepository(
             var built = await BuildShardAsync(x, y, cancellationToken);
             var bytes = ShardBinarySerializer.Serialize(built);
             await blob.UploadAsync(BinaryData.FromBytes(bytes), overwrite: true, cancellationToken);
-            await NotifyShardMaterializedAsync(x, y, built, cancellationToken);
+            await NotifyShardChangedAsync(x, y, built, cancellationToken);
             return built;
         }
     }
@@ -105,7 +105,9 @@ public class BlobShardRepository(
             throw new ArgumentOutOfRangeException(nameof(z), $"Only z{_canonicalZoom} shards are supported.");
 
         var blob = _container.GetBlobClient(GetBlobPath(z, x, y));
-        await blob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
+        var deleted = await blob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
+        if (deleted.Value)
+            await NotifyShardChangedAsync(x, y, shard: null, cancellationToken);
     }
 
     internal static string GetBlobPath(int z, int x, int y) => $"{z}/{x}/{y}.pbf";
@@ -159,18 +161,18 @@ public class BlobShardRepository(
     private ulong CreateTileScopedFeatureId(string logicalId, int x, int y)
         => ShardEncodingIds.FeatureIdFromString($"{_canonicalZoom}/{x}/{y}/{logicalId}");
 
-    private async Task NotifyShardMaterializedAsync(int x, int y, Shard shard, CancellationToken cancellationToken)
+    private async Task NotifyShardChangedAsync(int x, int y, Shard? shard, CancellationToken cancellationToken)
     {
-        if (_onShardMaterialized is null)
+        if (_onShardChanged is null)
             return;
 
         try
         {
-            await _onShardMaterialized(x, y, shard, cancellationToken);
+            await _onShardChanged(x, y, shard, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to update highway shard indexes after materializing shard z{Zoom}/{X}/{Y}.", _canonicalZoom, x, y);
+            _logger.LogWarning(ex, "Failed to sync highway shard indexes after shard change z{Zoom}/{X}/{Y}.", _canonicalZoom, x, y);
         }
     }
 }

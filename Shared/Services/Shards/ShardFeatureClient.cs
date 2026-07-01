@@ -214,12 +214,15 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
             if (_shardCache.Count <= ShardCacheMaxSize)
                 return;
 
-            var toRemove = _shardCache
-                .ToList() // snapshot before sorting to avoid concurrent modification
+            var snapshot = _shardCache.ToArray();
+            var removalCount = snapshot.Length - ShardCacheMaxSize / 2;
+            if (removalCount <= 0)
+                return;
+
+            var toRemove = snapshot
                 .OrderBy(kvp => kvp.Value.LastAccessTicks)
-                .Take(_shardCache.Count - ShardCacheMaxSize / 2)
+                .Take(removalCount)
                 .Select(kvp => kvp.Key)
-                .Where(k => k is not null)
                 .ToList();
 
             foreach (var k in toRemove)
