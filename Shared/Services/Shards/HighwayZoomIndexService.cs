@@ -19,7 +19,7 @@ public class HighwayZoomIndexService(
     private readonly ILogger<HighwayZoomIndexService> _logger = logger;
     private readonly int _canonicalZoom = canonicalZoom;
 
-    public async Task<HighwayTileShardSelection> GetShardKeysAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    public virtual async Task<HighwayTileShardSelection> GetShardKeysAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
         if (z == _canonicalZoom)
             return new HighwayTileShardSelection(true, [(x, y)]);
@@ -38,7 +38,7 @@ public class HighwayZoomIndexService(
         return built;
     }
 
-    public async Task UpdateIndexesForShardAsync(int shardX, int shardY, Shard shard, CancellationToken cancellationToken = default)
+    public virtual async Task UpdateIndexesForShardAsync(int shardX, int shardY, Shard shard, CancellationToken cancellationToken = default)
     {
         if (shard is null)
             throw new ArgumentNullException(nameof(shard));
@@ -54,36 +54,26 @@ public class HighwayZoomIndexService(
             if (index is null)
                 continue;
 
-            var shouldInclude = shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z));
-            var existingIndex = index.Shards.FindIndex(reference => reference.X == shardX && reference.Y == shardY);
-            var changed = false;
-
-            if (shouldInclude && existingIndex < 0)
-            {
-                index.Shards.Add(new HighwayTileShardRef(shardX, shardY));
-                changed = true;
-            }
-            else if (!shouldInclude && existingIndex >= 0)
-            {
-                index.Shards.RemoveAt(existingIndex);
-                changed = true;
-            }
-
-            if (!changed)
-                continue;
-
-            var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
-            await blob.UploadAsync(BinaryData.FromBytes(payload), overwrite: true, cancellationToken);
+            var rebuilt = await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
 
             _logger.LogInformation(
-                "Updated highway shard index z{Z}/{X}/{Y} with shard {ShardX}/{ShardY}. Included={Included}.",
+                "Rebuilt highway shard index z{Z}/{X}/{Y} after materializing shard {ShardX}/{ShardY}. Referenced shards: {ShardCount}. IsComplete: {IsComplete}.",
                 z,
                 x,
                 y,
                 shardX,
                 shardY,
-                shouldInclude);
+                rebuilt.Shards.Count,
+                rebuilt.IsComplete);
         }
+    }
+
+    public virtual async Task<HighwayTileShardSelection> RebuildIndexAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    {
+        if (z >= _canonicalZoom)
+            return await GetShardKeysAsync(z, x, y, cancellationToken);
+
+        return await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
     }
 
     private async Task<HighwayTileShardSelection> BuildAndPersistIndexAsync(int z, int x, int y, CancellationToken cancellationToken)

@@ -209,6 +209,24 @@ public class ShardStackTests
         Assert.Equal("index/9/277/168.json", path);
     }
 
+    [Fact]
+    public async Task BlobTileService_RefreshTileAsync_BelowCanonical_DoesNotRefreshShards()
+    {
+        var featureClient = new RecordingShardFeatureClient();
+        var zoomIndexService = new RecordingHighwayZoomIndexService(selection: new HighwayTileShardSelection(false, [(2200, 1320)]));
+        var service = new BlobTileService(
+            featureClient,
+            zoomIndexService,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<BlobTileService>.Instance,
+            shardZoom: 12);
+
+        await service.RefreshTileAsync(10, 550, 330, CancellationToken.None);
+
+        Assert.Equal(0, featureClient.RefreshCalls);
+        Assert.Single(zoomIndexService.RebuildRequests);
+        Assert.Equal((10, 550, 330), zoomIndexService.RebuildRequests[0]);
+    }
+
     private static Feature CreateHighwayFeature(string highway, string id, string? trailVisibility = null)
     {
         var properties = new Dictionary<string, dynamic>
@@ -249,6 +267,48 @@ public class ShardStackTests
             DeleteCalls++;
             shards.Remove((z, x, y));
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingShardFeatureClient() : ShardFeatureClient(
+        new FakeShardRepository(new Dictionary<(int z, int x, int y), Shard>()),
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<ShardFeatureClient>.Instance,
+        canonicalZoom: 12)
+    {
+        public int RefreshCalls { get; private set; }
+
+        public override Task<IReadOnlyList<Feature>> GetFeaturesForShards(
+            IEnumerable<(int x, int y)> shardKeys,
+            CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<Feature> features = [];
+            return Task.FromResult(features);
+        }
+
+        public override Task RefreshShards(IEnumerable<(int x, int y)> shardKeys, CancellationToken cancellationToken = default)
+        {
+            RefreshCalls++;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingHighwayZoomIndexService(HighwayTileShardSelection selection)
+        : HighwayZoomIndexService(
+            new Azure.Storage.Blobs.BlobContainerClient("UseDevelopmentStorage=true", "ignored"),
+            new FakeShardRepository(new Dictionary<(int z, int x, int y), Shard>()),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<HighwayZoomIndexService>.Instance,
+            canonicalZoom: 12)
+    {
+        private readonly HighwayTileShardSelection _selection = selection;
+        public List<(int z, int x, int y)> RebuildRequests { get; } = [];
+
+        public override Task<HighwayTileShardSelection> GetShardKeysAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+            => Task.FromResult(_selection);
+
+        public override Task<HighwayTileShardSelection> RebuildIndexAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+        {
+            RebuildRequests.Add((z, x, y));
+            return Task.FromResult(_selection);
         }
     }
 }

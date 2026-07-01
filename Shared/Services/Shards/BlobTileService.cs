@@ -72,7 +72,15 @@ public class BlobTileService(
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            await _featureClient.RefreshShards(shardKeys, cancellationToken);
+            if (z < _shardZoom)
+            {
+                await _zoomIndexService.RebuildIndexAsync(z, x, y, cancellationToken);
+            }
+            else
+            {
+                await _featureClient.RefreshShards(shardKeys, cancellationToken);
+            }
+
             return await BuildTileAsync(z, x, y, cancellationToken);
         }
         catch (Exception ex) when (cancellationToken.IsCancellationRequested)

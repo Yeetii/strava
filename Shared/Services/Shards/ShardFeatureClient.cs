@@ -109,7 +109,7 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
     private static readonly Dictionary<uint, string> RenderPropertyKeys = CreateRenderPropertyKeys();
     private static readonly Dictionary<uint, string> RenderPropertyValues = CreateRenderPropertyValues();
 
-    public async Task<IReadOnlyList<Feature>> GetFeaturesForShards(
+    public virtual async Task<IReadOnlyList<Feature>> GetFeaturesForShards(
         IEnumerable<(int x, int y)> shardKeys,
         CancellationToken cancellationToken = default)
     {
@@ -149,7 +149,7 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
         return features;
     }
 
-    public async Task RefreshShards(IEnumerable<(int x, int y)> shardKeys, CancellationToken cancellationToken = default)
+    public virtual async Task RefreshShards(IEnumerable<(int x, int y)> shardKeys, CancellationToken cancellationToken = default)
     {
         var keys = shardKeys.Distinct().ToList();
         var deleteTasks = keys.Select(key => DeleteShardWithContext(key, cancellationToken)).ToList();

@@ -19,7 +19,7 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
     [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
     [OpenApiParameter(name: "y", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
     [OpenApiParameter(name: "forceRefresh", In = ParameterLocation.Query, Type = typeof(bool), Required = false,
-        Description = "When true, wipes the highway shard cache for the tile and re-fetches from Overpass. Requires x-admin-key header.")]
+        Description = "When true, refreshes the highway tile. Canonical z12 shards are re-fetched from Overpass; lower zoom tiles rebuild from existing shard blobs only. Requires x-admin-key header.")]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = false)]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.OK, Description = "Gzipped MVT tile")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest)]
