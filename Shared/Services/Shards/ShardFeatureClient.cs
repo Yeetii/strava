@@ -152,8 +152,8 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
     public virtual async Task RefreshShards(IEnumerable<(int x, int y)> shardKeys, CancellationToken cancellationToken = default)
     {
         var keys = shardKeys.Distinct().ToList();
-        var deleteTasks = keys.Select(key => DeleteShardWithContext(key, cancellationToken)).ToList();
-        await Task.WhenAll(deleteTasks);
+        var rebuildTasks = keys.Select(key => RebuildShardWithContext(key, cancellationToken)).ToList();
+        await Task.WhenAll(rebuildTasks);
     }
 
     public virtual Task<DateTimeOffset?> GetShardLastModifiedAsync(
@@ -248,6 +248,31 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
         catch (Exception ex)
         {
             throw new InvalidOperationException($"Failed to delete shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
+        }
+        finally
+        {
+            shardLock.Release();
+        }
+    }
+
+    private async Task RebuildShardWithContext((int x, int y) key, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{key.x}/{key.y}";
+        var shardLock = _shardLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await shardLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            _shardCache.TryRemove(cacheKey, out _);
+            await _shardRepository.RebuildShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new OperationCanceledException($"Cancelled while rebuilding shard z{_canonicalZoom}/{key.x}/{key.y}.", ex, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to rebuild shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
         }
         finally
         {

@@ -430,6 +430,11 @@ public class ShardStackTests
             return Task.FromResult<DateTimeOffset?>(DateTimeOffset.UnixEpoch);
         }
 
+        public virtual Task<Shard> RebuildShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(shards[(z, x, y)]);
+        }
+
         public virtual Task DeleteShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
         {
             DeleteCalls++;

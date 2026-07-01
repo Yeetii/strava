@@ -65,7 +65,11 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
             {
                 response.Headers.Add("X-Tile-Source-Written-At", tile.SourceWrittenAt.Value.ToString("O"));
             }
-            if (tile.IsComplete)
+            if (forceRefresh)
+            {
+                response.Headers.Add("Cache-Control", "no-store");
+            }
+            else if (tile.IsComplete)
             {
                 response.Headers.Add("Cache-Control", "public,max-age=60");
             }

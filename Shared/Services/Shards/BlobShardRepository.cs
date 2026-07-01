@@ -99,6 +99,19 @@ public class BlobShardRepository(
         }
     }
 
+    public async Task<Shard> RebuildShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    {
+        if (z != _canonicalZoom)
+            throw new ArgumentOutOfRangeException(nameof(z), $"Only z{_canonicalZoom} shards are supported.");
+
+        var blob = _container.GetBlobClient(GetBlobPath(z, x, y));
+        var rebuilt = await BuildShardAsync(x, y, cancellationToken);
+        var bytes = ShardBinarySerializer.Serialize(rebuilt);
+        await blob.UploadAsync(BinaryData.FromBytes(bytes), overwrite: true, cancellationToken);
+        await NotifyShardChangedAsync(x, y, rebuilt, cancellationToken);
+        return rebuilt;
+    }
+
     public async Task DeleteShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
         if (z != _canonicalZoom)
