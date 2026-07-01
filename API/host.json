@@ -15,7 +15,7 @@
     "extensions": {
         "http": {
         "customHeaders": {
-            "Access-Control-Expose-Headers": "session"
+            "Access-Control-Expose-Headers": "session, x-tile-source-written-at"
         },
         "routePrefix": "api"
         }

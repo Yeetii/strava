@@ -156,6 +156,13 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
         await Task.WhenAll(deleteTasks);
     }
 
+    public virtual Task<DateTimeOffset?> GetShardLastModifiedAsync(
+        (int x, int y) key,
+        CancellationToken cancellationToken = default)
+    {
+        return _shardRepository.TryGetShardLastModifiedAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+    }
+
     private async Task<Shard> GetShardWithContext((int x, int y) key, CancellationToken cancellationToken)
     {
         var cacheKey = $"{key.x}/{key.y}";

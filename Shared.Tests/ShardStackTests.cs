@@ -262,6 +262,15 @@ public class ShardStackTests
             return Task.FromResult(shard);
         }
 
+        public Task<DateTimeOffset?> TryGetShardLastModifiedAsync(
+            int z,
+            int x,
+            int y,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<DateTimeOffset?>(DateTimeOffset.UnixEpoch);
+        }
+
         public Task DeleteShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
         {
             DeleteCalls++;

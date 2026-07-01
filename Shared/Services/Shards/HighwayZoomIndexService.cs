@@ -12,7 +12,7 @@ public class HighwayZoomIndexService(
     ILogger<HighwayZoomIndexService> logger,
     int canonicalZoom = 12)
 {
-    private const int IndexVersion = 3;
+    private const int IndexVersion = 4;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly BlobContainerClient _container = container;
     private readonly IShardRepository _shardRepository = shardRepository;
@@ -31,7 +31,7 @@ public class HighwayZoomIndexService(
         }
 
         var cached = await TryReadIndexAsync(z, x, y, cancellationToken);
-        if (cached is not null)
+        if (cached is not null && cached.IsComplete)
             return cached;
 
         var built = await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
@@ -54,17 +54,35 @@ public class HighwayZoomIndexService(
             if (index is null)
                 continue;
 
-            var rebuilt = await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
+            var shouldInclude = shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z));
+            var existingIndex = index.Shards.FindIndex(reference => reference.X == shardX && reference.Y == shardY);
+            var changed = false;
+
+            if (shouldInclude && existingIndex < 0)
+            {
+                index.Shards.Add(new HighwayTileShardRef(shardX, shardY));
+                changed = true;
+            }
+            else if (!shouldInclude && existingIndex >= 0)
+            {
+                index.Shards.RemoveAt(existingIndex);
+                changed = true;
+            }
+
+            if (!changed)
+                continue;
+
+            var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
+            await blob.UploadAsync(BinaryData.FromBytes(payload), overwrite: true, cancellationToken);
 
             _logger.LogInformation(
-                "Rebuilt highway shard index z{Z}/{X}/{Y} after materializing shard {ShardX}/{ShardY}. Referenced shards: {ShardCount}. IsComplete: {IsComplete}.",
+                "Updated highway shard index z{Z}/{X}/{Y} with shard {ShardX}/{ShardY}. Included={Included}.",
                 z,
                 x,
                 y,
                 shardX,
                 shardY,
-                rebuilt.Shards.Count,
-                rebuilt.IsComplete);
+                shouldInclude);
         }
     }
 
@@ -74,6 +92,27 @@ public class HighwayZoomIndexService(
             return await GetShardKeysAsync(z, x, y, cancellationToken);
 
         return await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
+    }
+
+    public virtual async Task<DateTimeOffset?> TryGetIndexLastModifiedAsync(
+        int z,
+        int x,
+        int y,
+        CancellationToken cancellationToken = default)
+    {
+        if (z >= _canonicalZoom)
+            return null;
+
+        var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
+        try
+        {
+            var properties = await blob.GetPropertiesAsync(cancellationToken: cancellationToken);
+            return properties.Value.LastModified;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
     }
 
     private async Task<HighwayTileShardSelection> BuildAndPersistIndexAsync(int z, int x, int y, CancellationToken cancellationToken)

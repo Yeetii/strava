@@ -33,7 +33,8 @@ public class BlobTileService(
             var clipped = ClipToTileBounds(filtered, z, x, y);
             var simplified = SimplifyByZoom(clipped, z);
             var pbf = MvtTileEncoder.EncodeLayer("highways", simplified, z, x, y);
-            return new HighwayTileBuildResult(Gzip(pbf), selection.IsComplete);
+            var sourceWrittenAt = await GetTileSourceWrittenAtAsync(z, x, y, shardKeys, cancellationToken);
+            return new HighwayTileBuildResult(Gzip(pbf), selection.IsComplete, sourceWrittenAt);
         }
         catch (Exception ex) when (cancellationToken.IsCancellationRequested)
         {
@@ -125,6 +126,23 @@ public class BlobTileService(
         return shardKeys.Count > ShardSampleSize
             ? $"{formatted}...(+{shardKeys.Count - ShardSampleSize} more)"
             : formatted;
+    }
+
+    private async Task<DateTimeOffset?> GetTileSourceWrittenAtAsync(
+        int z,
+        int x,
+        int y,
+        IReadOnlyList<(int x, int y)> shardKeys,
+        CancellationToken cancellationToken)
+    {
+        if (z < _shardZoom)
+            return await _zoomIndexService.TryGetIndexLastModifiedAsync(z, x, y, cancellationToken);
+
+        if (shardKeys.Count == 0)
+            return null;
+
+        var lastModified = await _featureClient.GetShardLastModifiedAsync(shardKeys[0], cancellationToken);
+        return lastModified;
     }
 
     internal static IReadOnlyList<(int x, int y)> GetIntersectingShardKeys(int z, int x, int y, int shardZoom)
@@ -343,4 +361,4 @@ public class BlobTileService(
     }
 }
 
-public sealed record HighwayTileBuildResult(byte[] Payload, bool IsComplete);
+public sealed record HighwayTileBuildResult(byte[] Payload, bool IsComplete, DateTimeOffset? SourceWrittenAt);

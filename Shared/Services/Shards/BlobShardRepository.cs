@@ -82,6 +82,23 @@ public class BlobShardRepository(
         }
     }
 
+    public async Task<DateTimeOffset?> TryGetShardLastModifiedAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    {
+        if (z != _canonicalZoom)
+            throw new ArgumentOutOfRangeException(nameof(z), $"Only z{_canonicalZoom} shards are supported.");
+
+        var blob = _container.GetBlobClient(GetBlobPath(z, x, y));
+        try
+        {
+            var properties = await blob.GetPropertiesAsync(cancellationToken: cancellationToken);
+            return properties.Value.LastModified;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
     public async Task DeleteShardAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
         if (z != _canonicalZoom)

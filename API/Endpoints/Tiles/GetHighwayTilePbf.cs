@@ -61,6 +61,10 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
             var response = req.CreateResponse(HttpStatusCode.OK);
             response.Headers.Add("Content-Type", "application/x-protobuf");
             response.Headers.Add("Content-Encoding", "gzip");
+            if (tile.SourceWrittenAt is not null)
+            {
+                response.Headers.Add("X-Tile-Source-Written-At", tile.SourceWrittenAt.Value.ToString("O"));
+            }
             if (tile.IsComplete)
             {
                 response.Headers.Add("Cache-Control", "public,max-age=60");
