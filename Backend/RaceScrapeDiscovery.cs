@@ -425,11 +425,12 @@ public static partial class RaceScrapeDiscovery
 
     /// <summary>
     /// Derives the event key for a ScrapeJob by picking the best available URL. Normalizes organizer ids.
-    /// Priority: WebsiteUrl → UtmbUrl → TraceDeTrailEventUrl → RunagainUrl → BetrailUrl → name-based fallback.
+    /// Priority: MittloppEventUrl → WebsiteUrl → UtmbUrl → TraceDeTrailEventUrl → RunagainUrl → BetrailUrl → name-based fallback.
     /// </summary>
     public static (string EventKey, string CanonicalUrl)? DeriveEventKeyFromJob(ScrapeJob job)
     {
-        Uri? bestUrl = job.WebsiteUrl
+        Uri? bestUrl = job.MittloppEventUrl
+            ?? job.WebsiteUrl
             ?? job.UtmbUrl
             ?? job.TraceDeTrailEventUrl
             ?? job.RunagainUrl

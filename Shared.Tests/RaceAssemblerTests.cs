@@ -130,6 +130,49 @@ public class RaceAssemblerTests
             Assert.IsType<string>(race.Properties[RaceAssembler.PropDistance]));
     }
 
+    [Fact]
+    public async Task AssembleRacesAsync_PrefersMittloppDiscoveryWebsiteImageAndPrice()
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "gfidrottloparforening.se",
+            Url = "https://gfidrottloparforening.se",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["mittlopp"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-30T00:00:00Z",
+                        Name = "Landskrona halvmarathon",
+                        Distance = "21.1 km",
+                        Country = "SE",
+                        Location = "Borstahusen, Landskrona",
+                        RaceType = "running",
+                        ImageUrl = "https://mittlopp.se/Upload/SubCompHeader/sh_6066.jpg?min=57",
+                        StartFee = "295 kr",
+                        Currency = "SEK",
+                        SourceUrls =
+                        [
+                            "https://mittlopp.se/anm/Landskrona-halvmarathon-2026/halvmarathon?lang=sv",
+                            "http://www.gfidrottloparforening.se/"
+                        ],
+                        Latitude = 55.9,
+                        Longitude = 12.8
+                    }
+                ]
+            }
+        };
+
+        var races = await RaceAssembler.AssembleRacesAsync(doc, geocodingService: null, CancellationToken.None);
+
+        var race = Assert.Single(races);
+        Assert.Equal("http://www.gfidrottloparforening.se/", Assert.IsType<string>(race.Properties[RaceAssembler.PropWebsite]));
+        Assert.Equal("https://mittlopp.se/Upload/SubCompHeader/sh_6066.jpg?min=57", Assert.IsType<string>(race.Properties[RaceAssembler.PropImage]));
+        Assert.Equal("295 kr", Assert.IsType<string>(race.Properties[RaceAssembler.PropStartFee]));
+        Assert.Equal("SEK", Assert.IsType<string>(race.Properties[RaceAssembler.PropCurrency]));
+    }
+
     private sealed class FakeLocationGeocodingService((string location, string? country) match, (double lat, double lng) coords)
         : ILocationGeocodingService
     {

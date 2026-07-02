@@ -24,6 +24,7 @@ public static class OrganizerUrlRules
         "runagain.com",
         "klikego.com",
         "anmalmig.nu",
+        "mittlopp.se",
         "bit.ly",
         "tinyurl.com",
         "mp.weixin.qq.com",
@@ -88,6 +89,8 @@ public static class OrganizerUrlRules
                     path = NormalizeKlikegoPath(path);
                 else if (host == "anmalmig.nu")
                     path = NormalizeAnmalmigPath(path);
+                else if (host == "mittlopp.se")
+                    path = NormalizeMittloppPath(path);
 
                 return $"{host}~{path.Replace('/', '~')}";
             }
@@ -182,6 +185,16 @@ public static class OrganizerUrlRules
             return path;
 
         return $"anmalan/{segments[idx + 1]}";
+    }
+
+    private static string NormalizeMittloppPath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var idx = Array.FindIndex(segments, s => s.Equals("anm", StringComparison.OrdinalIgnoreCase));
+        if (idx < 0 || idx + 1 >= segments.Length)
+            return NormalizeFirstPathSegment(path);
+
+        return $"anm/{segments[idx + 1]}";
     }
 
     private static string NormalizeKlikegoPath(string path)

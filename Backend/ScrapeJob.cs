@@ -42,6 +42,7 @@ public record ScrapeJob(
     bool? ItraNationalLeague = null,
     Uri? RunagainUrl = null,
     Uri? WebsiteUrl = null,         // generic race website (e.g. from Loppkartan)
+    Uri? MittloppEventUrl = null,
     Uri? LopplistanEventUrl = null,
     Uri? TrailrunningSwedenEventUrl = null,
     Uri? BetrailUrl = null)
@@ -102,6 +103,7 @@ public record ScrapeJob(
         Add(ItraEventPageUrl);
         Add(RunagainUrl);
         Add(WebsiteUrl);
+        Add(MittloppEventUrl);
         Add(LopplistanEventUrl);
         Add(TrailrunningSwedenEventUrl);
         Add(BetrailUrl);

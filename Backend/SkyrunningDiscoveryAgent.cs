@@ -42,7 +42,7 @@ public static partial class SkyrunningDiscoveryAgent
             if (string.IsNullOrWhiteSpace(name))
                 continue;
 
-            var date = RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(StripHtml(dateHtml));
+            var date = ParseSkyrunningDate(StripHtml(dateHtml));
             var country = NormalizeWhitespace(StripHtml(countryHtml));
             var raceType = NormalizeWhitespace(StripHtml(disciplineHtml));
             var logoUrl = ExtractAttributeValue(logoHtml, "src");
@@ -97,7 +97,7 @@ public static partial class SkyrunningDiscoveryAgent
             if (string.IsNullOrWhiteSpace(value))
                 continue;
 
-            if (RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(value) is string normalizedDate)
+            if (ParseSkyrunningDate(value) is string normalizedDate)
             {
                 parsedDate = normalizedDate;
                 continue;
@@ -174,6 +174,9 @@ public static partial class SkyrunningDiscoveryAgent
             if (uri.Host.EndsWith("skyrunning.com", StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            if (uri.Host.EndsWith("docs.google.com", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             return uri;
         }
 
@@ -186,6 +189,18 @@ public static partial class SkyrunningDiscoveryAgent
             || string.Equals(value, "SkySnow", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "Vertical", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "SkyUltra", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ParseSkyrunningDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var cleaned = NormalizeWhitespace(value);
+        if (DateOnly.TryParseExact(cleaned, ["dd/MM/yy", "dd/MM/yyyy"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var dateOnly))
+            return dateOnly.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        return RaceScrapeDiscovery.NormalizeDateToYyyyMmDd(cleaned);
     }
 
     private static double? ParseElevationGain(string value)

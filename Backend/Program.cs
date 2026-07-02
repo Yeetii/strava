@@ -193,6 +193,7 @@ var host = new HostBuilder()
         services.AddSingleton<DiscoverTrailrunningSwedenRaces>();
         services.AddSingleton<DiscoverSkyrunningRaces>();
         services.AddSingleton<DiscoverLopplistanRaces>();
+        services.AddSingleton<DiscoverMittloppRaces>();
 
         var cosmosResourceId = configuration.GetValue<string>("CosmosAccountResourceId");
         if (!string.IsNullOrEmpty(cosmosResourceId))

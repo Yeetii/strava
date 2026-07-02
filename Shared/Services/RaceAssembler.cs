@@ -16,7 +16,7 @@ public static partial class RaceAssembler
     public const int DefaultZoom = 8;
 
     // Discovery source priority (highest → lowest).
-    public static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "lopplistan", "loppkartan"];
+    public static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "mittlopp", "lopplistan", "loppkartan"];
 
     // Scraper key priority (highest → lowest).
     public static readonly string[] ScraperPriority = ["utmb", "itra", "mistral", "bfs"];
@@ -666,6 +666,7 @@ public static partial class RaceAssembler
         string websiteUrl)
     {
         var props = new Dictionary<string, dynamic>();
+        var effectiveWebsiteUrl = GetPreferredWebsiteUrl(discovery, route, websiteUrl);
 
         // Distance: route distance is more specific (per-race), fall back to discovery.
         var distance = route?.Distance ?? discovery.Distance;
@@ -724,8 +725,8 @@ public static partial class RaceAssembler
             props[PropLogo] = logoUrl;
 
         // Website (canonical organizer URL).
-        if (!string.IsNullOrWhiteSpace(websiteUrl))
-            props[PropWebsite] = websiteUrl;
+        if (!string.IsNullOrWhiteSpace(effectiveWebsiteUrl))
+            props[PropWebsite] = effectiveWebsiteUrl;
 
         // UTMB-specific.
         if (discovery.Playgrounds is { Count: > 0 })
@@ -741,7 +742,7 @@ public static partial class RaceAssembler
             props[PropItraNationalLeague] = discovery.ItraNationalLeague.Value;
 
         // Source URLs.
-        var sources = BuildSourceUrls(discovery.SourceUrls, route?.SourceUrl, websiteUrl);
+        var sources = BuildSourceUrls(discovery.SourceUrls, route?.SourceUrl, effectiveWebsiteUrl);
         if (sources.Count > 0)
             props[PropSources] = sources;
 
@@ -829,6 +830,21 @@ public static partial class RaceAssembler
         TryAdd(websiteUrl);
 
         return result;
+    }
+
+    private static string GetPreferredWebsiteUrl(SourceDiscovery discovery, ScrapedRouteOutput? route, string fallbackWebsiteUrl)
+    {
+        if (discovery.SourceUrls is { Count: > 0 })
+        {
+            var preferred = discovery.SourceUrls.FirstOrDefault(url =>
+                !string.IsNullOrWhiteSpace(url)
+                && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                && !uri.Host.Contains("mittlopp.se", StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(preferred))
+                return preferred;
+        }
+
+        return fallbackWebsiteUrl;
     }
 
     // ── StoredFeature helpers ─────────────────────────────────────────────

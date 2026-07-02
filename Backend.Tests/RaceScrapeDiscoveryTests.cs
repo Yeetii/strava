@@ -317,6 +317,280 @@ public class RaceScrapeDiscoveryTests
     }
 
     [Fact]
+    public void ParseMittloppCalendarPage_ExtractsInternalAndExternalEvents()
+    {
+        const string html = """
+            <div class="calendar-item type-4">
+                <a href="/anm/satertriathlon2026"><div class="card-front">
+                    <i class="far fa-badge race-type-badge" title="Triathlon"></i>
+                    <img class="race-banner" src="https://mittlopp.se/Upload/CompHeader/ch_1562.jpg" alt="Banner" />
+                    <div class="info-box">
+                        <h3>Säter Triathlon</h3>
+                        <div class="race-date-container"><i></i>2026-07-11</div>
+                        <div class="race-place-container"><i></i>Säter, Dalarna</div>
+                        <div class="race-distance-container"><i></i>Sprint, Olympisk, Supersprint, Motion</div>
+                        <div class="race-tri-icons-container">
+                            <img class="tri-icon-image" alt="Motionsklass" />
+                            <img class="tri-icon-image" alt="Tävlingsklass" />
+                        </div>
+                    </div>
+                </div></a>
+            </div>
+            <div class="calendar-item type-0">
+                <a href="/anm/fredsloppet-varberg-2026/promenad"><div class="card-front">
+                    <i class="far fa-badge race-type-badge" title="Övrigt"></i>
+                    <div class="info-box">
+                        <h3>Fredsloppet Varberg</h3>
+                        <div class="race-date-container">2026-08-29</div>
+                        <div class="race-place-container">Varberg</div>
+                        <div class="race-distance-container">Promenad</div>
+                    </div>
+                </div></a>
+            </div>
+            <div class="calendar-item type-1">
+                <a href="https://www.htm.nu/aktivitet/20433629/triathlon-i-parken-try-triathlon"><div class="card-front">
+                    <i class="far fa-badge race-type-badge" title="Triathlon"></i>
+                    <div class="info-box">
+                        <h3>Triathlon i Parken/Try Triathlon 1/7</h3>
+                        <div class="race-date-container">2026-07-01</div>
+                        <div class="race-place-container">Halmstad</div>
+                        <div class="race-distance-container">Motion</div>
+                        <div class="race-tri-icons-container">
+                            <img class="tri-icon-image" alt="TryTri" />
+                        </div>
+                    </div>
+                </div></a>
+            </div>
+            """;
+
+        var jobs = MittloppDiscoveryAgent.ParseCalendarPage(html, new Uri("https://mittlopp.se/kalender"));
+
+        Assert.Equal(3, jobs.Count);
+
+        var internalJob = Assert.Single(jobs, j => j.Name == "Säter Triathlon");
+        Assert.Equal("https://mittlopp.se/anm/satertriathlon2026", internalJob.MittloppEventUrl!.AbsoluteUri);
+        Assert.Equal("https://mittlopp.se/anm/satertriathlon2026", internalJob.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("triathlon", internalJob.RaceType);
+        Assert.Equal("2026-07-11", internalJob.Date);
+        Assert.Equal("SE", internalJob.Country);
+        Assert.Equal("Säter, Dalarna", internalJob.Location);
+        Assert.Equal("Sprint, Olympisk, Supersprint, Motion", internalJob.Distance);
+        Assert.Equal("anm/satertriathlon2026", internalJob.ExternalIds!["mittlopp"]);
+
+        var unsupportedJob = Assert.Single(jobs, j => j.Name == "Fredsloppet Varberg");
+        Assert.Null(unsupportedJob.RaceType);
+
+        var externalJob = Assert.Single(jobs, j => j.Name.StartsWith("Triathlon i Parken", StringComparison.Ordinal));
+        Assert.Null(externalJob.MittloppEventUrl);
+        Assert.Equal("https://www.htm.nu/aktivitet/20433629/triathlon-i-parken-try-triathlon", externalJob.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("triathlon", externalJob.RaceType);
+    }
+
+    [Fact]
+    public void ExtractMittloppNextPageUrl_ReturnsNextCalendarPage()
+    {
+        const string html = """
+            <a id="MainSection_calendar_NextPage" class="btn btn-page btn-page-next" href="/kalender/?page=2"><span>Nästa sida</span></a>
+            """;
+
+        var nextPage = MittloppDiscoveryAgent.ExtractNextPageUrl(html, new Uri("https://mittlopp.se/kalender"));
+
+        Assert.Equal("https://mittlopp.se/kalender/?page=2", nextPage!.AbsoluteUri);
+    }
+
+    [Fact]
+    public void EnrichMittloppJobFromEventHubPage_ExtractsHubMetadataAndVariantUrls()
+    {
+        const string html = """
+            <div class="row">
+                <div class="col-sm-6">
+                    <div class="panel-body">
+                        <a id="MainSection_subCompRepeater_link_0" href="/anm/satertriathlon2026/PEYPFWREAWHIYOGCRA?lang=sv"><h3>Olympisk / Tävling (STC)</h3></a>
+                        <a id="MainSection_subCompRepeater_link_1" href="/anm/satertriathlon2026/Tri4Fun?lang=sv"><h3>Tri4Fun upp till 15 år</h3></a>
+                    </div>
+                </div>
+                <div class="col-sm-6">
+                    <h1>Säter Triathlon 2026</h1>
+                    <div class="row labelrow"><div class="col-xs-4"><label>Ort/plats:</label></div><div class="col-xs-8">Säter, Dalarna</div></div>
+                    <div class="row labelrow"><div class="col-xs-4"><label>Hemsida:</label></div><div class="col-xs-8"><a href="http://www.sater-triathlon.se">www.sater-triathlon.se</a></div></div>
+                    <div class="row labelrow"><div class="col-xs-4"><label>Arrangör:</label></div><div class="col-xs-8"><a href="/anmalan/arrangor.aspx?id=1">Säter Triathlon</a></div></div>
+                    <p class="form-control-static">Säter Triathlon 2026 har följande distanser i tävlingsklass.</p>
+                </div>
+            </div>
+            """;
+
+        var seed = new ScrapeJob(
+            WebsiteUrl: new Uri("https://mittlopp.se/anm/satertriathlon2026"),
+            MittloppEventUrl: new Uri("https://mittlopp.se/anm/satertriathlon2026"),
+            Name: "Säter Triathlon",
+            RaceType: "triathlon");
+
+        var enriched = MittloppDiscoveryAgent.EnrichFromEventHubPage(seed, html, seed.MittloppEventUrl!);
+        var variants = MittloppDiscoveryAgent.ExtractRegistrationVariants(html, seed.MittloppEventUrl!);
+
+        Assert.Equal("Säter Triathlon 2026", enriched.Name);
+        Assert.Equal("Säter, Dalarna", enriched.Location);
+        Assert.Equal("Säter Triathlon", enriched.Organizer);
+        Assert.Equal("http://www.sater-triathlon.se/", enriched.WebsiteUrl!.AbsoluteUri);
+        Assert.Contains("tävlingsklass", enriched.Description!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, variants.Count);
+        Assert.Equal("https://mittlopp.se/anm/satertriathlon2026/PEYPFWREAWHIYOGCRA?lang=sv", variants.First().Url.AbsoluteUri);
+    }
+
+    [Fact]
+    public void EnrichMittloppJobFromRegistrationVariantPage_ExtractsStructuredRaceMetadata()
+    {
+        const string html = """
+            <img id="MainSection_headerImage" src="/Upload/CompHeader/ch_1562.jpg?min=38" alt="" />
+            <h1>Säter Triathlon – Olympisk / Tävling (STC)</h1>
+            <div id="MainSection_distanceRow" class="row labelrow"><div class="col-xs-4"><span class="info-label">Triatlondistans:</span></div><div class="col-xs-8">Olympisk</div></div>
+            <div id="MainSection_SwimRow" class="row labelrow"><div class="col-xs-4"><span class="info-label">Simning:</span></div><div class="col-xs-8">1500 m</div></div>
+            <div id="MainSection_BikeRow" class="row labelrow"><div class="col-xs-4"><span class="info-label">Cykel:</span></div><div class="col-xs-8">40 km</div></div>
+            <div id="MainSection_RunRow" class="row labelrow"><div class="col-xs-4"><span class="info-label">Löpning:</span></div><div class="col-xs-8">10 km</div></div>
+            <div id="MainSection_Starttimerow" class="row labelrow"><div class="col-xs-4"><span class="info-label">Starttid:</span></div><div class="col-xs-8">Lördag 2026-07-11 kl. 13:00</div></div>
+            <div id="MainSection_LocationRow" class="row labelrow"><div class="col-xs-4"><span class="info-label">Plats:</span></div><div class="col-xs-8">Säter, Dalarna</div></div>
+            <div id="MainSection_webpagerow" class="row labelrow"><div class="col-xs-4"><span class="info-label">Hemsida:</span></div><div class="col-xs-8"><a href="http://www.sater-triathlon.se">www.sater-triathlon.se</a></div></div>
+            <div id="MainSection_OrganizerRow" class="row labelrow"><div class="col-xs-4"><span class="info-label">Arrangör:</span></div><div class="col-xs-8"><a href="/anmalan/arrangor.aspx?id=1">Säter Triathlon</a></div></div>
+            <div id="MainSection_datePriceDiv" class="price-ladder">
+                <div class="row price-past"><div class="col-xs-4 price-date">Från&nbsp;öppningsdatum</div><div class="col-xs-8 price-amount">500 kr</div></div>
+                <div class="row price-current"><div class="col-xs-4 price-date">Från&nbsp;2026-04-01</div><div class="col-xs-8 price-amount">800 kr</div></div>
+            </div>
+            <div id="MainSection_lastsignupRow" class="row labelrow"><div class="col-xs-4"><span class="info-label text-nowrap">Sista anmälan:</span></div><div class="col-xs-8">2026-06-27 23:59</div></div>
+            <p class="form-control-static">Ingår i Svenska Triathloncupen!<br />Lägsta ålder 18 år.</p>
+            """;
+
+        var seed = new ScrapeJob(
+            WebsiteUrl: new Uri("https://mittlopp.se/anm/satertriathlon2026"),
+            MittloppEventUrl: new Uri("https://mittlopp.se/anm/satertriathlon2026"),
+            Name: "Säter Triathlon",
+            RaceType: "triathlon");
+
+        var enriched = MittloppDiscoveryAgent.EnrichFromRegistrationVariantPage(seed, html, new Uri("https://mittlopp.se/anm/satertriathlon2026/PEYPFWREAWHIYOGCRA?lang=sv"));
+
+        Assert.Equal("2026-07-11", enriched.Date);
+        Assert.Equal("1500 m swim, 40 km bike, 10 km run", enriched.Distance);
+        Assert.Equal("triathlon", enriched.RaceType);
+        Assert.Equal("Olympisk", enriched.TypeLocal);
+        Assert.Equal("Säter, Dalarna", enriched.Location);
+        Assert.Equal("Säter Triathlon", enriched.Organizer);
+        Assert.Equal("500 kr", enriched.StartFee);
+        Assert.Equal("SEK", enriched.Currency);
+        Assert.Contains("Registration deadline: 2026-06-27 23:59", enriched.Description!);
+        Assert.Equal("http://www.sater-triathlon.se/", enriched.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("https://mittlopp.se/Upload/CompHeader/ch_1562.jpg?min=38", enriched.ImageUrl);
+        Assert.Equal("https://mittlopp.se/anm/satertriathlon2026/PEYPFWREAWHIYOGCRA?lang=sv", enriched.MittloppEventUrl!.AbsoluteUri);
+        Assert.Equal("anm/satertriathlon2026/peypfwreawhiyogcra", enriched.ExternalIds!["mittlopp"]);
+    }
+
+    [Fact]
+    public async Task MittloppInternalEvent_ExpandsIntoOneRacePerVariant()
+    {
+        const string hubHtml = """
+            <div class="row">
+                <div class="panel-body">
+                    <a id="MainSection_subCompRepeater_link_0" href="/anm/fredsloppet-vxo-2026/mini?lang=sv"><h3>Mini-Fredsloppet 200 m</h3></a>
+                    <a id="MainSection_subCompRepeater_link_1" href="/anm/fredsloppet-vxo-2026/5km?lang=sv"><h3>Löpning 5 km</h3></a>
+                    <a id="MainSection_subCompRepeater_link_2" href="/anm/fredsloppet-vxo-2026/promenad?lang=sv"><h3>Promenad 1,5 km</h3></a>
+                </div>
+                <div class="col-sm-6">
+                    <h1>Fredsloppet Växjö 2026</h1>
+                    <div class="row labelrow"><div class="col-xs-4"><label>Ort/plats:</label></div><div class="col-xs-8">Växjö</div></div>
+                    <div class="row labelrow"><div class="col-xs-4"><label>Hemsida:</label></div><div class="col-xs-8"><a href="http://www.fredsloppet.se">www.fredsloppet.se</a></div></div>
+                    <div class="row labelrow"><div class="col-xs-4"><label>Arrangör:</label></div><div class="col-xs-8"><a href="/anmalan/arrangor.aspx?id=1">Proletären FF</a></div></div>
+                    <p class="form-control-static">Fredsloppet genomförs den 22/8.</p>
+                </div>
+            </div>
+            """;
+        const string miniHtml = """
+            <h1>Fredsloppet Växjö – Mini-Fredsloppet 200 m</h1>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Sport:</span></div><div class="col-xs-8">Löpning</div></div>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Distans:</span></div><div class="col-xs-8">0,2 km</div></div>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Datum:</span></div><div class="col-xs-8">Lördag 2026-08-22</div></div>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Plats:</span></div><div class="col-xs-8">Växjö</div></div>
+            <p class="form-control-static">Barnlopp.</p>
+            """;
+        const string run5Html = """
+            <h1>Fredsloppet Växjö – Löpning 5 km</h1>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Sport:</span></div><div class="col-xs-8">Löpning</div></div>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Distans:</span></div><div class="col-xs-8">5 km</div></div>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Datum:</span></div><div class="col-xs-8">Lördag 2026-08-22</div></div>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Plats:</span></div><div class="col-xs-8">Växjö</div></div>
+            <p class="form-control-static">Huvudlopp.</p>
+            """;
+        const string walkHtml = """
+            <h1>Fredsloppet Växjö – Promenad 1,5 km</h1>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Sport:</span></div><div class="col-xs-8">Promenad</div></div>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Distans:</span></div><div class="col-xs-8">1,5 km</div></div>
+            <div class="row labelrow"><div class="col-xs-4"><span class="info-label">Datum:</span></div><div class="col-xs-8">Lördag 2026-08-22</div></div>
+            <p class="form-control-static">Gå i egen takt.</p>
+            """;
+
+        var seed = new ScrapeJob(
+            WebsiteUrl: new Uri("https://mittlopp.se/anm/fredsloppet-vxo-2026"),
+            MittloppEventUrl: new Uri("https://mittlopp.se/anm/fredsloppet-vxo-2026"),
+            Name: "Fredsloppet Växjö",
+            Distance: "0,2 km, 0,6 km, 1,5 km, 5 km",
+            RaceType: "running");
+
+        using var client = new HttpClient(new MultiResponseHttpMessageHandler(new Dictionary<Uri, string>
+        {
+            [seed.MittloppEventUrl!] = hubHtml,
+            [new Uri("https://mittlopp.se/anm/fredsloppet-vxo-2026/mini?lang=sv")] = miniHtml,
+            [new Uri("https://mittlopp.se/anm/fredsloppet-vxo-2026/5km?lang=sv")] = run5Html,
+            [new Uri("https://mittlopp.se/anm/fredsloppet-vxo-2026/promenad?lang=sv")] = walkHtml,
+        }));
+
+        var hubEnriched = MittloppDiscoveryAgent.EnrichFromEventHubPage(seed, hubHtml, seed.MittloppEventUrl!);
+        var variants = MittloppDiscoveryAgent.ExtractRegistrationVariants(hubHtml, seed.MittloppEventUrl!);
+        var expanded = new List<ScrapeJob>();
+        foreach (var variant in variants)
+        {
+            var variantHtml = await client.GetStringAsync(variant.Url);
+            var enriched = MittloppDiscoveryAgent.EnrichFromRegistrationVariantPage(hubEnriched, variantHtml, variant.Url);
+            if (MittloppDiscoveryAgent.ShouldKeepJob(enriched))
+                expanded.Add(enriched);
+        }
+
+        Assert.Equal(2, expanded.Count);
+        Assert.Contains(expanded, job => job.Name == "Fredsloppet Växjö – Mini-Fredsloppet 200 m" && job.Distance == "0.2 km");
+        Assert.Contains(expanded, job => job.Name == "Fredsloppet Växjö – Löpning 5 km" && job.Distance == "5 km");
+        Assert.DoesNotContain(expanded, job => job.Name.Contains("Promenad", StringComparison.Ordinal));
+        Assert.Contains(expanded, job => job.MittloppEventUrl!.AbsoluteUri == "https://mittlopp.se/anm/fredsloppet-vxo-2026/mini?lang=sv");
+        Assert.Contains(expanded, job => job.MittloppEventUrl!.AbsoluteUri == "https://mittlopp.se/anm/fredsloppet-vxo-2026/5km?lang=sv");
+    }
+
+    [Theory]
+    [InlineData("Svenska mästerskapen i hinderbana", "Hinderbana", "obstacle course")]
+    [InlineData("Dry Rock Race", "Swimrun", "swimrun")]
+    [InlineData("Glassbonden Gravel Challenge", "Cykel", "cycling")]
+    [InlineData("Säter Triathlon", "Olympisk", "triathlon")]
+    [InlineData("Fredsloppet Varberg", "Promenad", null)]
+    [InlineData("DM/VDM Västsvenska distriktet", "Duathlon", null)]
+    public void MittloppInferRaceType_MapsSupportedAndDropsUnsupported(string name, string label, string? expected)
+    {
+        Assert.Equal(expected, MittloppDiscoveryAgent.InferRaceType(name, label));
+    }
+
+    [Theory]
+    [InlineData("2026-07-01–0001-01-01", "2026-07-01")]
+    [InlineData("2026-07-04–05", "2026-07-04")]
+    [InlineData("2026-08-15–10-15", "2026-08-15")]
+    [InlineData("Lördag 2026-07-11 kl. 13:00", "2026-07-11")]
+    public void NormalizeMittloppDate_ParsesCalendarAndVariantFormats(string input, string expected)
+    {
+        Assert.Equal(expected, MittloppDiscoveryAgent.NormalizeMittloppDate(input));
+    }
+
+    [Fact]
+    public void MittloppShouldKeepJob_KeepsOnlySupportedCanonicalTypes()
+    {
+        Assert.True(MittloppDiscoveryAgent.ShouldKeepJob(new ScrapeJob(RaceType: "swimrun")));
+        Assert.True(MittloppDiscoveryAgent.ShouldKeepJob(new ScrapeJob(RaceType: "obstacle course")));
+        Assert.False(MittloppDiscoveryAgent.ShouldKeepJob(new ScrapeJob(RaceType: null)));
+        Assert.False(MittloppDiscoveryAgent.ShouldKeepJob(new ScrapeJob(RaceType: "duathlon")));
+    }
+
+    [Fact]
     public void ExtractTrailrunningSwedenEventWebsiteUrl_FindsHemsidaLink()
     {
         const string html = """
@@ -553,6 +827,22 @@ public class RaceScrapeDiscoveryTests
     }
 
     [Fact]
+    public void MittloppEventPage_IsIncludedInSourceUrls()
+    {
+        var job = new ScrapeJob(
+            WebsiteUrl: new Uri("https://www.sater-triathlon.se/"),
+            MittloppEventUrl: new Uri("https://mittlopp.se/anm/satertriathlon2026"));
+
+        var discovery = job.ToSourceDiscovery();
+
+        Assert.Equal(new[]
+        {
+            "https://www.sater-triathlon.se/",
+            "https://mittlopp.se/anm/satertriathlon2026"
+        }, discovery.SourceUrls);
+    }
+
+    [Fact]
     public void ScrapeJob_ToSourceDiscovery_DeduplicatesAndPreservesSourceUrlOrder()
     {
         var job = new ScrapeJob(
@@ -606,6 +896,20 @@ public class RaceScrapeDiscoveryTests
         Assert.NotNull(result);
         Assert.Equal("example.com~event", result?.EventKey);
         Assert.Equal("https://example.com/event", result?.CanonicalUrl);
+    }
+
+    [Fact]
+    public void DeriveEventKeyFromJob_PrefersMittloppEventUrlOverExternalWebsite()
+    {
+        var job = new ScrapeJob(
+            WebsiteUrl: new Uri("https://www.sater-triathlon.se/"),
+            MittloppEventUrl: new Uri("https://mittlopp.se/anm/satertriathlon2026"));
+
+        var result = RaceScrapeDiscovery.DeriveEventKeyFromJob(job);
+
+        Assert.NotNull(result);
+        Assert.Equal("mittlopp.se~anm~satertriathlon2026", result?.EventKey);
+        Assert.Equal("https://mittlopp.se/anm/satertriathlon2026", result?.CanonicalUrl);
     }
 
     [Fact]
