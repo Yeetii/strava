@@ -515,6 +515,75 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         }
     }
 
+    public async IAsyncEnumerable<(string OrganizerKey, StoredFeature Race)> StreamAssembledRacesAsync(
+        string? organizerKey = null,
+        int maxConcurrency = 32,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var prefix = string.IsNullOrWhiteSpace(organizerKey)
+            ? default(string)
+            : AssembledRacePrefix(organizerKey.Trim());
+
+        var blobNames = new List<string>();
+        await foreach (var item in container.GetBlobsAsync(
+            traits: default,
+            states: default,
+            prefix: prefix,
+            cancellationToken: cancellationToken))
+        {
+            if (item.Name.Contains(AssembledRaceFolder, StringComparison.Ordinal)
+                && item.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                blobNames.Add(item.Name);
+            }
+        }
+
+        for (int i = 0; i < blobNames.Count; i += maxConcurrency)
+        {
+            var batch = blobNames.Skip(i).Take(maxConcurrency).ToList();
+            var tasks = batch.Select(async name =>
+            {
+                var blob = container.GetBlobClient(name);
+                try
+                {
+                    var result = await blob.DownloadContentAsync(cancellationToken);
+                    var race = result.Value.Content.ToObjectFromJson<StoredFeature>(JsonOptions);
+                    if (race is null)
+                        return ((string OrganizerKey, StoredFeature Race)?)null;
+
+                    return ((string OrganizerKey, StoredFeature Race)?)(OrganizerKeyFromAssembledRaceBlobName(name), race);
+                }
+                catch (RequestFailedException ex) when (ex.Status == 404)
+                {
+                    _logger.LogDebug("Skipping assembled race blob {BlobName} because it was deleted after listing.", name);
+                    return ((string OrganizerKey, StoredFeature Race)?)null;
+                }
+            }).ToList();
+
+            var races = await Task.WhenAll(tasks);
+            foreach (var race in races)
+            {
+                if (race is not null)
+                    yield return race.Value;
+            }
+        }
+    }
+
+    public async Task<StoredFeature?> GetAssembledRaceAsync(string organizerKey, string featureId, CancellationToken cancellationToken = default)
+    {
+        organizerKey = await ResolveOrganizerKeyAsync(organizerKey, cancellationToken);
+        var blob = container.GetBlobClient(AssembledRaceBlobKey(organizerKey, featureId));
+        try
+        {
+            var result = await blob.DownloadContentAsync(cancellationToken);
+            return result.Value.Content.ToObjectFromJson<StoredFeature>(JsonOptions);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────
 
     private async Task ModifyAsync(
@@ -585,6 +654,12 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
 
     private static string AssembledRaceBlobKey(string organizerKey, string logicalId)
         => $"{organizerKey}{AssembledRaceFolder}{logicalId}.json";
+
+    private static string OrganizerKeyFromAssembledRaceBlobName(string blobName)
+    {
+        var markerIndex = blobName.IndexOf(AssembledRaceFolder, StringComparison.Ordinal);
+        return markerIndex >= 0 ? blobName[..markerIndex] : blobName;
+    }
 
     private static string OrganizerKeyFromBlobName(string blobName)
         => blobName[..^BlobSuffix.Length];

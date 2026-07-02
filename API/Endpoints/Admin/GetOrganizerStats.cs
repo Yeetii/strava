@@ -27,6 +27,7 @@ public class GetOrganizerStats(
         "manual-mistral",
         "trailrunningsweden",
         "skyrunning",
+        "mittlopp",
     ];
 
     private static readonly string[] ScraperSources = ["utmb", "itra", "bfs"];
