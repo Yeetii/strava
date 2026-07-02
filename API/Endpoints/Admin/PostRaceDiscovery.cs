@@ -67,7 +67,7 @@ public class PostRaceDiscovery(
             var message = new ServiceBusMessage(BinaryData.FromString(JsonSerializer.Serialize(payload)))
             {
                 ContentType = "application/json",
-                MessageId = $"admin-discovery:{agent}:{page}:{Guid.NewGuid():N}",
+                MessageId = $"discovery:{agent}:{page}",
                 Subject = $"discovery:{agent}:{page}"
             };
             await sender.SendMessageAsync(message, cancellationToken);

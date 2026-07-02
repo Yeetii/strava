@@ -104,21 +104,22 @@ public static partial class RaceAssembler
     /// to <paramref name="fallback"/>.
     /// Within the same specificity tier, the first match by priority order wins.
     /// </summary>
-    public static SourceDiscovery FindBestDiscoveryForRoute(
+    public static (string Source, SourceDiscovery Entry) FindBestDiscoveryForRoute(
         double? routeKm,
         IReadOnlyList<(string Source, SourceDiscovery Entry)> orderedDiscoveries,
         SourceDiscovery fallback)
     {
         if (routeKm is null || orderedDiscoveries.Count == 0)
-            return fallback;
+            return ("merged", fallback);
 
-        SourceDiscovery? bestSingle = null;
+        (string Source, SourceDiscovery Entry)? bestSingle = null;
         double bestSingleDelta = double.MaxValue;
-        SourceDiscovery? bestMulti = null;
+        (string Source, SourceDiscovery Entry)? bestMulti = null;
         double bestMultiDelta = double.MaxValue;
 
-        foreach (var (_, entry) in orderedDiscoveries)
+        foreach (var candidate in orderedDiscoveries)
         {
+            var entry = candidate.Entry;
             var dists = ParseDistanceList(entry.Distance);
             if (dists.Count == 0) continue;
 
@@ -136,7 +137,7 @@ public static partial class RaceAssembler
             {
                 if (closestDelta < bestSingleDelta)
                 {
-                    bestSingle = entry;
+                    bestSingle = candidate;
                     bestSingleDelta = closestDelta;
                 }
             }
@@ -144,13 +145,13 @@ public static partial class RaceAssembler
             {
                 if (closestDelta < bestMultiDelta)
                 {
-                    bestMulti = entry;
+                    bestMulti = candidate;
                     bestMultiDelta = closestDelta;
                 }
             }
         }
 
-        return bestSingle ?? bestMulti ?? fallback;
+        return bestSingle ?? bestMulti ?? ("merged", fallback);
     }
 
     /// <summary>

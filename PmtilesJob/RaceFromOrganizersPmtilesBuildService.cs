@@ -23,17 +23,20 @@ public class RaceFromOrganizersPmtilesBuildService
     private readonly BlobOrganizerStore _organizerStore;
     private readonly BlobServiceClient _blobServiceClient;
     private readonly PmtilesUtilityService _pmtilesUtilityService;
+    private readonly ILocationGeocodingService _geocodingService;
     private readonly ILogger<RaceFromOrganizersPmtilesBuildService> _logger;
 
     public RaceFromOrganizersPmtilesBuildService(
         BlobOrganizerStore organizerStore,
         BlobServiceClient blobServiceClient,
         PmtilesUtilityService pmtilesUtilityService,
+        ILocationGeocodingService geocodingService,
         ILogger<RaceFromOrganizersPmtilesBuildService> logger)
     {
         _organizerStore = organizerStore;
         _blobServiceClient = blobServiceClient;
         _pmtilesUtilityService = pmtilesUtilityService;
+        _geocodingService = geocodingService;
         _logger = logger;
     }
 
@@ -97,7 +100,7 @@ public class RaceFromOrganizersPmtilesBuildService
             organizerCount++;
 
             var assemblyStopwatch = Stopwatch.StartNew();
-            var assembled = await RaceAssembler.AssembleRacesAsync(doc, geocodingService: null, cancellationToken);
+            var assembled = await RaceAssembler.AssembleRacesAsync(doc, _geocodingService, cancellationToken, _logger);
             assemblyStopwatch.Stop();
             totalAssembly += assemblyStopwatch.Elapsed;
             intervalAssembly += assemblyStopwatch.Elapsed;

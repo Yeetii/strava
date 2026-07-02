@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using BAMCIS.GeoJSON;
+using Microsoft.Extensions.Logging;
 using Shared.Geo;
 using Shared.Models;
 
@@ -14,6 +15,7 @@ namespace Shared.Services;
 public static partial class RaceAssembler
 {
     public const int DefaultZoom = 8;
+    private static readonly bool UseAnsiColors = !Console.IsOutputRedirected && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NO_COLOR"));
 
     // Discovery source priority (highest → lowest).
     public static readonly string[] DiscoveryPriority = ["utmb", "duv", "itra", "tracedetrail", "runagain", "mittlopp", "lopplistan", "loppkartan"];
@@ -67,40 +69,46 @@ public static partial class RaceAssembler
     public static async Task<List<StoredFeature>> AssembleRacesAsync(
         RaceOrganizerDocument doc,
         ILocationGeocodingService? geocodingService,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ILogger? logger = null)
     {
         var organizerKey = doc.Id;
         var assemblyDiscovery = PrepareDiscoveryForAssembly(doc.Discovery);
 
-        // 1. Collect merged discovery metadata (priority-ordered per source) as fallback.
         var mergedDiscovery = MergeDiscovery(assemblyDiscovery);
-
-        // 1b. Flatten individual discovery entries in priority order for per-route matching.
         var flatDiscoveries = FlattenDiscoveries(assemblyDiscovery);
         flatDiscoveries = DeduplicateDiscoveriesByDistance(flatDiscoveries);
 
-        // 2. Collect all scraped routes in priority order (routes with coordinates come first).
         var allRoutes = CollectRoutes(doc.Scrapers);
         var dedupedRoutes = DeduplicateRoutesByDistance(allRoutes, flatDiscoveries);
 
         var results = new List<StoredFeature>();
         var assembledLines = new List<LineCoverageCandidate>();
-        var geocodedLocationCache = new Dictionary<string, (double lat, double lng)?>(StringComparer.OrdinalIgnoreCase);
 
         if (dedupedRoutes.Count == 0)
         {
-            // No scraper output — fall back to a single point per deduplicated discovery entry.
             var mergedNoRouteDiscoveries = MergeDiscoveriesByName(flatDiscoveries);
             int idx = 0;
-            foreach (var (_, d) in mergedNoRouteDiscoveries)
+            foreach (var (discoverySource, d) in mergedNoRouteDiscoveries)
             {
-                var coords = d.Latitude is not null && d.Longitude is not null
-                    ? (d.Latitude.Value, d.Longitude.Value)
-                    : await ResolveFallbackCoordinatesAsync(d, null, geocodingService, geocodedLocationCache, cancellationToken);
-                if (coords is null)
+                var fallback = await ResolveFallbackCoordinatesAsync(d, null, geocodingService, cancellationToken);
+                logger?.LogDebug(
+                    "Race asm {OrganizerKey} | src={DiscoverySource} | kind=discovery-only | race='{RaceName}' | dCoords={DiscoveryHasCoordinates} | sharedCoords={SharedDiscoveryHasCoordinates} | loc={HasLocation} | outcome={Outcome} | via={Reason} | lat={Latitude} | lng={Longitude}",
+                    organizerKey,
+                    AccentSource(discoverySource),
+                    d.Name ?? "(unnamed)",
+                    AccentBool(d.Latitude is not null && d.Longitude is not null),
+                    AccentBool(false),
+                    AccentBool(!string.IsNullOrWhiteSpace(d.Location)),
+                    AccentOutcome(fallback.Coordinates is not null ? "point" : "skip"),
+                    AccentReason(fallback.Reason),
+                    AccentCoordinate(fallback.Coordinates?.lat),
+                    AccentCoordinate(fallback.Coordinates?.lng));
+
+                if (fallback.Coordinates is null)
                     continue;
 
-                var (lat, lng) = coords.Value;
+                var (lat, lng) = fallback.Coordinates.Value;
                 var featureId = $"{organizerKey}-{idx++}";
                 var props = BuildProperties(d, scraperKey: null, route: null,
                     scraperImageUrl: null, scraperLogoUrl: null, websiteUrl: doc.Url);
@@ -109,24 +117,20 @@ public static partial class RaceAssembler
             return results;
         }
 
-        // 3. Sort routes by parsed distance km (ascending) then by name for stable IDs across re-runs.
         var sorted = dedupedRoutes
             .OrderBy(r => ParseDistanceKm(r.Route.Distance) ?? double.MaxValue)
             .ThenBy(r => r.Route.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // 4. Extract the global website URL and imagery from scrapers (in priority order).
         string? scraperWebsite = GetFirstNonNull(doc.Scrapers, ScraperPriority, s => s.WebsiteUrl);
         string? scraperImageUrl = GetFirstNonNull(doc.Scrapers, ScraperPriority, s => s.ImageUrl);
         string? scraperLogoUrl = GetFirstNonNull(doc.Scrapers, ScraperPriority, s => s.LogoUrl);
         string websiteUrl = scraperWebsite ?? doc.Url;
 
-        // 5. Fetch first discovery entry that has coordinates for point fallback.
         var coordsDiscovery = assemblyDiscovery?.Values
             .SelectMany(x => x)
             .FirstOrDefault(d => d.Latitude is not null && d.Longitude is not null);
 
-        // 6. Track which discovery distances (km) are claimed by scraper routes.
         var claimedKm = new HashSet<double>();
 
         for (int i = 0; i < sorted.Count; i++)
@@ -135,18 +139,13 @@ public static partial class RaceAssembler
             var featureId = $"{organizerKey}-{i}";
             var routeKm = ParseDistanceKm(route.Distance);
 
-            // Find the most specific matching discovery entry for this route's distance.
-            var bestDiscovery = FindBestDiscoveryForRoute(routeKm, flatDiscoveries, mergedDiscovery);
-
+            var (bestDiscoverySource, bestDiscovery) = FindBestDiscoveryForRoute(routeKm, flatDiscoveries, mergedDiscovery);
             var props = BuildProperties(bestDiscovery, scraperKey, route, scraperImageUrl, scraperLogoUrl, websiteUrl);
 
-            // Mark every discovery-listed km that matches the effective route length (route field
-            // or merged props) so unclaimed discovery points are not emitted for the same race.
             var effectiveKm = ParseEffectiveRouteKmForClaiming(routeKm, props);
             if (effectiveKm.HasValue)
                 ClaimRoughlyMatchingDiscoveryDistances(effectiveKm.Value, flatDiscoveries, claimedKm);
 
-            // Try to build a LineString if the route has coordinates.
             if (route.Coordinates is { Count: >= 2 })
             {
                 var positions = route.Coordinates
@@ -165,20 +164,45 @@ public static partial class RaceAssembler
                 }
             }
 
-            var fallbackCoords = await ResolveFallbackCoordinatesAsync(
-                bestDiscovery, coordsDiscovery, geocodingService, geocodedLocationCache, cancellationToken);
-
-            if (fallbackCoords is (var lat, var lng))
+            if (effectiveKm.HasValue && AnyLineRoughlyCoversKm(effectiveKm.Value, assembledLines))
             {
-                if (effectiveKm.HasValue && AnyLineRoughlyCoversKm(effectiveKm.Value, assembledLines))
-                    continue;
-
-                results.Add(BuildPointFeature(featureId, lng, lat, props));
+                object? coveredDistanceValue = null;
+                var coveredDistanceText = props.TryGetValue(PropDistance, out coveredDistanceValue)
+                    ? coveredDistanceValue?.ToString()
+                    : route.Distance;
+                logger?.LogDebug(
+                    "Race asm {OrganizerKey} | src={DiscoverySource} | kind=route-fallback | race='{RaceName}' | routeCoords={RouteHasCoordinates} | dCoords={DiscoveryHasCoordinates} | sharedCoords={SharedDiscoveryHasCoordinates} | loc={HasLocation} | outcome={Outcome} | coveredBy='{Distance}'",
+                    organizerKey,
+                    AccentSource(bestDiscoverySource),
+                    bestDiscovery.Name ?? route.Name ?? featureId,
+                    AccentBool(route.Coordinates is { Count: >= 2 }),
+                    AccentBool(bestDiscovery.Latitude is not null && bestDiscovery.Longitude is not null),
+                    AccentBool(coordsDiscovery is not null),
+                    AccentBool(!string.IsNullOrWhiteSpace(bestDiscovery.Location)),
+                    AccentOutcome("skip-line-covered"),
+                    coveredDistanceText);
+                continue;
             }
-            // Otherwise skip this route (no position can be determined).
+
+            var fallback = ResolveExistingCoordinates(bestDiscovery, coordsDiscovery);
+            logger?.LogDebug(
+                "Race asm {OrganizerKey} | src={DiscoverySource} | kind=route-fallback | race='{RaceName}' | routeCoords={RouteHasCoordinates} | dCoords={DiscoveryHasCoordinates} | sharedCoords={SharedDiscoveryHasCoordinates} | loc={HasLocation} | outcome={Outcome} | via={Reason} | lat={Latitude} | lng={Longitude}",
+                organizerKey,
+                AccentSource(bestDiscoverySource),
+                bestDiscovery.Name ?? route.Name ?? featureId,
+                AccentBool(route.Coordinates is { Count: >= 2 }),
+                AccentBool(bestDiscovery.Latitude is not null && bestDiscovery.Longitude is not null),
+                AccentBool(coordsDiscovery is not null),
+                AccentBool(!string.IsNullOrWhiteSpace(bestDiscovery.Location)),
+                AccentOutcome(fallback.Coordinates is not null ? "point" : "skip"),
+                AccentReason(fallback.Reason),
+                AccentCoordinate(fallback.Coordinates?.lat),
+                AccentCoordinate(fallback.Coordinates?.lng));
+
+            if (fallback.Coordinates is (var lat, var lng))
+                results.Add(BuildPointFeature(featureId, lng, lat, props));
         }
 
-        // 7. Add point races for discovery distances not claimed by any scraper route.
         var unclaimed = GetUnclaimedDiscoveryDistances(flatDiscoveries, claimedKm);
         foreach (var (distKm, distLabel) in unclaimed)
         {
@@ -186,16 +210,31 @@ public static partial class RaceAssembler
                 continue;
 
             var featureId = $"{organizerKey}-{results.Count}";
-            var bestDisc = distKm.HasValue
+            var bestDiscMatch = distKm.HasValue
                 ? FindBestDiscoveryForRoute(distKm, flatDiscoveries, mergedDiscovery)
-                : FindDiscoveryForLabel(distLabel, flatDiscoveries, mergedDiscovery);
+                : ("merged", FindDiscoveryForLabel(distLabel, flatDiscoveries, mergedDiscovery));
+            var (bestDiscSource, bestDisc) = bestDiscMatch;
             var props = BuildProperties(bestDisc, scraperKey: null, route: null,
                 scraperImageUrl, scraperLogoUrl, websiteUrl);
             props[PropDistance] = distLabel;
 
-            var fallbackCoords = await ResolveFallbackCoordinatesAsync(
-                bestDisc, coordsDiscovery, geocodingService, geocodedLocationCache, cancellationToken);
-            if (fallbackCoords is not (var lat, var lng))
+            var fallback = await ResolveFallbackCoordinatesAsync(
+                bestDisc, coordsDiscovery, geocodingService, cancellationToken);
+            logger?.LogDebug(
+                "Race asm {OrganizerKey} | src={DiscoverySource} | kind=unclaimed-distance | race='{RaceName}' | distance='{Distance}' | dCoords={DiscoveryHasCoordinates} | sharedCoords={SharedDiscoveryHasCoordinates} | loc={HasLocation} | outcome={Outcome} | via={Reason} | lat={Latitude} | lng={Longitude}",
+                organizerKey,
+                AccentSource(bestDiscSource),
+                bestDisc.Name ?? "(unnamed)",
+                distLabel,
+                AccentBool(bestDisc.Latitude is not null && bestDisc.Longitude is not null),
+                AccentBool(coordsDiscovery is not null),
+                AccentBool(!string.IsNullOrWhiteSpace(bestDisc.Location)),
+                AccentOutcome(fallback.Coordinates is not null ? "point" : "skip"),
+                AccentReason(fallback.Reason),
+                AccentCoordinate(fallback.Coordinates?.lat),
+                AccentCoordinate(fallback.Coordinates?.lng));
+
+            if (fallback.Coordinates is not (var lat, var lng))
                 continue;
 
             results.Add(BuildPointFeature(featureId, lng, lat, props));
@@ -909,30 +948,58 @@ public static partial class RaceAssembler
         };
     }
 
-    private static async Task<(double lat, double lng)?> ResolveFallbackCoordinatesAsync(
+    private readonly record struct FallbackCoordinateResolution((double lat, double lng)? Coordinates, string Reason);
+
+    private static FallbackCoordinateResolution ResolveExistingCoordinates(
+        SourceDiscovery discovery,
+        SourceDiscovery? coordsDiscovery)
+    {
+        if (discovery.Latitude is not null && discovery.Longitude is not null)
+            return new((discovery.Latitude.Value, discovery.Longitude.Value), "discovery coordinates");
+
+        if (coordsDiscovery is not null)
+            return new((coordsDiscovery.Latitude!.Value, coordsDiscovery.Longitude!.Value), "other discovery coordinates");
+
+        return new(null, "no existing coordinates");
+    }
+
+    private static async Task<FallbackCoordinateResolution> ResolveFallbackCoordinatesAsync(
         SourceDiscovery discovery,
         SourceDiscovery? coordsDiscovery,
         ILocationGeocodingService? geocodingService,
-        IDictionary<string, (double lat, double lng)?> geocodedLocationCache,
         CancellationToken cancellationToken)
     {
+        if (discovery.Latitude is not null && discovery.Longitude is not null)
+            return new((discovery.Latitude.Value, discovery.Longitude.Value), "discovery coordinates");
+
         if (coordsDiscovery is not null)
-            return (coordsDiscovery.Latitude!.Value, coordsDiscovery.Longitude!.Value);
+            return new((coordsDiscovery.Latitude!.Value, coordsDiscovery.Longitude!.Value), "other discovery coordinates");
 
         var location = !string.IsNullOrWhiteSpace(discovery.Location)
             ? discovery.Location.Trim()
             : null;
         if (location is null || geocodingService is null)
-            return null;
-
-        var cacheKey = string.Concat(location, "|", discovery.Country?.ToUpperInvariant() ?? string.Empty);
-        if (geocodedLocationCache.TryGetValue(cacheKey, out var cached))
-            return cached;
+            return new(null, location is null ? "missing location" : "no geocoding service");
 
         var coords = await geocodingService.GeocodeAsync(location, discovery.Country, cancellationToken);
-        geocodedLocationCache[cacheKey] = coords;
-        return coords;
+        return new(coords, coords is null ? "geocoding miss" : "geocoding");
     }
+
+    private static string AccentSource(string value) => Accent(value, "36");
+    private static string AccentReason(string value) => Accent(value, "33");
+    private static string AccentOutcome(string value)
+        => value switch
+        {
+            "point" => Accent(value, "32"),
+            _ when value.StartsWith("skip", StringComparison.OrdinalIgnoreCase) => Accent(value, "31"),
+            _ => Accent(value, "34")
+        };
+    private static string AccentBool(bool value) => Accent(value ? "yes" : "no", value ? "32" : "31");
+    private static string AccentCoordinate(double? value)
+        => value.HasValue ? Accent(value.Value.ToString(CultureInfo.InvariantCulture), "35") : Accent("-", "90");
+
+    private static string Accent(string value, string ansiCode)
+        => UseAnsiColors ? $"\u001b[{ansiCode}m{value}\u001b[0m" : value;
 
     // ── Utility ────────────────────────────────────────────────────────────
 

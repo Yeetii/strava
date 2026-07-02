@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 using Azure.Storage.Blobs;
 using Microsoft.Azure.Cosmos;
 using PmtilesJob;
+using Shared.Services;
+using System.Net.Http.Headers;
 
 var builder = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((context, config) =>
@@ -48,6 +50,13 @@ var builder = Host.CreateDefaultBuilder(args)
 
             if (command.Command == PmtilesCommandKind.BuildRaceTilesFromOrganizers)
             {
+                services.AddHttpClient<ILocationGeocodingService, NominatimLocationGeocodingService>(
+                    client =>
+                    {
+                        client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
+                        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
+                        client.Timeout = TimeSpan.FromSeconds(10);
+                    });
                 services.AddSingleton<RaceFromOrganizersPmtilesBuildService>();
             }
 
@@ -76,6 +85,7 @@ var builder = Host.CreateDefaultBuilder(args)
     {
         logging.ClearProviders();
         logging.AddConsole();
+        logging.AddFilter("System.Net.Http.HttpClient.ILocationGeocodingService", LogLevel.Warning);
     });
 
 using var host = builder.Build();

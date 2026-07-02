@@ -173,6 +173,88 @@ public class RaceAssemblerTests
         Assert.Equal("SEK", Assert.IsType<string>(race.Properties[RaceAssembler.PropCurrency]));
     }
 
+    [Fact]
+    public async Task AssembleRacesAsync_GeocodesLocationOnlyMittloppDiscoveryIntoPointRace()
+    {
+        var geocoder = new FakeLocationGeocodingService(("Säter, Dalarna", "SE"), (60.35, 15.75));
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "sater-triathlon.se",
+            Url = "https://sater-triathlon.se",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["mittlopp"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-30T00:00:00Z",
+                        Name = "Säter Triathlon – Olympisk / Tävling (STC)",
+                        Date = "2026-07-11",
+                        Distance = "1500 m swim, 40 km bike, 10 km run",
+                        Country = "SE",
+                        Location = "Säter, Dalarna",
+                        RaceType = "triathlon",
+                        ImageUrl = "https://mittlopp.se/Upload/CompHeader/ch_1562.jpg?min=38",
+                        StartFee = "500 kr",
+                        Currency = "SEK",
+                        SourceUrls =
+                        [
+                            "https://mittlopp.se/anm/satertriathlon2026/PEYPFWREAWHIYOGCRA?lang=sv",
+                            "http://www.sater-triathlon.se/"
+                        ]
+                    }
+                ]
+            }
+        };
+
+        var races = await RaceAssembler.AssembleRacesAsync(doc, geocoder, CancellationToken.None);
+
+        var race = Assert.Single(races);
+        var point = Assert.IsType<Point>(race.Geometry);
+        Assert.Equal(15.75, point.Coordinates.Longitude);
+        Assert.Equal(60.35, point.Coordinates.Latitude);
+        Assert.Equal("http://www.sater-triathlon.se/", Assert.IsType<string>(race.Properties[RaceAssembler.PropWebsite]));
+        Assert.Equal("500 kr", Assert.IsType<string>(race.Properties[RaceAssembler.PropStartFee]));
+        Assert.Equal([("Säter, Dalarna", "SE")], geocoder.Requests);
+    }
+
+    [Fact]
+    public async Task AssembleRacesAsync_DoesNotGeocodeWhenDiscoveryAlreadyHasCoordinates()
+    {
+        var geocoder = new FakeLocationGeocodingService(("Should Not Be Used", "SE"), (59.0, 18.0));
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "sample.org",
+            Url = "https://sample.org",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["mittlopp"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-30T00:00:00Z",
+                        Name = "Sample Race",
+                        Date = "2026-07-11",
+                        Distance = "10 km",
+                        Country = "SE",
+                        Location = "Should Not Be Used",
+                        Latitude = 60.1,
+                        Longitude = 15.2,
+                        RaceType = "running"
+                    }
+                ]
+            }
+        };
+
+        var races = await RaceAssembler.AssembleRacesAsync(doc, geocoder, CancellationToken.None);
+
+        var race = Assert.Single(races);
+        var point = Assert.IsType<Point>(race.Geometry);
+        Assert.Equal(15.2, point.Coordinates.Longitude);
+        Assert.Equal(60.1, point.Coordinates.Latitude);
+        Assert.Empty(geocoder.Requests);
+    }
+
     private sealed class FakeLocationGeocodingService((string location, string? country) match, (double lat, double lng) coords)
         : ILocationGeocodingService
     {
