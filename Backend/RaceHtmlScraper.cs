@@ -136,14 +136,18 @@ public static partial class RaceHtmlScraper
         "info", "details", "programme",
     ];
 
-    // Links matching a course keyword but also matching one of these are skipped
-    // (result pages, start lists, registration, etc.).
-    private static readonly string[] CourseExcludeKeywords = [
-        "resultat", "result", "startlist", "startlista", "cart", "varukorg", 
-        "villkor", "terms", "kontakt", "contact",
-        "blogg", "blog", "nyheter", "news", "tips",
-        "inscription", "inschrijven", "anmelden",
-        "uitslag", "ergebnis", "classement",
+    // Links matching one of these are skipped during race-link extraction and generic
+    // first-page crawl seeding. They cover common non-route pages like results,
+    // registration, shopping cart, legal terms, contact, and news/blog content.
+    private static readonly string[] NonRouteLinkExcludeKeywords = [
+        "resultat", "resultater", "results", "result", "resulat", "utslag", "uitslag", "ergebnis", "ergebnisse", "classement", "classements", "resultats",
+        "startlist", "startlista", "startlister", "startliste", "deltagerliste", "teilnehmerliste", "liste des partants",
+        "anmäl", "anmal", "anmelding", "påmelding", "pamelding", "registrering", "registration", "register", "signup", "sign up", "inscription", "inscriptions", "inschrijven", "anmelden", "anmeldung",
+        "cart", "shop", "store", "checkout", "basket", "panier", "boutique", "kassa", "varukorg", "handlekurv", "warenkorb",
+        "villkor", "vilkar", "betingelser", "terms", "conditions", "agb", "bedingungen", "mentions legales", "politique", "privacy", "cookies",
+        "kontakt", "contact", "contacts", "kontakta", "om oss", "about", "a propos", "à propos", "uber uns", "ueber uns",
+        "blogg", "blog", "nyheter", "nyhet", "aktuellt", "aktuelt", "news", "articles", "article", "actualites", "actualités", "neuigkeiten",
+        "tips", "faq", "foire aux questions"
     ];
 
     // Keywords used to identify generic download links.
@@ -305,7 +309,7 @@ public static partial class RaceHtmlScraper
     // Extracts links that are likely to lead to course/route detail pages.
     // A link matches if its href path or visible link text contains any of the course keywords
     // (case-insensitive partial match).
-    public static IReadOnlyCollection<Uri> ExtractCourseLinksFromHtml(string html, Uri pageUrl)
+    public static IReadOnlyCollection<Uri> ExtractCoursePageLinksFromHtml(string html, Uri pageUrl)
     {
         if (string.IsNullOrWhiteSpace(html))
             return [];
@@ -330,10 +334,41 @@ public static partial class RaceHtmlScraper
             if (!isMatch) continue;
 
             // Skip links that match exclude keywords (results, start lists, etc.).
-            var isExcluded = CourseExcludeKeywords.Any(kw =>
+            var isExcluded = NonRouteLinkExcludeKeywords.Any(kw =>
                 href.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
                 text.Contains(kw, StringComparison.OrdinalIgnoreCase));
             if (isExcluded) continue;
+            if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
+            if (uri.Scheme is not ("http" or "https")) continue;
+            if (seen.Add(uri.AbsoluteUri))
+                results.Add(uri);
+        }
+
+        return results;
+    }
+
+    // Extracts generic crawl candidates from anchor hrefs on a page.
+    // This is intentionally broader than course-page-link extraction and is used only to seed
+    // first-page BFS traversal so route/detail pages without course keywords are still visited.
+    public static IReadOnlyCollection<Uri> ExtractCrawlCandidateLinksFromHtml(string html, Uri pageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return [];
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<Uri>();
+
+        foreach (Match match in AnchorRegex().Matches(html))
+        {
+            var href = match.Groups["href"].Value;
+            if (href.StartsWith('#')) continue;
+
+            var text = HtmlTagRegex().Replace(match.Groups["text"].Value, " ").Trim();
+            var isExcluded = NonRouteLinkExcludeKeywords.Any(kw =>
+                href.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                text.Contains(kw, StringComparison.OrdinalIgnoreCase));
+            if (isExcluded) continue;
+
             if (!Uri.TryCreate(pageUrl, UnescapeJsonSlash(href), out var uri)) continue;
             if (uri.Scheme is not ("http" or "https")) continue;
             if (seen.Add(uri.AbsoluteUri))

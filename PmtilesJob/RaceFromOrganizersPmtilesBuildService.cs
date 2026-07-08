@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using System.Text.Json;
 
 namespace PmtilesJob;
 
@@ -25,6 +26,10 @@ public class RaceFromOrganizersPmtilesBuildService
     private readonly PmtilesUtilityService _pmtilesUtilityService;
     private readonly ILocationGeocodingService _geocodingService;
     private readonly ILogger<RaceFromOrganizersPmtilesBuildService> _logger;
+    private static readonly JsonSerializerOptions ConsoleJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+    };
 
     public RaceFromOrganizersPmtilesBuildService(
         BlobOrganizerStore organizerStore,
@@ -66,6 +71,24 @@ public class RaceFromOrganizersPmtilesBuildService
         {
             DeleteRunTempPath(runId);
         }
+    }
+
+    public async Task DebugAssembleOrganizerAsync(string organizerId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(organizerId))
+            throw new InvalidOperationException("Organizer id is required.");
+
+        var resolvedOrganizerId = await _organizerStore.ResolveOrganizerKeyAsync(organizerId, cancellationToken);
+        var doc = await _organizerStore.GetByIdAsync(resolvedOrganizerId, cancellationToken)
+            ?? throw new InvalidOperationException($"Organizer '{resolvedOrganizerId}' was not found.");
+
+        var assembled = await RaceAssembler.AssembleRacesAsync(doc, _geocodingService, cancellationToken, _logger);
+        _logger.LogInformation(
+            "Assembled {RaceCount} races for organizer {OrganizerId}. Printing to console.",
+            assembled.Count,
+            resolvedOrganizerId);
+
+        Console.WriteLine(JsonSerializer.Serialize(assembled, ConsoleJsonOptions));
     }
 
     private async Task<(string GeoJsonPath, int FeatureCount)> AssembleAndExportToGeoJsonAsync(string runId, CancellationToken cancellationToken)

@@ -654,6 +654,58 @@ public class BfsScraperTests
         Assert.Equal("ridewithgps", result.Routes[0].GpxSource);
     }
 
+    [Fact]
+    public async Task StartPage_GenericSameDomainLink_IsCrawledForEmbeddedRoutes()
+    {
+        const string routeId = "45032647";
+        var racePage = """
+            <html><body>
+              <a href="/distances">Distances</a>
+            </body></html>
+            """;
+
+        var distancesPage = $"""
+            <html><body>
+              <iframe src="https://ridewithgps.com/embeds?sampleGraph=true&type=route&id={routeId}"></iframe>
+            </body></html>
+            """;
+
+        var routeJson = $$"""
+            {
+              "id": {{routeId}},
+              "name": "Distances Route",
+              "elevation_gain": 275.0,
+              "track_points": [
+                {"x": 16.0, "y": 59.0},
+                {"x": 16.1, "y": 59.1}
+              ]
+            }
+            """;
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "ridewithgps.com" && uri.AbsolutePath == $"/routes/{routeId}.json")
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(routeJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            if (uri.Host == "race.com" && uri.AbsolutePath == "/distances")
+                return HtmlResponse(distancesPage);
+            return HtmlResponse(racePage);
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri("https://race.com/start")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Single(result.Routes);
+        Assert.Equal("Distances Route", result.Routes[0].Name);
+        Assert.Equal("ridewithgps", result.Routes[0].GpxSource);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static HttpResponseMessage GpxResponse() =>

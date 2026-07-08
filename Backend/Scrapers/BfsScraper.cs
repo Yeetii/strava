@@ -478,7 +478,11 @@ internal sealed class BfsScraper(ILogger logger)
 
                 if (depth < MaxDepth)
                 {
-                    foreach (var courseLink in RaceHtmlScraper.ExtractCourseLinksFromHtml(html, pageUrl))
+                    var crawlLinks = depth == 0
+                        ? RaceHtmlScraper.ExtractCrawlCandidateLinksFromHtml(html, pageUrl)
+                        : RaceHtmlScraper.ExtractCoursePageLinksFromHtml(html, pageUrl);
+
+                    foreach (var courseLink in crawlLinks)
                     {
                         if (!visitedPages.Contains(StripFragment(courseLink))
                             && IsSameDomain(courseLink, startUrl)
@@ -516,7 +520,7 @@ internal sealed class BfsScraper(ILogger logger)
             }
 
             var pagesToProcess = new List<(Uri Url, string Html)> { (probeUri, externalContent) };
-            var subLinks = RaceHtmlScraper.ExtractCourseLinksFromHtml(externalContent, probeUri)
+            var subLinks = RaceHtmlScraper.ExtractCoursePageLinksFromHtml(externalContent, probeUri)
                 .Where(u => IsSameDomain(u, probeUri))
                 .Take(5)
                 .ToList();

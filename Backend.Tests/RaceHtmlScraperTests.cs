@@ -41,7 +41,7 @@ public class RaceHtmlScraperTests
             </html>
             """;
 
-        var links = RaceHtmlScraper.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
+        var links = RaceHtmlScraper.ExtractCoursePageLinksFromHtml(html, new Uri("https://example.com/"));
 
         Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/course/info");
         Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/10k");
@@ -62,7 +62,7 @@ public class RaceHtmlScraperTests
             </html>
             """;
 
-        var links = RaceHtmlScraper.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
+        var links = RaceHtmlScraper.ExtractCoursePageLinksFromHtml(html, new Uri("https://example.com/"));
 
         Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/page1");
         Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/page2");
@@ -73,7 +73,7 @@ public class RaceHtmlScraperTests
     [Fact]
     public void ExtractCourseLinksFromHtml_ReturnsEmptyForBlankInput()
     {
-        Assert.Empty(RaceHtmlScraper.ExtractCourseLinksFromHtml("", new Uri("https://example.com/")));
+        Assert.Empty(RaceHtmlScraper.ExtractCoursePageLinksFromHtml("", new Uri("https://example.com/")));
     }
 
     // ── ExtractGpxLinksFromHtml ───────────────────────────────────────────────
@@ -241,7 +241,7 @@ public class RaceHtmlScraperTests
             </html>
             """;
 
-        var links = RaceHtmlScraper.ExtractCourseLinksFromHtml(html, new Uri("https://example.com/"));
+        var links = RaceHtmlScraper.ExtractCoursePageLinksFromHtml(html, new Uri("https://example.com/"));
 
         Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/100M");
         Assert.Contains(links, u => u.AbsoluteUri == "https://example.com/lopp/50k");

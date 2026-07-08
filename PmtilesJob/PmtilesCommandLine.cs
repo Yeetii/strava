@@ -17,7 +17,8 @@ public sealed record PmtilesCommandOptions(
     int? MaximumZoom = null,
     bool ExcludeAllAttributes = false,
     string? InputPath = null,
-    string? OutputPath = null);
+    string? OutputPath = null,
+    string? OrganizerId = null);
 
 public static class PmtilesCommandLine
 {
@@ -56,7 +57,9 @@ public static class PmtilesCommandLine
 
         if (args.Length > 0 && string.Equals(args[0], "build-race-tiles-from-organizers", StringComparison.OrdinalIgnoreCase))
         {
-            return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTilesFromOrganizers);
+            return new PmtilesCommandOptions(
+                PmtilesCommandKind.BuildRaceTilesFromOrganizers,
+                OrganizerId: GetOptionValue(args, "--organizer-id") ?? configuration["OrganizerId"]);
         }
 
         if (args.Length > 0 && string.Equals(args[0], "export-organizers-to-blob", StringComparison.OrdinalIgnoreCase))
