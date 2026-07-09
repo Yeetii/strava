@@ -9,6 +9,8 @@ namespace PmtilesJob;
 
 public class PmtilesUtilityService
 {
+    public readonly record struct PmtilesBuildMetricsSnapshot(TimeSpan Elapsed, long OutputBytes, int FeatureCount);
+
     private const string DefaultTippecanoeBinary = "/usr/local/bin/tippecanoe";
     private const string DefaultTileJoinBinary = "/usr/local/bin/tile-join";
     private const string DefaultPmtilesBinary = "/usr/local/bin/pmtiles";
@@ -77,6 +79,7 @@ public class PmtilesUtilityService
     private readonly string _tippecanoeBinary;
     private readonly string _tileJoinBinary;
     private readonly string _pmtilesBinary;
+    private PmtilesBuildMetricsSnapshot _lastPmtilesBuildMetrics;
 
     public PmtilesUtilityService(ILogger<PmtilesUtilityService> logger, IConfiguration configuration)
     {
@@ -249,12 +252,14 @@ public class PmtilesUtilityService
         CancellationToken cancellationToken)
     {
         EnsureBinaryExists(_tippecanoeBinary, AppConfig.TippecanoeBinaryPath, "tippecanoe");
+        var tippecanoeStopwatch = Stopwatch.StartNew();
 
         var output = await RunProcessAsync(
             _tippecanoeBinary,
             GetTippecanoeArguments(geoJsonPath, outputPmtilesPath, layerName),
             "tippecanoe",
             cancellationToken);
+        tippecanoeStopwatch.Stop();
 
         if (!IsValidPmtilesFile(outputPmtilesPath))
         {
@@ -262,11 +267,17 @@ public class PmtilesUtilityService
         }
 
         _logger.LogInformation(
-            "Tippecanoe finished with {OutputBytes} bytes using binary {Binary}.",
+            "Tippecanoe finished in {Elapsed} with {OutputBytes} bytes using binary {Binary}.",
+            tippecanoeStopwatch.Elapsed,
             new FileInfo(outputPmtilesPath).Length,
             _tippecanoeBinary);
+        var featureCount = ParseTippecanoeFeatureCount(output);
+        _lastPmtilesBuildMetrics = new PmtilesBuildMetricsSnapshot(
+            tippecanoeStopwatch.Elapsed,
+            new FileInfo(outputPmtilesPath).Length,
+            featureCount);
 
-        return ParseTippecanoeFeatureCount(output);
+        return featureCount;
     }
 
     public async Task<int> BuildPmtilesAsync(
@@ -275,12 +286,14 @@ public class PmtilesUtilityService
         CancellationToken cancellationToken)
     {
         EnsureBinaryExists(_tippecanoeBinary, AppConfig.TippecanoeBinaryPath, "tippecanoe");
+        var tippecanoeStopwatch = Stopwatch.StartNew();
 
         var output = await RunProcessAsync(
             _tippecanoeBinary,
             GetTippecanoeArguments(layerInputs, outputPmtilesPath),
             "tippecanoe",
             cancellationToken);
+        tippecanoeStopwatch.Stop();
 
         if (!IsValidPmtilesFile(outputPmtilesPath))
         {
@@ -288,13 +301,22 @@ public class PmtilesUtilityService
         }
 
         _logger.LogInformation(
-            "Tippecanoe finished with {OutputBytes} bytes using binary {Binary} across {LayerCount} layers.",
+            "Tippecanoe finished in {Elapsed} with {OutputBytes} bytes using binary {Binary} across {LayerCount} layers.",
+            tippecanoeStopwatch.Elapsed,
             new FileInfo(outputPmtilesPath).Length,
             _tippecanoeBinary,
             layerInputs.Count);
+        var featureCount = ParseTippecanoeFeatureCount(output);
+        _lastPmtilesBuildMetrics = new PmtilesBuildMetricsSnapshot(
+            tippecanoeStopwatch.Elapsed,
+            new FileInfo(outputPmtilesPath).Length,
+            featureCount);
 
-        return ParseTippecanoeFeatureCount(output);
+        return featureCount;
     }
+
+    public PmtilesBuildMetricsSnapshot GetLastPmtilesBuildMetricsSnapshot()
+        => _lastPmtilesBuildMetrics;
 
     public async Task FilterOutdoorMapAsync(
         string inputPmtilesPath,

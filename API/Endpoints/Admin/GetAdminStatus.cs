@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Shared.Constants;
+using Shared.Services;
 
 namespace API.Endpoints.Admin;
 
@@ -29,7 +30,9 @@ public record AdminStatus(
     int? ProvisionedThroughput,
     double? LiveRuPerSecond,
     int NewActivitiesLast24Hours,
-    int ProcessedNewActivitiesLast24Hours);
+    int ProcessedNewActivitiesLast24Hours,
+    int TotalRaceOrganizers,
+    int TotalRaces);
 
 internal sealed record ActivityWindowCountsProjection(
     int NewActivitiesLast24Hours,
@@ -39,6 +42,7 @@ public class GetAdminStatus(
     ServiceBusAdministrationClient serviceBusAdminClient,
     CosmosClient cosmosClient,
     MetricsQueryClient metricsQueryClient,
+    BlobOrganizerStore organizerStore,
     IConfiguration configuration,
     ILogger<GetAdminStatus> logger)
 {
@@ -60,12 +64,14 @@ public class GetAdminStatus(
         var throughputTask = FetchDatabaseThroughputAsync();
         var liveRuTask = FetchLiveRuPerSecondAsync();
         var activityWindowCountsTask = FetchActivityWindowCountsAsync();
+        var raceCountsTask = organizerStore.GetCountsAsync();
 
         var queueStatuses = await Task.WhenAll(queueTasks);
         var containerStatuses = await Task.WhenAll(containerTasks);
         var provisionedThroughput = await throughputTask;
         var liveRuPerSecond = await liveRuTask;
         var activityWindowCounts = await activityWindowCountsTask;
+        var raceCounts = await raceCountsTask;
 
         var status = new AdminStatus(
             queueStatuses,
@@ -73,7 +79,9 @@ public class GetAdminStatus(
             provisionedThroughput,
             liveRuPerSecond,
             activityWindowCounts.NewActivitiesLast24Hours,
-            activityWindowCounts.ProcessedNewActivitiesLast24Hours);
+            activityWindowCounts.ProcessedNewActivitiesLast24Hours,
+            raceCounts.OrganizerCount,
+            raceCounts.AssembledRaceCount);
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(status);
         return response;

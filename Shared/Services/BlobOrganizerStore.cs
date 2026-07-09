@@ -40,6 +40,13 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
 
     public sealed record OrganizerDocumentStreamItem(RaceOrganizerDocument Document, OrganizerDocumentSource Source);
 
+    public readonly record struct OrganizerReadMetricsSnapshot(
+        int StreamedDocuments,
+        int CacheHits,
+        long CachedBytes,
+        int BlobDownloads,
+        long DownloadedBytes);
+
     private readonly record struct OrganizerReadResult(BinaryData Content, OrganizerDocumentSource Source, int ByteCount);
     private sealed record StreamReadResult<TDocument>(TDocument Document, OrganizerReadResult ReadResult) where TDocument : class;
 
@@ -54,6 +61,8 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         WriteIndented = false,
     };
+
+    private OrganizerReadMetricsSnapshot _lastOrganizerReadMetrics;
 
     // ── Static helpers (drop-in for RaceOrganizerClient static members) ──
 
@@ -330,6 +339,34 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         }
 
         return ids;
+    }
+
+    public async Task<(int OrganizerCount, int AssembledRaceCount)> GetCountsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var organizerCount = 0;
+        var assembledRaceCount = 0;
+
+        await foreach (var item in container.GetBlobsAsync(
+            traits: default,
+            states: default,
+            prefix: default,
+            cancellationToken: cancellationToken))
+        {
+            if (item.Name.EndsWith(BlobSuffix, StringComparison.Ordinal))
+            {
+                organizerCount++;
+                continue;
+            }
+
+            if (item.Name.Contains(AssembledRaceFolder, StringComparison.Ordinal)
+                && item.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                assembledRaceCount++;
+            }
+        }
+
+        return (organizerCount, assembledRaceCount);
     }
 
     // ── GPX route blobs ───────────────────────────────────────────────────
@@ -880,9 +917,24 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         int blobDownloads,
         long downloadedBytes)
     {
-        var summary = $"Organizer reads: {AccentCount(streamedDocuments)} docs | cache {AccentCache(cacheHits)} ({AccentBytes(FormatByteCount(cachedBytes))}) | blob {AccentBlob(blobDownloads)} ({AccentBytes(FormatByteCount(downloadedBytes))})";
+        _lastOrganizerReadMetrics = new OrganizerReadMetricsSnapshot(
+            streamedDocuments,
+            cacheHits,
+            cachedBytes,
+            blobDownloads,
+            downloadedBytes);
+        var cacheHitRate = streamedDocuments == 0
+            ? 0
+            : (double)cacheHits / streamedDocuments * 100;
+        var summary = $"Organizer reads: {AccentCount(streamedDocuments)} docs | cache hits {AccentCache(cacheHits)} ({AccentBytes(FormatByteCount(cachedBytes))}, {cacheHitRate:F1}% hit rate) | blob reads {AccentBlob(blobDownloads)} ({AccentBytes(FormatByteCount(downloadedBytes))})";
         _logger.LogInformation("{ReadSummary}", summary);
     }
+
+    public OrganizerReadMetricsSnapshot GetLastOrganizerReadMetricsSnapshot()
+        => _lastOrganizerReadMetrics;
+
+    public static string FormatByteCountForLogging(long byteCount)
+        => FormatByteCount(byteCount);
 
     private async Task<string?> GetRedirectTargetAsync(string organizerKey, CancellationToken cancellationToken)
     {

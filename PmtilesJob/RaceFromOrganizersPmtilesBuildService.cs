@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using System.Text;
 using System.Text.Json;
 
 namespace PmtilesJob;
@@ -30,6 +31,16 @@ public class RaceFromOrganizersPmtilesBuildService
     {
         WriteIndented = true,
     };
+    private static readonly JsonSerializerOptions GeoJsonSerializerOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false,
+    };
+
+    static RaceFromOrganizersPmtilesBuildService()
+    {
+        GeoJsonSerializerOptions.Converters.Add(new GeometrySystemTextJsonConverter());
+        GeoJsonSerializerOptions.Converters.Add(new FeatureIdJsonConverter());
+    }
 
     public RaceFromOrganizersPmtilesBuildService(
         BlobOrganizerStore organizerStore,
@@ -45,14 +56,15 @@ public class RaceFromOrganizersPmtilesBuildService
         _logger = logger;
     }
 
-    public async Task BuildAsync(CancellationToken cancellationToken)
+    public async Task BuildAsync(bool writeTransparency, CancellationToken cancellationToken)
     {
         var runId = Guid.NewGuid().ToString("N");
-        _logger.LogInformation("Starting race-from-organizers tile build {RunId}.", runId);
+        var buildStopwatch = Stopwatch.StartNew();
+        _logger.LogInformation("Starting race-from-organizers tile build {RunId}. WriteTransparency={WriteTransparency}", runId, writeTransparency);
 
         try
         {
-            var (geoJsonPath, featureCount) = await AssembleAndExportToGeoJsonAsync(runId, cancellationToken);
+            var (geoJsonPath, featureCount, assemblyMetrics) = await AssembleAndExportToGeoJsonAsync(runId, writeTransparency, cancellationToken);
 
             _logger.LogInformation("Building PMTiles from {FeatureCount} features...", featureCount);
             var pmtilesPath = Path.Combine(CreateRunTempPath(runId), "trails-from-organizers.pmtiles");
@@ -65,6 +77,26 @@ public class RaceFromOrganizersPmtilesBuildService
             _logger.LogInformation("Uploading PMTiles to blob storage...");
             var container = await GetContainerAsync(cancellationToken);
             await ValidateAndPublishPmtilesAsync(container, runId, pmtilesPath, cancellationToken);
+            buildStopwatch.Stop();
+
+            var organizerReadMetrics = _organizerStore.GetLastOrganizerReadMetricsSnapshot();
+            var pmtilesMetrics = _pmtilesUtilityService.GetLastPmtilesBuildMetricsSnapshot();
+            _logger.LogInformation(
+                "Build stage summary {RunId}: organizers {OrganizerCount} | blob bytes {BlobBytes} | cache hits {CacheHits} | geocode requests {GeocodeRequests} | geocode misses {GeocodeMisses} | assemble {AssembleElapsed} | transparency wait {TransparencyWaitElapsed} | project {ProjectionElapsed} | serialize {SerializationElapsed} | geojson size {GeoJsonBytes} | tippecanoe {TippecanoeElapsed} | pmtiles size {PmtilesBytes} | total {TotalElapsed}",
+                runId,
+                assemblyMetrics.OrganizerCount,
+                BlobOrganizerStore.FormatByteCountForLogging(organizerReadMetrics.DownloadedBytes),
+                organizerReadMetrics.CacheHits,
+                assemblyMetrics.GeocodingMetrics.TotalRequests,
+                assemblyMetrics.GeocodingMetrics.MissedRequests,
+                assemblyMetrics.AssemblyElapsed,
+                assemblyMetrics.TransparencyWaitElapsed,
+                assemblyMetrics.FeatureProjectionElapsed,
+                assemblyMetrics.SerializationElapsed,
+                BlobOrganizerStore.FormatByteCountForLogging(assemblyMetrics.GeoJsonBytes),
+                pmtilesMetrics.Elapsed,
+                BlobOrganizerStore.FormatByteCountForLogging(pmtilesMetrics.OutputBytes),
+                buildStopwatch.Elapsed);
             _logger.LogInformation("Race-from-organizers tile build completed successfully {RunId}. Wrote {FeatureCount} PMTiles features.", runId, pmtilesFeatureCount);
         }
         finally
@@ -91,13 +123,17 @@ public class RaceFromOrganizersPmtilesBuildService
         Console.WriteLine(JsonSerializer.Serialize(assembled, ConsoleJsonOptions));
     }
 
-    private async Task<(string GeoJsonPath, int FeatureCount)> AssembleAndExportToGeoJsonAsync(string runId, CancellationToken cancellationToken)
+    private async Task<(string GeoJsonPath, int FeatureCount, AssemblyMetrics Metrics)> AssembleAndExportToGeoJsonAsync(string runId, bool writeTransparency, CancellationToken cancellationToken)
     {
         var totalStopwatch = Stopwatch.StartNew();
         var intervalStopwatch = Stopwatch.StartNew();
-        var features = new List<Feature>();
         var pendingTransparencyWrites = new List<Task<BlobOrganizerStore.TransparencyWriteStats>>(MaxPendingTransparencyWrites);
+        var tempPath = CreateRunTempPath(runId);
+        var geoJsonPath = Path.Combine(tempPath, "features-from-organizers.geojson");
+        await using var fileStream = File.Create(geoJsonPath);
+        await using var writer = new StreamWriter(fileStream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         var organizerCount = 0;
+        var featureCount = 0;
         var totalAssembly = TimeSpan.Zero;
         var totalTransparencyWriteBackpressure = TimeSpan.Zero;
         var totalTransparencyQueued = 0;
@@ -117,6 +153,8 @@ public class RaceFromOrganizersPmtilesBuildService
         var intervalRaceUnchanged = 0;
         var intervalFeatureProjection = TimeSpan.Zero;
 
+        await writer.WriteAsync("{\"type\":\"FeatureCollection\",\"features\":[");
+
         await foreach (var item in _organizerStore.StreamAllWithSourceAsync(maxConcurrency: 32, cancellationToken))
         {
             var doc = item.Document;
@@ -128,7 +166,7 @@ public class RaceFromOrganizersPmtilesBuildService
             totalAssembly += assemblyStopwatch.Elapsed;
             intervalAssembly += assemblyStopwatch.Elapsed;
 
-            if (item.Source == BlobOrganizerStore.OrganizerDocumentSource.Blob)
+            if (writeTransparency && item.Source == BlobOrganizerStore.OrganizerDocumentSource.Blob)
             {
                 pendingTransparencyWrites.Add(_organizerStore.WriteAssembledRacesAsync(doc.Id, assembled, cancellationToken));
                 totalTransparencyQueued++;
@@ -168,7 +206,11 @@ public class RaceFromOrganizersPmtilesBuildService
                     geoJsonFeature.Properties["featureId"] = geoJsonFeature.Id;
                 }
 
-                features.Add(geoJsonFeature);
+                if (featureCount > 0)
+                    await writer.WriteAsync(",");
+
+                await writer.WriteAsync(JsonSerializer.Serialize(geoJsonFeature, GeoJsonSerializerOptions));
+                featureCount++;
             }
             featureProjectionStopwatch.Stop();
             totalFeatureProjection += featureProjectionStopwatch.Elapsed;
@@ -178,7 +220,7 @@ public class RaceFromOrganizersPmtilesBuildService
             {
                 var progressBlock = BuildProgressBlock(
                     organizerCount,
-                    features.Count,
+                    featureCount,
                     500,
                     intervalStopwatch.Elapsed,
                     intervalAssembly,
@@ -198,12 +240,12 @@ public class RaceFromOrganizersPmtilesBuildService
                 intervalAssembly = TimeSpan.Zero;
                 intervalTransparencyQueued = 0;
                 intervalTransparencyCompleted = 0;
-                intervalTransparencyWriteBackpressure = TimeSpan.Zero;
-                intervalTransparencySkips = 0;
-                intervalRaceUploads = 0;
-                intervalRaceDeletes = 0;
-                intervalRaceUnchanged = 0;
-                intervalFeatureProjection = TimeSpan.Zero;
+                                intervalTransparencyWriteBackpressure = TimeSpan.Zero;
+                                intervalTransparencySkips = 0;
+                                intervalRaceUploads = 0;
+                                intervalRaceDeletes = 0;
+                                intervalRaceUnchanged = 0;
+                                intervalFeatureProjection = TimeSpan.Zero;
             }
         }
 
@@ -230,10 +272,10 @@ public class RaceFromOrganizersPmtilesBuildService
         }
 
         _logger.LogInformation(
-                        "{CompletionBlock}",
+                                "{CompletionBlock}",
                         BuildCompletionBlock(
                                 organizerCount,
-                                features.Count,
+                                featureCount,
                                 totalStopwatch.Elapsed,
                                 totalAssembly,
                                 totalFeatureProjection,
@@ -245,15 +287,54 @@ public class RaceFromOrganizersPmtilesBuildService
                                 totalRaceUnchanged,
                                 totalTransparencyWriteBackpressure));
 
-        var collection = new FeatureCollection(features);
-        var tempPath = CreateRunTempPath(runId);
-        var geoJsonPath = Path.Combine(tempPath, "features-from-organizers.geojson");
+        var serializationStopwatch = Stopwatch.StartNew();
 
-        var geoJson = collection.ToJson();
-        await File.WriteAllTextAsync(geoJsonPath, geoJson, cancellationToken);
+        await writer.WriteAsync("]}");
+        await writer.FlushAsync(cancellationToken);
+        await fileStream.FlushAsync(cancellationToken);
+        serializationStopwatch.Stop();
+        _logger.LogInformation(
+            "GeoJSON serialization finished in {Elapsed}. Wrote {GeoJsonBytes} bytes to {GeoJsonPath}.",
+            serializationStopwatch.Elapsed,
+            new FileInfo(geoJsonPath).Length,
+            geoJsonPath);
 
-        return (geoJsonPath, features.Count);
+        var geocodingMetrics = default(GeocodingMetricsSnapshot);
+        if (_geocodingService is NominatimLocationGeocodingService nominatim)
+        {
+            geocodingMetrics = nominatim.GetMetricsSnapshot();
+            _logger.LogInformation(
+                "Geocoding summary for build: total {TotalRequests} | cache hits {CacheHits} | cache misses {CacheMisses} | live requests {LiveRequests} | resolved {ResolvedRequests} | misses {MissedRequests} | 429s {RateLimitedResponses}",
+                geocodingMetrics.TotalRequests,
+                geocodingMetrics.CacheHits,
+                geocodingMetrics.CacheMisses,
+                geocodingMetrics.LiveRequests,
+                geocodingMetrics.ResolvedRequests,
+                geocodingMetrics.MissedRequests,
+                geocodingMetrics.RateLimitedResponses);
+        }
+
+        return (
+            geoJsonPath,
+            featureCount,
+            new AssemblyMetrics(
+                organizerCount,
+                totalAssembly,
+                totalTransparencyWriteBackpressure,
+                totalFeatureProjection,
+                serializationStopwatch.Elapsed,
+                new FileInfo(geoJsonPath).Length,
+                geocodingMetrics));
     }
+
+    private readonly record struct AssemblyMetrics(
+        int OrganizerCount,
+        TimeSpan AssemblyElapsed,
+        TimeSpan TransparencyWaitElapsed,
+        TimeSpan FeatureProjectionElapsed,
+        TimeSpan SerializationElapsed,
+        long GeoJsonBytes,
+        GeocodingMetricsSnapshot GeocodingMetrics);
 
     private static string FormatElapsed(TimeSpan elapsed)
         => elapsed.ToString(@"hh\:mm\:ss\.fff");

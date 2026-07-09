@@ -140,13 +140,13 @@ try
         default:
         {
             var job = scope.ServiceProvider.GetRequiredService<RaceFromOrganizersPmtilesBuildService>();
-            if (!string.IsNullOrWhiteSpace(command.OrganizerId))
+	    	if (!string.IsNullOrWhiteSpace(command.OrganizerId))
             {
                 await job.DebugAssembleOrganizerAsync(command.OrganizerId, CancellationToken.None);
                 return 0;
             }
 
-            await job.BuildAsync(CancellationToken.None);
+            await job.BuildAsync(command.WriteTransparency, CancellationToken.None);
             return 0;
         }
     }

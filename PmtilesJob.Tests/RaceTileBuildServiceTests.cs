@@ -98,6 +98,23 @@ public class PmtilesUtilityServiceTests
         var command = PmtilesCommandLine.Parse([], configuration);
 
         Assert.Equal(PmtilesCommandKind.BuildRaceTilesFromOrganizers, command.Command);
+        Assert.False(command.WriteTransparency);
+    }
+
+    [Fact]
+    public void Parse_AllowsDisablingOrEnablingTransparencyWritesForRaceTiles()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var enabled = PmtilesCommandLine.Parse(
+            ["build-race-tiles-from-organizers", "--write-transparency", "true"],
+            configuration);
+        var disabled = PmtilesCommandLine.Parse(
+            ["build-race-tiles-from-organizers", "--write-transparency=false"],
+            configuration);
+
+        Assert.True(enabled.WriteTransparency);
+        Assert.False(disabled.WriteTransparency);
     }
 
     [Fact]

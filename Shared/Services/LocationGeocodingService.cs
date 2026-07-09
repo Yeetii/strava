@@ -12,6 +12,7 @@ public interface ILocationGeocodingService
 
 public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILogger<NominatimLocationGeocodingService> logger) : ILocationGeocodingService
 {
+    private const int GeocodeSummaryLogInterval = 100;
     private static readonly SemaphoreSlim RequestGate = new(1, 1);
     private static readonly TimeSpan MinimumDelayBetweenRequests = TimeSpan.FromSeconds(1);
     private static DateTimeOffset _nextAllowedRequestUtc = DateTimeOffset.MinValue;
@@ -19,6 +20,13 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
     private static readonly JsonSerializerOptions CacheJsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private static readonly string CacheRoot = ResolveCacheRoot();
     private static int _loggedCachePath;
+    private static long _totalRequests;
+    private static long _cacheHits;
+    private static long _cacheMisses;
+    private static long _liveRequests;
+    private static long _resolvedRequests;
+    private static long _missedRequests;
+    private static long _rateLimitedResponses;
 
     private readonly HttpClient _httpClient = httpClient;
     private readonly ILogger<NominatimLocationGeocodingService> _logger = logger;
@@ -39,19 +47,24 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
 
         var normalizedCountry = NormalizeCountryToIso2(country)?.ToUpperInvariant() ?? string.Empty;
         var cacheKey = string.Concat(normalizedLocation, "|", normalizedCountry);
+        Interlocked.Increment(ref _totalRequests);
 
         lock (Cache)
         {
             if (Cache.TryGetValue(cacheKey, out var cached))
             {
+                Interlocked.Increment(ref _cacheHits);
                 _logger.LogDebug(
                     "Geocode cache hit for location '{Location}' country '{Country}' => {HasCoordinates}",
                     normalizedLocation,
                     string.IsNullOrWhiteSpace(normalizedCountry) ? "(none)" : normalizedCountry,
                     cached.HasValue);
+                LogSummaryIfNeeded();
                 return cached;
             }
         }
+
+        Interlocked.Increment(ref _cacheMisses);
 
         _logger.LogDebug(
             "Geocode cache miss for location '{Location}' country '{Country}'",
@@ -83,6 +96,8 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
             {
                 _logger.LogDebug("Geocoding request failed for '{Location}' with status {StatusCode}", location, response.StatusCode);
                 UpdateCache(cacheKey, null);
+                Interlocked.Increment(ref _missedRequests);
+                LogSummaryIfNeeded();
                 return null;
             }
 
@@ -91,6 +106,8 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
             if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() == 0)
             {
                 UpdateCache(cacheKey, null);
+                Interlocked.Increment(ref _missedRequests);
+                LogSummaryIfNeeded();
                 return null;
             }
 
@@ -99,6 +116,8 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
                 || !first.TryGetProperty("lon", out var lonElement))
             {
                 UpdateCache(cacheKey, null);
+                Interlocked.Increment(ref _missedRequests);
+                LogSummaryIfNeeded();
                 return null;
             }
 
@@ -106,16 +125,20 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
                 && TryParseNumber(lonElement, out var lng))
             {
                 UpdateCache(cacheKey, (lat, lng));
+                Interlocked.Increment(ref _resolvedRequests);
                 _logger.LogDebug(
                     "Geocoding resolved '{Location}' country '{Country}' => {Lat}, {Lng}",
                     normalizedLocation,
                     string.IsNullOrWhiteSpace(normalizedCountry) ? "(none)" : normalizedCountry,
                     lat,
                     lng);
+                LogSummaryIfNeeded();
                 return (lat, lng);
             }
 
             UpdateCache(cacheKey, null);
+            Interlocked.Increment(ref _missedRequests);
+            LogSummaryIfNeeded();
             return null;
 
             static bool TryParseNumber(JsonElement element, out double value)
@@ -144,12 +167,16 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
                 normalizedLocation,
                 string.IsNullOrWhiteSpace(normalizedCountry) ? "(none)" : normalizedCountry);
             UpdateCache(cacheKey, null);
+            Interlocked.Increment(ref _missedRequests);
+            LogSummaryIfNeeded();
             return null;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Failed to geocode location '{Location}'", location);
             UpdateCache(cacheKey, null);
+            Interlocked.Increment(ref _missedRequests);
+            LogSummaryIfNeeded();
             return null;
         }
     }
@@ -167,10 +194,12 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Get, relativeUrl);
+            Interlocked.Increment(ref _liveRequests);
             var response = await _httpClient.SendAsync(request, cancellationToken);
 
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
+                Interlocked.Increment(ref _rateLimitedResponses);
                 var retryAfter = response.Headers.RetryAfter?.Delta
                     ?? (response.Headers.RetryAfter?.Date is DateTimeOffset retryAt ? retryAt - DateTimeOffset.UtcNow : (TimeSpan?)null)
                     ?? TimeSpan.FromSeconds(5);
@@ -191,6 +220,33 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
         {
             RequestGate.Release();
         }
+    }
+
+    public GeocodingMetricsSnapshot GetMetricsSnapshot()
+        => new(
+            Interlocked.Read(ref _totalRequests),
+            Interlocked.Read(ref _cacheHits),
+            Interlocked.Read(ref _cacheMisses),
+            Interlocked.Read(ref _liveRequests),
+            Interlocked.Read(ref _resolvedRequests),
+            Interlocked.Read(ref _missedRequests),
+            Interlocked.Read(ref _rateLimitedResponses));
+
+    private void LogSummaryIfNeeded()
+    {
+        var snapshot = GetMetricsSnapshot();
+        if (snapshot.TotalRequests == 0 || snapshot.TotalRequests % GeocodeSummaryLogInterval != 0)
+            return;
+
+        _logger.LogInformation(
+            "Geocoding summary: total {TotalRequests} | cache hits {CacheHits} | cache misses {CacheMisses} | live requests {LiveRequests} | resolved {ResolvedRequests} | misses {MissedRequests} | 429s {RateLimitedResponses}",
+            snapshot.TotalRequests,
+            snapshot.CacheHits,
+            snapshot.CacheMisses,
+            snapshot.LiveRequests,
+            snapshot.ResolvedRequests,
+            snapshot.MissedRequests,
+            snapshot.RateLimitedResponses);
     }
 
     private static void UpdateCache(string cacheKey, (double lat, double lng)? value)
@@ -327,3 +383,12 @@ public sealed class NominatimLocationGeocodingService(HttpClient httpClient, ILo
     };
 
 }
+
+public readonly record struct GeocodingMetricsSnapshot(
+    long TotalRequests,
+    long CacheHits,
+    long CacheMisses,
+    long LiveRequests,
+    long ResolvedRequests,
+    long MissedRequests,
+    long RateLimitedResponses);

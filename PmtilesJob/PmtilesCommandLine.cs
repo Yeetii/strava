@@ -16,6 +16,7 @@ public sealed record PmtilesCommandOptions(
     IReadOnlyList<int>? AdminLevels = null,
     int? MaximumZoom = null,
     bool ExcludeAllAttributes = false,
+    bool WriteTransparency = false,
     string? InputPath = null,
     string? OutputPath = null,
     string? OrganizerId = null);
@@ -57,8 +58,14 @@ public static class PmtilesCommandLine
 
         if (args.Length > 0 && string.Equals(args[0], "build-race-tiles-from-organizers", StringComparison.OrdinalIgnoreCase))
         {
+            var writeTransparency = ParseOptionalBool(
+                GetOptionValue(args, "--write-transparency")
+                ?? configuration["WriteTransparency"],
+                "--write-transparency") ?? false;
+
             return new PmtilesCommandOptions(
                 PmtilesCommandKind.BuildRaceTilesFromOrganizers,
+                WriteTransparency: writeTransparency,
                 OrganizerId: GetOptionValue(args, "--organizer-id") ?? configuration["OrganizerId"]);
         }
 
@@ -67,7 +74,12 @@ public static class PmtilesCommandLine
             return new PmtilesCommandOptions(PmtilesCommandKind.ExportOrganizersToBlob);
         }
 
-        return new PmtilesCommandOptions(PmtilesCommandKind.BuildRaceTilesFromOrganizers);
+        var defaultWriteTransparency = ParseOptionalBool(
+            configuration["WriteTransparency"],
+            "WriteTransparency") ?? false;
+        return new PmtilesCommandOptions(
+            PmtilesCommandKind.BuildRaceTilesFromOrganizers,
+            WriteTransparency: defaultWriteTransparency);
     }
 
     private static PmtilesCommandOptions ParseFilterCommand(
@@ -153,6 +165,17 @@ public static class PmtilesCommandLine
 
         if (!int.TryParse(value, out var parsedValue))
             throw new InvalidOperationException($"The {optionName} value must be numeric.");
+
+        return parsedValue;
+    }
+
+    private static bool? ParseOptionalBool(string? value, string optionName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        if (!bool.TryParse(value, out var parsedValue))
+            throw new InvalidOperationException($"The {optionName} value must be true or false.");
 
         return parsedValue;
     }
