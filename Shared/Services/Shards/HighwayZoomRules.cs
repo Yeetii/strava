@@ -141,7 +141,7 @@ public static class HighwayZoomRules
             9 => 0.0040,
             10 => 0.0020,
             11 => 0.0005,
-            12 => 0.0002,
+            12 => 0.0001,
             _ => 0d
         };
 

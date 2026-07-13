@@ -209,6 +209,30 @@ public class ShardStackTests
     }
 
     [Fact]
+    public void BlobTileService_SimplifyByZoom_PreservesMostCanonicalZoomGeometry()
+    {
+        var points = new List<Position>();
+        for (var i = 0; i < 400; i++)
+        {
+            var lon = 10 + (i * 0.00002);
+            var lat = 59 + ((i % 2 == 0) ? 0.00001 : -0.00001);
+            points.Add(new Position(lon, lat));
+        }
+
+        var feature = new Feature(
+            new LineString(points),
+            new Dictionary<string, dynamic> { ["highway"] = "track" },
+            null,
+            new FeatureId("line1"));
+
+        var simplified = BlobTileService.SimplifyByZoom([feature], zoom: 12).Single();
+        var line = Assert.IsType<LineString>(simplified.Geometry);
+
+        Assert.True(line.Coordinates.Count() < points.Count);
+        Assert.True(line.Coordinates.Count() >= 2);
+    }
+
+    [Fact]
     public void BlobTileService_FilteredTilePayload_IsSmallerAtLowerZooms()
     {
         var features = new[]

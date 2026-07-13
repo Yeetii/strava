@@ -50,6 +50,7 @@ var builder = Host.CreateDefaultBuilder(args)
 
             if (command.Command == PmtilesCommandKind.BuildRaceTilesFromOrganizers)
             {
+                services.AddSharedGeocodingCache(configuration);
                 services.AddHttpClient<ILocationGeocodingService, NominatimLocationGeocodingService>(
                     client =>
                     {
@@ -89,9 +90,11 @@ var builder = Host.CreateDefaultBuilder(args)
     });
 
 using var host = builder.Build();
+await host.StartAsync();
 using var scope = host.Services.CreateScope();
 var configuration = host.Services.GetRequiredService<IConfiguration>();
 var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+var cancellationToken = host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
 var command = PmtilesCommandLine.Parse(args, configuration);
 
 try
@@ -101,38 +104,38 @@ try
         case PmtilesCommandKind.FilterOutdoor:
         {
             var utilityService = scope.ServiceProvider.GetRequiredService<PmtilesUtilityService>();
-            await utilityService.FilterOutdoorMapAsync(
-                command.InputPath!,
-                command.OutputPath!,
-                command.MaximumZoom,
-                command.ExcludeAllAttributes,
-                CancellationToken.None);
-            return 0;
-        }
+                await utilityService.FilterOutdoorMapAsync(
+                    command.InputPath!,
+                    command.OutputPath!,
+                    command.MaximumZoom,
+                    command.ExcludeAllAttributes,
+                    cancellationToken);
+                return 0;
+            }
 
         case PmtilesCommandKind.FilterAdminBoundaries:
         {
             var utilityService = scope.ServiceProvider.GetRequiredService<PmtilesUtilityService>();
-            await utilityService.FilterAdminBoundariesMapAsync(
-                command.InputPath!,
-                command.OutputPath!,
-                command.MaximumZoom,
-                command.ExcludeAllAttributes,
-                CancellationToken.None);
-            return 0;
-        }
+                await utilityService.FilterAdminBoundariesMapAsync(
+                    command.InputPath!,
+                    command.OutputPath!,
+                    command.MaximumZoom,
+                    command.ExcludeAllAttributes,
+                    cancellationToken);
+                return 0;
+            }
 
         case PmtilesCommandKind.BuildAdminAreas:
         {
             var job = scope.ServiceProvider.GetRequiredService<AdminAreaPmtilesBuildService>();
-            await job.BuildAdminAreasAsync(command.OutputPath!, command.AdminLevels ?? AdminAreaPmtilesBuildService.DefaultAdminLevels, CancellationToken.None);
+            await job.BuildAdminAreasAsync(command.OutputPath!, command.AdminLevels ?? AdminAreaPmtilesBuildService.DefaultAdminLevels, cancellationToken);
             return 0;
         }
 
         case PmtilesCommandKind.ExportOrganizersToBlob:
         {
             var job = scope.ServiceProvider.GetRequiredService<ExportOrganizersToBlobService>();
-            await job.ExportAsync(CancellationToken.None);
+            await job.ExportAsync(cancellationToken);
             return 0;
         }
 
@@ -142,17 +145,26 @@ try
             var job = scope.ServiceProvider.GetRequiredService<RaceFromOrganizersPmtilesBuildService>();
 	    	if (!string.IsNullOrWhiteSpace(command.OrganizerId))
             {
-                await job.DebugAssembleOrganizerAsync(command.OrganizerId, CancellationToken.None);
+                await job.DebugAssembleOrganizerAsync(command.OrganizerId, cancellationToken);
                 return 0;
             }
 
-            await job.BuildAsync(command.WriteTransparency, CancellationToken.None);
+            await job.BuildAsync(command.WriteTransparency, cancellationToken);
             return 0;
         }
     }
+}
+catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+{
+    logger.LogInformation("Pmtiles job cancelled.");
+    return 130;
 }
 catch (Exception ex)
 {
     logger.LogError(ex, "Pmtiles job failed.");
     return 1;
+}
+finally
+{
+    await host.StopAsync();
 }

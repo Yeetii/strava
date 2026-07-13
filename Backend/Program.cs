@@ -71,6 +71,7 @@ var host = new HostBuilder()
                 client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
                 client.Timeout = TimeSpan.FromSeconds(10);
             });
+        services.AddSharedGeocodingCache(configuration);
         string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
         CosmosClientOptions cosmosClientOptions = new()
         {

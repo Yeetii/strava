@@ -2,5 +2,9 @@
   "ApiUrl": " http://localhost:7071/api/",
   "BackendApiUrl": "http://localhost:1234/api/",
   "MistralStudioApiUrl": "https://api.mistral.ai/v1/conversations",
-  "OverpassMaxConcurrency": "1"
+  "OverpassMaxConcurrency": "1",
+  "GeocodingCache": {
+    "TableName": "GeocodingCache",
+    "TimeToLiveDays": 90
+  }
 }

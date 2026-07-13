@@ -64,6 +64,7 @@ public class HighwayZoomRulesTests
         Assert.Equal(0.0040, HighwayZoomRules.GetSimplificationEpsilon(9));
         Assert.Equal(0.0020, HighwayZoomRules.GetSimplificationEpsilon(10));
         Assert.Equal(0.0005, HighwayZoomRules.GetSimplificationEpsilon(11));
+        Assert.Equal(0.0001, HighwayZoomRules.GetSimplificationEpsilon(12));
     }
 
     private static Feature CreateFeature(string highway, string? trailVisibility = null, string? sacScale = null)

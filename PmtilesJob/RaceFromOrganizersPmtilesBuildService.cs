@@ -31,17 +31,6 @@ public class RaceFromOrganizersPmtilesBuildService
     {
         WriteIndented = true,
     };
-    private static readonly JsonSerializerOptions GeoJsonSerializerOptions = new(JsonSerializerDefaults.Web)
-    {
-        WriteIndented = false,
-    };
-
-    static RaceFromOrganizersPmtilesBuildService()
-    {
-        GeoJsonSerializerOptions.Converters.Add(new GeometrySystemTextJsonConverter());
-        GeoJsonSerializerOptions.Converters.Add(new FeatureIdJsonConverter());
-    }
-
     public RaceFromOrganizersPmtilesBuildService(
         BlobOrganizerStore organizerStore,
         BlobServiceClient blobServiceClient,
@@ -209,7 +198,7 @@ public class RaceFromOrganizersPmtilesBuildService
                 if (featureCount > 0)
                     await writer.WriteAsync(",");
 
-                await writer.WriteAsync(JsonSerializer.Serialize(geoJsonFeature, GeoJsonSerializerOptions));
+                await writer.WriteAsync(geoJsonFeature.ToJson());
                 featureCount++;
             }
             featureProjectionStopwatch.Stop();
@@ -304,9 +293,11 @@ public class RaceFromOrganizersPmtilesBuildService
         {
             geocodingMetrics = nominatim.GetMetricsSnapshot();
             _logger.LogInformation(
-                "Geocoding summary for build: total {TotalRequests} | cache hits {CacheHits} | cache misses {CacheMisses} | live requests {LiveRequests} | resolved {ResolvedRequests} | misses {MissedRequests} | 429s {RateLimitedResponses}",
+                "Geocoding summary for build: total {TotalRequests} | memory hits {MemoryCacheHits} | shared cache hits {SharedCacheHits} | source lookups {SourceLookups} | cache misses {CacheMisses} | live requests {LiveRequests} | resolved {ResolvedRequests} | misses {MissedRequests} | 429s {RateLimitedResponses}",
                 geocodingMetrics.TotalRequests,
-                geocodingMetrics.CacheHits,
+                geocodingMetrics.MemoryCacheHits,
+                geocodingMetrics.SharedCacheHits,
+                geocodingMetrics.SourceLookups,
                 geocodingMetrics.CacheMisses,
                 geocodingMetrics.LiveRequests,
                 geocodingMetrics.ResolvedRequests,
