@@ -95,7 +95,12 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
         "demanding_mountain_hiking",
         "alpine_hiking",
         "demanding_alpine_hiking",
-        "difficult_alpine_hiking"
+        "difficult_alpine_hiking",
+        "true",
+        "false",
+        "bridge",
+        "boardwalk",
+        "tunnel"
     ];
 
     private static readonly string[] WidthCandidates =
@@ -334,7 +339,10 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
         {
             [ShardEncodingIds.TagIdFromString("highway")] = "highway",
             [ShardEncodingIds.TagIdFromString("oneway")] = "oneway",
+            [ShardEncodingIds.TagIdFromString("bridge")] = "bridge",
+            [ShardEncodingIds.TagIdFromString("brunnel")] = "brunnel",
             [ShardEncodingIds.TagIdFromString("footway")] = "footway",
+            [ShardEncodingIds.TagIdFromString("informal")] = "informal",
             [ShardEncodingIds.TagIdFromString("surface")] = "surface",
             [ShardEncodingIds.TagIdFromString("width")] = "width",
             [ShardEncodingIds.TagIdFromString("smoothness")] = "smoothness",
