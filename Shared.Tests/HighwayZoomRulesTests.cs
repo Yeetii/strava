@@ -42,8 +42,7 @@ public class HighwayZoomRulesTests
         Assert.True(HighwayZoomRules.ShouldKeepFeature(CreateFeature("tertiary"), 10));
         Assert.False(HighwayZoomRules.ShouldKeepFeature(CreateFeature("service"), 11));
         Assert.True(HighwayZoomRules.ShouldKeepFeature(CreateFeature("service"), 12));
-        Assert.False(HighwayZoomRules.ShouldKeepFeature(CreateFeature("residential"), 12));
-        Assert.True(HighwayZoomRules.ShouldKeepFeature(CreateFeature("residential"), 13));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(CreateFeature("residential"), 12));
     }
 
     [Fact]
@@ -51,8 +50,8 @@ public class HighwayZoomRulesTests
     {
         var localRoad = CreateFeature("busway");
 
-        Assert.False(HighwayZoomRules.ShouldKeepFeature(localRoad, 13));
-        Assert.True(HighwayZoomRules.ShouldKeepFeature(localRoad, 14));
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(localRoad, 11));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(localRoad, 12));
         Assert.True(HighwayZoomRules.ShouldKeepFeature(localRoad, 15));
     }
 

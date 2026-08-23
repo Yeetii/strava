@@ -165,11 +165,14 @@ public static class HighwayZoomRules
         if (value is "service" or "services")
             return zoom >= 12;
 
+        // Highway tiles are materialized only through canonical z12 shards and
+        // then overzoomed on the client, so any class gated above z12 would
+        // never render at all.
         if (value is "residential" or "living_street")
-            return zoom >= 13;
+            return zoom >= 12;
 
         if (LocalRoads.Contains(value))
-            return zoom >= 14;
+            return zoom >= 12;
 
         if (IsTrailValue(value))
             return zoom >= GetTrailMinimumZoom(value, trailVisibility, sacScale);
