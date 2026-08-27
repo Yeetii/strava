@@ -207,75 +207,63 @@ public class PostMcp(HttpClient httpClient, IConfiguration configuration)
 
     private static object CreateInitializeResult() => new
     {
-        result = new
+        protocolVersion = "2025-06-18",
+        capabilities = new
         {
-            protocolVersion = "2025-06-18",
-            capabilities = new
-            {
-                tools = new { },
-            },
-            serverInfo = new
-            {
-                name = "strava-graphhopper-mcp",
-                version = "1.0.0",
-            },
+            tools = new { },
         },
-    };
-
-    private static object CreateAcceptedResult() => new
-    {
-        jsonrpc = "2.0",
-        result = new { },
+        serverInfo = new
+        {
+            name = "strava-graphhopper-mcp",
+            version = "1.0.0",
+        },
     };
 
     private static object CreateToolsListResult() => new
     {
-        result = new
+        tools = new[]
         {
-            tools = new[]
+            new
             {
-                new
+                name = "post_graphhopper_route_simple",
+                description = "Call GraphHopper routing with only two points and a routing type.",
+                inputSchema = new
                 {
-                    name = "post_graphhopper_route_simple",
-                    description = "Call GraphHopper routing with only two points and a routing type.",
-                    inputSchema = new
+                    type = "object",
+                    additionalProperties = false,
+                    properties = new
                     {
-                        type = "object",
-                        additionalProperties = false,
-                        properties = new
+                        from = new
                         {
-                            from = new
+                            type = "object",
+                            additionalProperties = false,
+                            properties = new
                             {
-                                type = "object",
-                                additionalProperties = false,
-                                properties = new
-                                {
-                                    lon = new { type = "number" },
-                                    lat = new { type = "number" },
-                                },
-                                required = new[] { "lon", "lat" },
+                                lon = new { type = "number" },
+                                lat = new { type = "number" },
                             },
-                            to = new
-                            {
-                                type = "object",
-                                additionalProperties = false,
-                                properties = new
-                                {
-                                    lon = new { type = "number" },
-                                    lat = new { type = "number" },
-                                },
-                                required = new[] { "lon", "lat" },
-                            },
-                            routingType = new
-                            {
-                                type = "string",
-                                @enum = new[] { "foot", "hike", "bike", "mtb", "racingbike" },
-                            },
+                            required = new[] { "lon", "lat" },
                         },
-                        required = new[] { "from", "to", "routingType" },
+                        to = new
+                        {
+                            type = "object",
+                            additionalProperties = false,
+                            properties = new
+                            {
+                                lon = new { type = "number" },
+                                lat = new { type = "number" },
+                            },
+                            required = new[] { "lon", "lat" },
+                        },
+                        routingType = new
+                        {
+                            type = "string",
+                            @enum = new[] { "foot", "hike", "bike", "mtb", "racingbike" },
+                        },
                     },
-                }
-            },
+                    required = new[] { "from", "to", "routingType" },
+                },
+            }
         },
     };
 
