@@ -2,14 +2,24 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Shared.Models;
+using Shared.Services;
 
 namespace API.Endpoints.Mcp;
 
-public class PostMcp(HttpClient httpClient, IConfiguration configuration)
+public class PostMcp(
+    HttpClient httpClient,
+    IConfiguration configuration,
+    [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient peaksCollection)
 {
+    private const int MinPeakRadiusMetres = (int)10E3;
+    private const int MaxPeakRadiusMetres = (int)100E3;
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -108,11 +118,21 @@ public class PostMcp(HttpClient httpClient, IConfiguration configuration)
         }
 
         var toolName = paramsElement.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
-        if (!string.Equals(toolName, "post_graphhopper_route_simple", StringComparison.Ordinal))
+        if (string.Equals(toolName, "post_graphhopper_route_simple", StringComparison.Ordinal))
         {
-            return CreateJsonRpcError(id, -32601, $"Unknown tool: {toolName}");
+            return await HandleRouteToolAsync(id, paramsElement);
         }
 
+        if (string.Equals(toolName, "get_peaks", StringComparison.Ordinal))
+        {
+            return await HandleGetPeaksToolAsync(id, paramsElement, peaksCollection);
+        }
+
+        return CreateJsonRpcError(id, -32601, $"Unknown tool: {toolName}");
+    }
+
+    private async Task<object> HandleRouteToolAsync(object? id, JsonElement paramsElement)
+    {
         if (!paramsElement.TryGetProperty("arguments", out var argumentsElement))
         {
             return CreateJsonRpcError(id, -32602, "Missing arguments");
@@ -146,23 +166,41 @@ public class PostMcp(HttpClient httpClient, IConfiguration configuration)
         using var upstreamResponse = await httpClient.SendAsync(upstreamRequest);
         var responseBody = await upstreamResponse.Content.ReadAsStringAsync();
 
-        return new
+        return CreateToolResult(id, responseBody, !upstreamResponse.IsSuccessStatusCode);
+    }
+
+    private async Task<object> HandleGetPeaksToolAsync(object? id, JsonElement paramsElement, TiledCollectionClient peaksCollection)
+    {
+        if (!paramsElement.TryGetProperty("arguments", out var argumentsElement))
         {
-            jsonrpc = "2.0",
-            id,
-            result = new
-            {
-                content = new object[]
-                {
-                    new
-                    {
-                        type = "text",
-                        text = responseBody,
-                    }
-                },
-                isError = !upstreamResponse.IsSuccessStatusCode,
-            },
-        };
+            return CreateJsonRpcError(id, -32602, "Missing arguments");
+        }
+
+        GetPeaksRequest? peaksRequest;
+        try
+        {
+            peaksRequest = argumentsElement.Deserialize<GetPeaksRequest>(JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return CreateJsonRpcError(id, -32602, "Invalid arguments");
+        }
+
+        if (peaksRequest is null)
+        {
+            return CreateJsonRpcError(id, -32602, "Invalid arguments");
+        }
+
+        if (!TryBuildPeaksQuery(peaksRequest, out var center, out var radius, out var validationError))
+        {
+            return CreateJsonRpcError(id, -32602, validationError);
+        }
+
+        var peaks = await peaksCollection.GeoSpatialFetch(center, radius, CancellationToken.None);
+        var featureCollection = new FeatureCollection(peaks.Select(x => x.ToFeature()).ToList());
+        var responseBody = JsonSerializer.Serialize(featureCollection, JsonOptions);
+
+        return CreateToolResult(id, responseBody, isError: false);
     }
 
     private static bool TryBuildGraphHopperPayload(RouteRequest request, out object payload, out string error)
@@ -221,7 +259,7 @@ public class PostMcp(HttpClient httpClient, IConfiguration configuration)
 
     private static object CreateToolsListResult() => new
     {
-        tools = new[]
+        tools = new object[]
         {
             new
             {
@@ -262,6 +300,29 @@ public class PostMcp(HttpClient httpClient, IConfiguration configuration)
                         },
                     },
                     required = new[] { "from", "to", "routingType" },
+                },
+            },
+            new
+            {
+                name = "get_peaks",
+                description = "Fetch nearby peaks around a latitude and longitude. Radius is optional and capped at 100 km.",
+                inputSchema = new
+                {
+                    type = "object",
+                    additionalProperties = false,
+                    properties = new
+                    {
+                        lat = new { type = "number" },
+                        lon = new { type = "number" },
+                        radius = new
+                        {
+                            type = "integer",
+                            minimum = 1,
+                            maximum = MaxPeakRadiusMetres,
+                            description = "Radius in metres. Optional; the server clamps values to 40,000-100,000 metres.",
+                        },
+                    },
+                    required = new[] { "lat", "lon" },
                 },
             }
         },
@@ -324,7 +385,46 @@ public class PostMcp(HttpClient httpClient, IConfiguration configuration)
         result,
     };
 
+    private static object CreateToolResult(object? id, string text, bool isError) => new
+    {
+        jsonrpc = "2.0",
+        id,
+        result = new
+        {
+            content = new object[]
+            {
+                new
+                {
+                    type = "text",
+                    text,
+                }
+            },
+            isError,
+        },
+    };
+
+    private static bool TryBuildPeaksQuery(GetPeaksRequest request, out Coordinate center, out int radius, out string error)
+    {
+        center = new Coordinate(0, 0);
+        radius = default;
+        error = string.Empty;
+
+        if (Math.Abs(request.Lat) > 90 || Math.Abs(request.Lon) > 180)
+        {
+            error = "lat and lon must be valid coordinates";
+            return false;
+        }
+
+        center = new Coordinate(request.Lon, request.Lat);
+        radius = request.Radius is int requestedRadius
+            ? Math.Min(Math.Max(requestedRadius, MinPeakRadiusMetres), MaxPeakRadiusMetres)
+            : MaxPeakRadiusMetres;
+        return true;
+    }
+
     private sealed record RouteRequest(Point? From, Point? To, string? RoutingType);
+
+    private sealed record GetPeaksRequest(double Lat, double Lon, int? Radius);
 
     private sealed record Point(double Lon, double Lat);
 
