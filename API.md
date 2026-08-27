@@ -479,6 +479,23 @@ Proxy to GraphHopper routing API.
 
 **Response** — GraphHopper response, status code and body passed through verbatim.
 
+### `POST /mcp`
+
+Anonymous remote MCP endpoint exposing `post_graphhopper_route_simple`.
+
+**Request body** `application/json` — MCP JSON-RPC requests
+
+**Transport** — Streamable HTTP / JSON-RPC over POST
+
+**Tool input**
+```ts
+{
+  from: { lon: number; lat: number }
+  to: { lon: number; lat: number }
+  routingType: "foot" | "hike" | "bike" | "mtb" | "racingbike"
+}
+```
+
 ---
 
 ## Job Queue
