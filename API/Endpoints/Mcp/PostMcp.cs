@@ -208,9 +208,15 @@ public class PostMcp(
         payload = default!;
         error = string.Empty;
 
-        if (request.From is null || request.To is null)
+        if (request.Points is null || request.Points.Count < 2)
         {
-            error = "from and to are required";
+            error = "points must contain at least two coordinates";
+            return false;
+        }
+
+        if (request.Points.Any(point => Math.Abs(point.Lat) > 90 || Math.Abs(point.Lon) > 180))
+        {
+            error = "all points must be valid coordinates";
             return false;
         }
 
@@ -222,11 +228,7 @@ public class PostMcp(
 
         var basePayload = new Dictionary<string, object?>
         {
-            ["points"] = new[]
-            {
-                new[] { request.From.Lon, request.From.Lat },
-                new[] { request.To.Lon, request.To.Lat },
-            },
+            ["points"] = request.Points.Select(point => new[] { point.Lon, point.Lat }).ToArray(),
             ["profile"] = profile.Profile,
             ["elevation"] = true,
             ["points_encoded"] = false,
@@ -264,34 +266,28 @@ public class PostMcp(
             new
             {
                 name = "post_graphhopper_route_simple",
-                description = "Call GraphHopper routing with only two points and a routing type.",
+                description = "Call GraphHopper routing with a list of points and a routing type.",
                 inputSchema = new
                 {
                     type = "object",
                     additionalProperties = false,
                     properties = new
                     {
-                        from = new
+                        points = new
                         {
-                            type = "object",
-                            additionalProperties = false,
-                            properties = new
+                            type = "array",
+                            minItems = 2,
+                            items = new
                             {
-                                lon = new { type = "number" },
-                                lat = new { type = "number" },
+                                type = "object",
+                                additionalProperties = false,
+                                properties = new
+                                {
+                                    lon = new { type = "number" },
+                                    lat = new { type = "number" },
+                                },
+                                required = new[] { "lon", "lat" },
                             },
-                            required = new[] { "lon", "lat" },
-                        },
-                        to = new
-                        {
-                            type = "object",
-                            additionalProperties = false,
-                            properties = new
-                            {
-                                lon = new { type = "number" },
-                                lat = new { type = "number" },
-                            },
-                            required = new[] { "lon", "lat" },
                         },
                         routingType = new
                         {
@@ -299,7 +295,7 @@ public class PostMcp(
                             @enum = new[] { "foot", "hike", "bike", "mtb", "racingbike" },
                         },
                     },
-                    required = new[] { "from", "to", "routingType" },
+                    required = new[] { "points", "routingType" },
                 },
             },
             new
@@ -422,7 +418,7 @@ public class PostMcp(
         return true;
     }
 
-    private sealed record RouteRequest(Point? From, Point? To, string? RoutingType);
+    private sealed record RouteRequest(IReadOnlyList<Point>? Points, string? RoutingType);
 
     private sealed record GetPeaksRequest(double Lat, double Lon, int? Radius);
 

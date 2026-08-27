@@ -490,8 +490,7 @@ Anonymous remote MCP endpoint exposing `post_graphhopper_route_simple`.
 **Tool input**
 ```ts
 {
-  from: { lon: number; lat: number }
-  to: { lon: number; lat: number }
+  points: Array<{ lon: number; lat: number }>
   routingType: "foot" | "hike" | "bike" | "mtb" | "racingbike"
 }
 ```
