@@ -95,8 +95,12 @@ public class ShardStackTests
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("oneway"), ValueId = ShardEncodingIds.TagIdFromString("yes") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("bridge"), ValueId = ShardEncodingIds.TagIdFromString("yes") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("brunnel"), ValueId = ShardEncodingIds.TagIdFromString("bridge") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("tunnel"), ValueId = ShardEncodingIds.TagIdFromString("yes") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("footway"), ValueId = ShardEncodingIds.TagIdFromString("informal") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("informal"), ValueId = ShardEncodingIds.TagIdFromString("yes") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("foot"), ValueId = ShardEncodingIds.TagIdFromString("designated") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("bicycle"), ValueId = ShardEncodingIds.TagIdFromString("no") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("access"), ValueId = ShardEncodingIds.TagIdFromString("permissive") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("surface"), ValueId = ShardEncodingIds.TagIdFromString("dirt") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("width"), ValueId = ShardEncodingIds.TagIdFromString("1.5") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("trail_visibility"), ValueId = ShardEncodingIds.TagIdFromString("intermediate") },
@@ -120,8 +124,12 @@ public class ShardStackTests
         Assert.Equal("yes", Assert.IsType<string>(features[0].Properties["oneway"]));
         Assert.Equal("yes", Assert.IsType<string>(features[0].Properties["bridge"]));
         Assert.Equal("bridge", Assert.IsType<string>(features[0].Properties["brunnel"]));
+        Assert.Equal("yes", Assert.IsType<string>(features[0].Properties["tunnel"]));
         Assert.Equal("informal", Assert.IsType<string>(features[0].Properties["footway"]));
         Assert.Equal("yes", Assert.IsType<string>(features[0].Properties["informal"]));
+        Assert.Equal("designated", Assert.IsType<string>(features[0].Properties["foot"]));
+        Assert.Equal("no", Assert.IsType<string>(features[0].Properties["bicycle"]));
+        Assert.Equal("permissive", Assert.IsType<string>(features[0].Properties["access"]));
         Assert.Equal("dirt", Assert.IsType<string>(features[0].Properties["surface"]));
         Assert.Equal("1.5", Assert.IsType<string>(features[0].Properties["width"]));
         Assert.Equal("intermediate", Assert.IsType<string>(features[0].Properties["trail_visibility"]));
