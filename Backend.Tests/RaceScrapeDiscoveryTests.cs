@@ -266,7 +266,7 @@ public class RaceScrapeDiscoveryTests
 
         var enriched = SkyrunningDiscoveryAgent.EnrichJobFromEventPageHtml(job, html, job.WebsiteUrl!);
 
-        Assert.Equal("http://www.skyruneryri.com/", enriched.WebsiteUrl!.AbsoluteUri);
+        Assert.Equal("https://www.skyruneryri.com/", enriched.WebsiteUrl!.AbsoluteUri);
     }
 
     [Fact]
@@ -1283,7 +1283,7 @@ public class RaceScrapeDiscoveryTests
     [InlineData("stafett", "relay")]
     [InlineData("motbakke", "uphill")]
     [InlineData("vertical", "vertical")]
-    [InlineData("vertikal", "uphill")]
+    [InlineData("vertikal", "vertical")]
     [InlineData("sky", "skyrunning")]
     [InlineData("skysnow", "skyrunning, snow")]
     [InlineData("skyultra", "skyrunning")]

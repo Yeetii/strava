@@ -24,6 +24,7 @@ public class VisitedAreasWorker(
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     private const int AreaTileZoom = 8;
+    private const int AdminBoundaryTileZoom = 6;
     private const int AdminLevelRegion = 4;
     private const int MaxAdminBoundaryLookupPoints = 120;
 
@@ -115,6 +116,7 @@ public class VisitedAreasWorker(
                 activityId,
                 boundaryLookupPoints.Count);
 
+            await EnsureAdminRegionsCachedForActivity(boundaryLookupPoints, cancellationToken);
             var nearbyRegions = (await FetchAdminRegionsForActivity(boundaryLookupPoints, cancellationToken)).ToList();
 
             if (nearbyRegions.Count == 0)
@@ -435,27 +437,17 @@ public class VisitedAreasWorker(
                 cancellationToken))
             .ToDictionary(doc => doc.Id, StringComparer.Ordinal);
 
-        var validatedSummaries = summaries
-            .Select(summary => boundaryDocsById.TryGetValue(summary.Id, out var boundaryDoc)
-                && ActivityIntersectsBoundary(activityPoints, boundaryDoc.Geometry)
-                    ? MergeSummaryWithBoundaryDoc(summary, boundaryDoc)
-                    : null)
-            .Where(summary => summary is not null)
-            .Select(summary => summary!)
-            .ToList();
+        var validatedSummaries = ValidateAdminRegionCandidates(
+            summaries,
+            boundaryDocsById,
+            activityPoints);
 
         if (validatedSummaries.Count == 0)
         {
-            var mergedCandidates = summaries
-                .Select(summary => boundaryDocsById.TryGetValue(summary.Id, out var boundaryDoc)
-                    ? MergeSummaryWithBoundaryDoc(summary, boundaryDoc)
-                    : summary)
-                .ToList();
-
             _logger.LogWarning(
-                "All {CandidateCount} admin region candidates for this activity were rejected by local geometry validation; falling back to ST_WITHIN candidates.",
+                "All {CandidateCount} admin region candidates for this activity were rejected by local geometry validation.",
                 summaries.Count);
-            return mergedCandidates;
+            return [];
         }
 
         _logger.LogDebug(
@@ -463,6 +455,34 @@ public class VisitedAreasWorker(
             summaries.Count,
             validatedSummaries.Count);
         return validatedSummaries;
+    }
+
+    private async Task EnsureAdminRegionsCachedForActivity(
+        List<Coordinate> activityPoints,
+        CancellationToken cancellationToken)
+    {
+        if (activityPoints.Count == 0)
+            return;
+
+        var tiles = SampleCoordinatesForAdminBoundaryLookup(activityPoints)
+            .Select(point => SlippyTileCalculator.WGS84ToTileIndex(point, AdminBoundaryTileZoom))
+            .Distinct()
+            .ToList();
+
+        if (tiles.Count == 0)
+            return;
+
+        var cached = (await _adminBoundariesCollection.FetchByTiles(
+            tiles,
+            AdminLevelRegion,
+            zoom: AdminBoundaryTileZoom,
+            followPointers: true,
+            cancellationToken: cancellationToken)).Count();
+
+        _logger.LogDebug(
+            "Warmed {TileCount} admin boundary tiles for activity lookup, yielding {BoundaryCount} cached region documents",
+            tiles.Count,
+            cached);
     }
 
     private static StoredFeatureSummary MergeSummaryWithBoundaryDoc(
@@ -513,7 +533,22 @@ public class VisitedAreasWorker(
         return sampled;
     }
 
-    private static string? GetRoutePolyline(Activity activity)
+    internal static List<StoredFeatureSummary> ValidateAdminRegionCandidates(
+        IEnumerable<StoredFeatureSummary> summaries,
+        IReadOnlyDictionary<string, StoredFeature> boundaryDocsById,
+        IEnumerable<Coordinate> activityPoints)
+    {
+        return summaries
+            .Select(summary => boundaryDocsById.TryGetValue(summary.Id, out var boundaryDoc)
+                && ActivityIntersectsBoundary(activityPoints, boundaryDoc.Geometry)
+                    ? MergeSummaryWithBoundaryDoc(summary, boundaryDoc)
+                    : null)
+            .Where(summary => summary is not null)
+            .Select(summary => summary!)
+            .ToList();
+    }
+
+    internal static string? GetRoutePolyline(Activity activity)
     {
         if (!string.IsNullOrWhiteSpace(activity.Polyline))
             return activity.Polyline;
@@ -524,11 +559,8 @@ public class VisitedAreasWorker(
         return null;
     }
 
-    private static string? GetBoundaryLookupPolyline(Activity activity)
+    internal static string? GetBoundaryLookupPolyline(Activity activity)
     {
-        if (!string.IsNullOrWhiteSpace(activity.SummaryPolyline))
-            return activity.SummaryPolyline;
-
         return GetRoutePolyline(activity);
     }
 
