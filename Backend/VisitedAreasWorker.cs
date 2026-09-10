@@ -184,7 +184,10 @@ public class VisitedAreasWorker(
             var documentIds = visitedAreas
                 .Select(area => activity.UserId + "-" + area.AreaId)
                 .ToList();
-            var existingDocs = (await _visitedAreasCollection.GetByIdsAsync(documentIds, cancellationToken))
+            var existingDocs = (await _visitedAreasCollection.GetByIdsAsync(
+                    documentIds,
+                    partitionKey,
+                    cancellationToken))
                 .ToDictionary(doc => doc.Id, StringComparer.Ordinal);
 
             var toCreate = new List<VisitedArea>();
@@ -599,8 +602,14 @@ WHERE c.userId = @userId
             .WithParameter("@userId", userId)
             .WithParameter("@activityId", activityId);
 
+        var requestOptions = new QueryRequestOptions
+        {
+            PartitionKey = new PartitionKey(userId)
+        };
+
         return (await _visitedAreasCollection.ExecuteQueryAsync<ActivityLinkedDocumentProjection>(
             query,
+            requestOptions,
             cancellationToken: cancellationToken)).ToList();
     }
 

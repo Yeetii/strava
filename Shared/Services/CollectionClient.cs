@@ -136,6 +136,12 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
     }
 
     public virtual async Task<IEnumerable<T>> GetByIdsAsync(IEnumerable<string> ids, CancellationToken cancellationToken = default)
+        => await GetByIdsAsync(ids, partitionKey: null, cancellationToken);
+
+    public virtual async Task<IEnumerable<T>> GetByIdsAsync(
+        IEnumerable<string> ids,
+        PartitionKey? partitionKey,
+        CancellationToken cancellationToken = default)
     {
         const int MaxIdsPerQuery = 256;
         var allDocuments = new List<T>();
@@ -157,7 +163,13 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
                 queryDefinition.WithParameter($"@id{i}", chunk[i]);
             }
 
-            var queryResult = await ExecuteQueryAsync<T>(queryDefinition, cancellationToken: cancellationToken);
+            var requestOptions = partitionKey.HasValue
+                ? new QueryRequestOptions { PartitionKey = partitionKey.Value }
+                : null;
+            var queryResult = await ExecuteQueryAsync<T>(
+                queryDefinition,
+                requestOptions: requestOptions,
+                cancellationToken: cancellationToken);
             allDocuments.AddRange(queryResult);
         }
 
