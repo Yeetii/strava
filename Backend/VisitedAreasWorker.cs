@@ -23,10 +23,12 @@ public class VisitedAreasWorker(
     UserSyncStatusService _userSyncStatusService)
 {
     private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+    private const int MaxDegreeOfParallelism = 1;
     private const int AreaTileZoom = 8;
     private const int AdminBoundaryTileZoom = 6;
     private const int AdminLevelRegion = 4;
     private const int MaxAdminBoundaryLookupPoints = 120;
+    private static readonly TimeSpan CosmosPressureWriteDeferralDelay = TimeSpan.FromMinutes(5);
 
     private sealed record VisitedAreaCandidate(
         string AreaId,
@@ -68,7 +70,7 @@ public class VisitedAreasWorker(
 
         var nearbyAreas = (await FetchNearbyAreas(activitiesList)).ToList();
 
-        var semaphore = new SemaphoreSlim(4, 4);
+        var semaphore = new SemaphoreSlim(MaxDegreeOfParallelism, MaxDegreeOfParallelism);
         var processingTasks = jobs.Select(async job =>
         {
             await semaphore.WaitAsync(cancellationToken);
@@ -141,6 +143,21 @@ public class VisitedAreasWorker(
                 .Concat(FindVisitedRegionAreas(nearbyRegions))
                 .Concat(FindVisitedCountriesFromRegions(nearbyRegions))
                 .ToList();
+
+            if (hasRealLockToken && ServiceBusRescheduler.IsCosmosUnderPressure)
+            {
+                await ServiceBusRescheduler.DeferMessagesAsync(
+                    _serviceBusClient,
+                    Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs,
+                    [job],
+                    actions,
+                    _logger,
+                    cancellationToken,
+                    CosmosPressureWriteDeferralDelay,
+                    "Visited areas worker is low priority and Cosmos is under pressure before write phase");
+                return;
+            }
+
             var currentDocumentIds = visitedAreas
                 .Select(area => activity.UserId + "-" + area.AreaId)
                 .ToHashSet(StringComparer.Ordinal);
@@ -213,7 +230,12 @@ public class VisitedAreasWorker(
                 toCreate.Count,
                 toPatch.Count,
                 string.Join(", ", documentIds));
-            await _visitedAreasCollection.ExecuteBatch(partitionKey, creates: toCreate, patches: toPatch, cancellationToken: cancellationToken);
+            await _visitedAreasCollection.ExecuteBatch(
+                partitionKey,
+                creates: toCreate,
+                patches: toPatch,
+                priority: CosmosWritePriority.Low,
+                cancellationToken: cancellationToken);
             _logger.LogInformation("Batch write complete for activity {ActivityId}", activityId);
             await CleanupStaleVisitedAreaDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
@@ -613,7 +635,11 @@ WHERE c.userId = @userId
         }
 
         if (stalePatches.Count > 0)
-            await _visitedAreasCollection.ExecuteBatch(partitionKey, patches: stalePatches, cancellationToken: cancellationToken);
+            await _visitedAreasCollection.ExecuteBatch(
+                partitionKey,
+                patches: stalePatches,
+                priority: CosmosWritePriority.Low,
+                cancellationToken: cancellationToken);
 
         foreach (var staleDelete in staleDeletes)
             await _visitedAreasCollection.DeleteDocument(staleDelete, partitionKey, cancellationToken);

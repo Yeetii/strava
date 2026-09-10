@@ -14,8 +14,12 @@ internal static class CosmosWriteThrottle
 {
     internal static readonly SemaphoreSlim Semaphore = new(1, 1);
     internal static readonly TimeSpan DelayBetweenWrites = TimeSpan.FromMilliseconds(50);
+    internal static readonly TimeSpan LowPriorityDelayBetweenWrites = TimeSpan.FromMilliseconds(250);
     private const int PriorityPollDelayMs = 25;
     private static int _highPriorityWaiters;
+
+    internal static TimeSpan GetDelayAfterWrite(CosmosWritePriority priority)
+        => priority == CosmosWritePriority.Low ? LowPriorityDelayBetweenWrites : DelayBetweenWrites;
 
     internal static async Task WaitForTurnAsync(CosmosWritePriority priority, CancellationToken cancellationToken)
     {
@@ -187,7 +191,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
             await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
             // Delay is intentionally held inside the lock: releasing first would allow the
             // next waiter to start immediately, bypassing the intended write-rate cap.
-            await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+            await Task.Delay(CosmosWriteThrottle.GetDelayAfterWrite(priority), cancellationToken);
         }
         finally
         {
@@ -217,7 +221,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
                     await _container.UpsertItemAsync(document, cancellationToken: cancellationToken);
                     // Delay is intentionally held inside the lock: releasing first would allow the
                     // next waiter to start immediately, bypassing the intended write-rate cap.
-                    await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+                    await Task.Delay(CosmosWriteThrottle.GetDelayAfterWrite(priority), cancellationToken);
                 }
                 finally
                 {
@@ -388,7 +392,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
                 ? null
                 : new PatchItemRequestOptions { IfMatchEtag = ifMatchEtag };
             await _container.PatchItemAsync<T>(id, partitionKey, operations, requestOptions, cancellationToken);
-            await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+            await Task.Delay(CosmosWriteThrottle.GetDelayAfterWrite(priority), cancellationToken);
         }
         finally
         {
@@ -414,7 +418,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
                 {
                     await _container.PatchItemAsync<T>(id, partitionKey, operations, cancellationToken: cancellationToken);
                 }
-                await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+                await Task.Delay(CosmosWriteThrottle.GetDelayAfterWrite(priority), cancellationToken);
             }
             finally
             {
@@ -448,6 +452,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
         PartitionKey partitionKey,
         IEnumerable<T>? creates = null,
         IEnumerable<(string Id, IReadOnlyList<PatchOperation> Operations)>? patches = null,
+        CosmosWritePriority priority = CosmosWritePriority.Normal,
         CancellationToken cancellationToken = default)
     {
         // Cosmos transactional batches are capped at 100 operations; chunk accordingly.
@@ -476,7 +481,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
                 count++;
             }
 
-            await CosmosWriteThrottle.Semaphore.WaitAsync(cancellationToken);
+            await CosmosWriteThrottle.WaitForTurnAsync(priority, cancellationToken);
             try
             {
                 using var response = await batch.ExecuteAsync(cancellationToken);
@@ -484,7 +489,7 @@ public class CollectionClient<T>(Container _container, ILoggerFactory loggerFact
                     throw new CosmosException(
                         $"Batch failed with status {response.StatusCode}",
                         response.StatusCode, 0, response.ActivityId, response.RequestCharge);
-                await Task.Delay(CosmosWriteThrottle.DelayBetweenWrites, cancellationToken);
+                await Task.Delay(CosmosWriteThrottle.GetDelayAfterWrite(priority), cancellationToken);
             }
             finally
             {
