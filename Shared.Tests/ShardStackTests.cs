@@ -101,6 +101,7 @@ public class ShardStackTests
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("foot"), ValueId = ShardEncodingIds.TagIdFromString("designated") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("bicycle"), ValueId = ShardEncodingIds.TagIdFromString("no") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("access"), ValueId = ShardEncodingIds.TagIdFromString("permissive") },
+                    new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("snowmobile"), ValueId = ShardEncodingIds.TagIdFromString("yes") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("surface"), ValueId = ShardEncodingIds.TagIdFromString("dirt") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("width"), ValueId = ShardEncodingIds.TagIdFromString("1.5") },
                     new ShardTag { KeyId = ShardEncodingIds.TagIdFromString("trail_visibility"), ValueId = ShardEncodingIds.TagIdFromString("intermediate") },
@@ -130,6 +131,7 @@ public class ShardStackTests
         Assert.Equal("designated", Assert.IsType<string>(features[0].Properties["foot"]));
         Assert.Equal("no", Assert.IsType<string>(features[0].Properties["bicycle"]));
         Assert.Equal("permissive", Assert.IsType<string>(features[0].Properties["access"]));
+        Assert.Equal("yes", Assert.IsType<string>(features[0].Properties["snowmobile"]));
         Assert.Equal("dirt", Assert.IsType<string>(features[0].Properties["surface"]));
         Assert.Equal("1.5", Assert.IsType<string>(features[0].Properties["width"]));
         Assert.Equal("intermediate", Assert.IsType<string>(features[0].Properties["trail_visibility"]));

@@ -101,20 +101,23 @@ public static class HighwayZoomRules
 
     private static readonly uint HighwayTagKeyId = ShardEncodingIds.TagIdFromString("highway");
     private static readonly uint FootwayTagKeyId = ShardEncodingIds.TagIdFromString("footway");
+    private static readonly uint SnowmobileTagKeyId = ShardEncodingIds.TagIdFromString("snowmobile");
     private static readonly uint TrailVisibilityTagKeyId = ShardEncodingIds.TagIdFromString("trail_visibility");
     private static readonly uint SacScaleTagKeyId = ShardEncodingIds.TagIdFromString("sac_scale");
     private static readonly Dictionary<uint, string> TagValueLookup = BuildTagValueLookup();
 
     public static bool ShouldKeepFeature(Feature feature, int zoom)
     {
-        var (highway, footway, trailVisibility, sacScale) = GetRoadClassifications(feature.Properties);
-        return ShouldKeepClassification(highway, footway, trailVisibility, sacScale, zoom);
+        var (highway, footway, snowmobile, trailVisibility, sacScale) =
+            GetRoadClassifications(feature.Properties);
+        return ShouldKeepClassification(highway, footway, snowmobile, trailVisibility, sacScale, zoom);
     }
 
     public static bool ShouldKeepFeature(ShardFeature feature, int zoom)
     {
         string? highway = null;
         string? footway = null;
+        string? snowmobile = null;
         string? trailVisibility = null;
         string? sacScale = null;
 
@@ -124,13 +127,15 @@ public static class HighwayZoomRules
                 highway = DecodeValue(tag.ValueId);
             else if (tag.KeyId == FootwayTagKeyId)
                 footway = DecodeValue(tag.ValueId);
+            else if (tag.KeyId == SnowmobileTagKeyId)
+                snowmobile = DecodeValue(tag.ValueId);
             else if (tag.KeyId == TrailVisibilityTagKeyId)
                 trailVisibility = DecodeValue(tag.ValueId);
             else if (tag.KeyId == SacScaleTagKeyId)
                 sacScale = DecodeValue(tag.ValueId);
         }
 
-        return ShouldKeepClassification(highway, footway, trailVisibility, sacScale, zoom);
+        return ShouldKeepClassification(highway, footway, snowmobile, trailVisibility, sacScale, zoom);
     }
 
     public static double GetSimplificationEpsilon(int zoom)
@@ -145,14 +150,26 @@ public static class HighwayZoomRules
             _ => 0d
         };
 
-    private static bool ShouldKeepClassification(string? highway, string? footway, string? trailVisibility, string? sacScale, int zoom)
+    private static bool ShouldKeepClassification(
+        string? highway,
+        string? footway,
+        string? snowmobile,
+        string? trailVisibility,
+        string? sacScale,
+        int zoom)
     {
         var values = GetDistinctNonEmptyValues(highway, footway);
+        if (HasSnowmobileAccess(snowmobile) && zoom >= 7)
+            return true;
+
         if (values.Count == 0)
             return false;
 
         return values.Any(value => IsVisibleAtZoom(value, trailVisibility, sacScale, zoom));
     }
+
+    private static bool HasSnowmobileAccess(string? snowmobile)
+        => string.Equals(snowmobile, "yes", StringComparison.Ordinal);
 
     private static bool IsVisibleAtZoom(string value, string? trailVisibility, string? sacScale, int zoom)
     {
@@ -224,13 +241,14 @@ public static class HighwayZoomRules
         return 0;
     }
 
-    private static (string? highway, string? footway, string? trailVisibility, string? sacScale) GetRoadClassifications(IDictionary<string, dynamic> properties)
+    private static (string? highway, string? footway, string? snowmobile, string? trailVisibility, string? sacScale) GetRoadClassifications(IDictionary<string, dynamic> properties)
     {
         var highway = TryReadProperty(properties, "highway");
         var footway = TryReadProperty(properties, "footway");
+        var snowmobile = TryReadProperty(properties, "snowmobile");
         var trailVisibility = TryReadProperty(properties, "trail_visibility");
         var sacScale = TryReadProperty(properties, "sac_scale");
-        return (highway, footway, trailVisibility, sacScale);
+        return (highway, footway, snowmobile, trailVisibility, sacScale);
     }
 
     private static string? TryReadProperty(IDictionary<string, dynamic> properties, string key)

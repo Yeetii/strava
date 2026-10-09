@@ -378,7 +378,12 @@ namespace Shared.Services
         public async Task<IEnumerable<Feature>> GetHighways(Coordinate southWest, Coordinate northEast, CancellationToken cancellationToken = default)
         {
             string bbox = CreateBoundingBox(southWest, northEast);
-            string query = $"[out:json][timeout:400];way[highway]({bbox});out geom;";
+            string query = string.Join(string.Empty,
+                "[out:json][timeout:400];(",
+                $"way[highway]({bbox});",
+                $"way[\"snowmobile\"=\"yes\"]({bbox});",
+                ");out geom;"
+            );
             string encodedQuery = Uri.EscapeDataString(query);
 
             RootPaths rootPaths = await ExecuteMirroredQuery<RootPaths>(

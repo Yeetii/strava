@@ -39,6 +39,38 @@ public class OverpassClientTests
     }
 
     [Fact]
+    public async Task GetHighways_QueriesSnowmobileYesWaysAlongsideHighways()
+    {
+        string? requestQuery = null;
+        using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
+        {
+            ["overpass.openstreetmap.fr"] =
+            [
+                CreateOverpassJson([
+                    new RawPath
+                    {
+                        Id = 456,
+                        Geometry =
+                        [
+                            new PathNode { Lat = 59.0, Lon = 18.0 },
+                            new PathNode { Lat = 59.1, Lon = 18.1 }
+                        ]
+                    }
+                ])
+            ],
+            ["overpass-api.de"] = [CreateOverpassJson([])]
+        }, onRequest: uri => requestQuery = Uri.UnescapeDataString(uri.Query)));
+        var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);
+
+        var features = (await client.GetHighways(new Coordinate(18.0, 59.0), new Coordinate(18.2, 59.2))).ToList();
+
+        Assert.Single(features);
+        Assert.NotNull(requestQuery);
+        Assert.Contains("way[highway]", requestQuery, StringComparison.Ordinal);
+        Assert.Contains("way[\"snowmobile\"=\"yes\"]", requestQuery, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task GetHighways_ThrowsWhenEmptyResultIsNotCorroborated()
     {
         using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
@@ -111,7 +143,9 @@ public class OverpassClientTests
         });
     }
 
-    private sealed class MirrorHttpMessageHandler(Dictionary<string, object[]> responsesByHost) : HttpMessageHandler
+    private sealed class MirrorHttpMessageHandler(
+        Dictionary<string, object[]> responsesByHost,
+        Action<Uri>? onRequest = null) : HttpMessageHandler
     {
         private readonly Dictionary<string, Queue<object>> _responsesByHost = responsesByHost.ToDictionary(
             pair => pair.Key,
@@ -120,6 +154,9 @@ public class OverpassClientTests
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri is { } requestUri)
+                onRequest?.Invoke(requestUri);
+
             var host = request.RequestUri?.Host ?? throw new InvalidOperationException("Request URI host was missing.");
             if (!_responsesByHost.TryGetValue(host, out var responses) || responses.Count == 0)
                 throw new InvalidOperationException($"No more responses configured for host '{host}'.");

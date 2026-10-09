@@ -56,6 +56,24 @@ public class HighwayZoomRulesTests
     }
 
     [Fact]
+    public void ShouldKeepFeature_KeepsSnowmobileOnlyWaysAtTrailBackboneZooms()
+    {
+        var snowmobileOnly = CreateFeature(highway: null, snowmobile: "yes");
+
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(snowmobileOnly, 6));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(snowmobileOnly, 7));
+    }
+
+    [Fact]
+    public void ShouldKeepFeature_KeepsSnowmobileTaggedRoadsAtTrailBackboneZooms()
+    {
+        var snowmobileResidential = CreateFeature(highway: "residential", snowmobile: "yes");
+
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(snowmobileResidential, 6));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(snowmobileResidential, 7));
+    }
+
+    [Fact]
     public void GetSimplificationEpsilon_IsRougherAtLowZooms()
     {
         Assert.Equal(0.0130, HighwayZoomRules.GetSimplificationEpsilon(7));
@@ -66,18 +84,25 @@ public class HighwayZoomRulesTests
         Assert.Equal(0.0001, HighwayZoomRules.GetSimplificationEpsilon(12));
     }
 
-    private static Feature CreateFeature(string highway, string? trailVisibility = null, string? sacScale = null)
+    private static Feature CreateFeature(
+        string? highway,
+        string? trailVisibility = null,
+        string? sacScale = null,
+        string? snowmobile = null)
     {
-        var properties = new Dictionary<string, dynamic>
-        {
-            ["highway"] = highway
-        };
+        var properties = new Dictionary<string, dynamic>();
+
+        if (!string.IsNullOrWhiteSpace(highway))
+            properties["highway"] = highway;
 
         if (!string.IsNullOrWhiteSpace(trailVisibility))
             properties["trail_visibility"] = trailVisibility;
 
         if (!string.IsNullOrWhiteSpace(sacScale))
             properties["sac_scale"] = sacScale;
+
+        if (!string.IsNullOrWhiteSpace(snowmobile))
+            properties["snowmobile"] = snowmobile;
 
         return new Feature(
             new LineString(
@@ -87,6 +112,6 @@ public class HighwayZoomRulesTests
             ]),
             properties,
             null,
-            new FeatureId($"{highway}-{trailVisibility ?? "none"}-{sacScale ?? "none"}"));
+            new FeatureId($"{highway ?? "snowmobile"}-{trailVisibility ?? "none"}-{sacScale ?? "none"}-{snowmobile ?? "none"}"));
     }
 }

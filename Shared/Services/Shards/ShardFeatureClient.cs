@@ -351,6 +351,7 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
             [ShardEncodingIds.TagIdFromString("foot")] = "foot",
             [ShardEncodingIds.TagIdFromString("bicycle")] = "bicycle",
             [ShardEncodingIds.TagIdFromString("access")] = "access",
+            [ShardEncodingIds.TagIdFromString("snowmobile")] = "snowmobile",
             [ShardEncodingIds.TagIdFromString("surface")] = "surface",
             [ShardEncodingIds.TagIdFromString("width")] = "width",
             [ShardEncodingIds.TagIdFromString("smoothness")] = "smoothness",
