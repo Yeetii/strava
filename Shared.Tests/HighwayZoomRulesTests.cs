@@ -73,6 +73,18 @@ public class HighwayZoomRulesTests
         Assert.True(HighwayZoomRules.ShouldKeepFeature(snowmobileResidential, 7));
     }
 
+    [Theory]
+    [InlineData("designated")]
+    [InlineData("permissive")]
+    [InlineData("official")]
+    public void ShouldKeepFeature_TreatsAdditionalSnowmobileAccessValuesAsVisible(string snowmobile)
+    {
+        var snowmobileOnly = CreateFeature(highway: null, snowmobile: snowmobile);
+
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(snowmobileOnly, 6));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(snowmobileOnly, 7));
+    }
+
     [Fact]
     public void GetSimplificationEpsilon_IsRougherAtLowZooms()
     {

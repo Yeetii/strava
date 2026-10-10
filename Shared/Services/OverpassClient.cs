@@ -381,7 +381,7 @@ namespace Shared.Services
             string query = string.Join(string.Empty,
                 "[out:json][timeout:400];(",
                 $"way[highway]({bbox});",
-                $"way[\"snowmobile\"=\"yes\"]({bbox});",
+                $"way[\"snowmobile\"~\"^(yes|designated|permissive|official)$\"]({bbox});",
                 ");out geom;"
             );
             string encodedQuery = Uri.EscapeDataString(query);

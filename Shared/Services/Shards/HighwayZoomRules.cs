@@ -169,7 +169,7 @@ public static class HighwayZoomRules
     }
 
     private static bool HasSnowmobileAccess(string? snowmobile)
-        => string.Equals(snowmobile, "yes", StringComparison.Ordinal);
+        => snowmobile is "yes" or "designated" or "permissive" or "official";
 
     private static bool IsVisibleAtZoom(string value, string? trailVisibility, string? sacScale, int zoom)
     {

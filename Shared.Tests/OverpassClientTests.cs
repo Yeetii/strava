@@ -67,7 +67,11 @@ public class OverpassClientTests
         Assert.Single(features);
         Assert.NotNull(requestQuery);
         Assert.Contains("way[highway]", requestQuery, StringComparison.Ordinal);
-        Assert.Contains("way[\"snowmobile\"=\"yes\"]", requestQuery, StringComparison.Ordinal);
+        Assert.Contains(
+            "way[\"snowmobile\"~\"^(yes|designated|permissive|official)$\"]",
+            requestQuery,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]
