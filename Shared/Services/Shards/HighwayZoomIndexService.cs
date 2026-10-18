@@ -10,7 +10,8 @@ public class HighwayZoomIndexService(
     BlobContainerClient container,
     IShardRepository shardRepository,
     ILogger<HighwayZoomIndexService> logger,
-    int canonicalZoom = 12)
+    int canonicalZoom = 12,
+    HighwayTileZoomProfile? profile = null)
 {
     private const int IndexVersion = 4;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -18,6 +19,7 @@ public class HighwayZoomIndexService(
     private readonly IShardRepository _shardRepository = shardRepository;
     private readonly ILogger<HighwayZoomIndexService> _logger = logger;
     private readonly int _canonicalZoom = canonicalZoom;
+    private readonly HighwayTileZoomProfile _profile = profile ?? HighwayTileZoomProfile.Default;
 
     public virtual async Task<HighwayTileShardSelection> GetShardKeysAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
@@ -51,7 +53,7 @@ public class HighwayZoomIndexService(
             if (index is null)
                 continue;
 
-            var shouldInclude = shard?.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z)) == true;
+            var shouldInclude = shard?.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z, _profile)) == true;
             var existingIndex = index.Shards.FindIndex(reference => reference.X == shardX && reference.Y == shardY);
             var changed = false;
 
@@ -133,7 +135,7 @@ public class HighwayZoomIndexService(
                 continue;
             }
 
-            if (shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z)))
+            if (shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z, _profile)))
                 retained.Add(key);
         }
 

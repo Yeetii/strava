@@ -11,12 +11,14 @@ public class BlobTileService(
     ShardFeatureClient featureClient,
     HighwayZoomIndexService zoomIndexService,
     ILogger<BlobTileService> logger,
-    int shardZoom = 12)
+    int shardZoom = 12,
+    HighwayTileZoomProfile? profile = null)
 {
     private readonly ShardFeatureClient _featureClient = featureClient;
     private readonly HighwayZoomIndexService _zoomIndexService = zoomIndexService;
     private readonly ILogger<BlobTileService> _logger = logger;
     private readonly int _shardZoom = shardZoom;
+    private readonly HighwayTileZoomProfile _profile = profile ?? HighwayTileZoomProfile.Default;
     private const double ClipTolerance = 1e-10;
     private const int ShardSampleSize = 20;
 
@@ -29,9 +31,10 @@ public class BlobTileService(
         try
         {
             var features = await _featureClient.GetFeaturesForShards(shardKeys, cancellationToken);
-            var filtered = FilterByZoom(features, z);
+            var filtered = FilterByZoom(features, z, _profile);
             var clipped = ClipToTileBounds(filtered, z, x, y);
-            var simplified = SimplifyByZoom(clipped, z);
+            var lengthFiltered = FilterByClippedLength(clipped, z, _profile);
+            var simplified = SimplifyByZoom(lengthFiltered, z, _profile);
             var pbf = MvtTileEncoder.EncodeLayer("highways", simplified, z, x, y);
             var sourceWrittenAt = await GetTileSourceWrittenAtAsync(z, x, y, shardKeys, cancellationToken);
             return new HighwayTileBuildResult(Gzip(pbf), selection.IsComplete, sourceWrittenAt);
@@ -149,11 +152,17 @@ public class BlobTileService(
         => Geo.SlippyTileCalculator.GetIntersectingTileKeys(z, x, y, shardZoom);
 
     internal static IEnumerable<Feature> FilterByZoom(IEnumerable<Feature> features, int zoom)
-        => features.Where(feature => HighwayZoomRules.ShouldKeepFeature(feature, zoom));
+        => FilterByZoom(features, zoom, HighwayTileZoomProfile.Default);
+
+    internal static IEnumerable<Feature> FilterByZoom(IEnumerable<Feature> features, int zoom, HighwayTileZoomProfile profile)
+        => features.Where(feature => HighwayZoomRules.ShouldKeepFeature(feature, zoom, profile));
 
     internal static IEnumerable<Feature> SimplifyByZoom(IEnumerable<Feature> features, int zoom)
+        => SimplifyByZoom(features, zoom, HighwayTileZoomProfile.Default);
+
+    internal static IEnumerable<Feature> SimplifyByZoom(IEnumerable<Feature> features, int zoom, HighwayTileZoomProfile profile)
     {
-        var epsilon = HighwayZoomRules.GetSimplificationEpsilon(zoom);
+        var epsilon = HighwayZoomRules.GetSimplificationEpsilon(zoom, profile);
         if (epsilon <= 0)
             return features;
 
@@ -161,6 +170,58 @@ public class BlobTileService(
             .Select(feature => SimplifyFeature(feature, epsilon))
             .OfType<Feature>();
     }
+
+    internal static IEnumerable<Feature> FilterByClippedLength(IEnumerable<Feature> features, int zoom, HighwayTileZoomProfile profile)
+    {
+        var minLengthMeters = HighwayZoomRules.GetMinClippedLengthMeters(zoom, profile);
+        if (minLengthMeters <= 0)
+            return features;
+
+        return features.Where(feature => !IsShortLine(feature, minLengthMeters));
+    }
+
+    private static bool IsShortLine(Feature feature, double minLengthMeters)
+    {
+        if (feature.Geometry is not LineString line)
+            return false;
+
+        return GetLineLengthMeters(line) < minLengthMeters;
+    }
+
+    private static double GetLineLengthMeters(LineString line)
+    {
+        using var enumerator = line.Coordinates.GetEnumerator();
+        if (!enumerator.MoveNext())
+            return 0;
+
+        var previous = enumerator.Current;
+        var totalMeters = 0d;
+
+        while (enumerator.MoveNext())
+        {
+            totalMeters += HaversineMeters(previous, enumerator.Current);
+            previous = enumerator.Current;
+        }
+
+        return totalMeters;
+    }
+
+    private static double HaversineMeters(Position a, Position b)
+    {
+        const double earthRadiusMeters = 6_371_000;
+        var lat1 = DegreesToRadians(a.Latitude);
+        var lat2 = DegreesToRadians(b.Latitude);
+        var deltaLat = DegreesToRadians(b.Latitude - a.Latitude);
+        var deltaLon = DegreesToRadians(b.Longitude - a.Longitude);
+        var sinLat = Math.Sin(deltaLat / 2);
+        var sinLon = Math.Sin(deltaLon / 2);
+        var h = (sinLat * sinLat)
+            + (Math.Cos(lat1) * Math.Cos(lat2) * sinLon * sinLon);
+        var c = 2 * Math.Atan2(Math.Sqrt(h), Math.Sqrt(1 - h));
+        return earthRadiusMeters * c;
+    }
+
+    private static double DegreesToRadians(double degrees) => degrees * (Math.PI / 180d);
 
     private static Feature? SimplifyFeature(Feature feature, double epsilon)
     {

@@ -5,7 +5,6 @@ namespace Shared.Services.Shards;
 
 public static class HighwayZoomRules
 {
-    private const int LowVisibilityPenalty = 2;
     private static readonly HashSet<string> MajorRoads = new(StringComparer.Ordinal)
     {
         "motorway",
@@ -37,10 +36,8 @@ public static class HighwayZoomRules
     };
 
     // Keep paths/tracks visible earlier than in many default map styles.
-    private static readonly HashSet<string> TrailNetwork = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> Cycleways = new(StringComparer.Ordinal)
     {
-        "path",
-        "track",
         "cycleway",
         "bridleway",
     };
@@ -62,7 +59,6 @@ public static class HighwayZoomRules
         "link",
         "rest_area",
         "escape",
-        "informal",
     };
 
     private static readonly HashSet<string> LowVisibilityTrailValues = new(StringComparer.Ordinal)
@@ -102,15 +98,23 @@ public static class HighwayZoomRules
     private static readonly uint HighwayTagKeyId = ShardEncodingIds.TagIdFromString("highway");
     private static readonly uint FootwayTagKeyId = ShardEncodingIds.TagIdFromString("footway");
     private static readonly uint SnowmobileTagKeyId = ShardEncodingIds.TagIdFromString("snowmobile");
+    private static readonly uint InformalTagKeyId = ShardEncodingIds.TagIdFromString("informal");
     private static readonly uint TrailVisibilityTagKeyId = ShardEncodingIds.TagIdFromString("trail_visibility");
     private static readonly uint SacScaleTagKeyId = ShardEncodingIds.TagIdFromString("sac_scale");
     private static readonly Dictionary<uint, string> TagValueLookup = BuildTagValueLookup();
 
     public static bool ShouldKeepFeature(Feature feature, int zoom)
     {
-        var (highway, footway, snowmobile, trailVisibility, sacScale) =
+        var (highway, footway, snowmobile, informal, trailVisibility, sacScale) =
             GetRoadClassifications(feature.Properties);
-        return ShouldKeepClassification(highway, footway, snowmobile, trailVisibility, sacScale, zoom);
+        return ShouldKeepClassification(highway, footway, snowmobile, informal, trailVisibility, sacScale, zoom, HighwayTileZoomProfile.Default);
+    }
+
+    public static bool ShouldKeepFeature(Feature feature, int zoom, HighwayTileZoomProfile profile)
+    {
+        var (highway, footway, snowmobile, informal, trailVisibility, sacScale) =
+            GetRoadClassifications(feature.Properties);
+        return ShouldKeepClassification(highway, footway, snowmobile, informal, trailVisibility, sacScale, zoom, profile);
     }
 
     public static bool ShouldKeepFeature(ShardFeature feature, int zoom)
@@ -118,6 +122,7 @@ public static class HighwayZoomRules
         string? highway = null;
         string? footway = null;
         string? snowmobile = null;
+        string? informal = null;
         string? trailVisibility = null;
         string? sacScale = null;
 
@@ -129,127 +134,150 @@ public static class HighwayZoomRules
                 footway = DecodeValue(tag.ValueId);
             else if (tag.KeyId == SnowmobileTagKeyId)
                 snowmobile = DecodeValue(tag.ValueId);
+            else if (tag.KeyId == InformalTagKeyId)
+                informal = DecodeValue(tag.ValueId);
             else if (tag.KeyId == TrailVisibilityTagKeyId)
                 trailVisibility = DecodeValue(tag.ValueId);
             else if (tag.KeyId == SacScaleTagKeyId)
                 sacScale = DecodeValue(tag.ValueId);
         }
 
-        return ShouldKeepClassification(highway, footway, snowmobile, trailVisibility, sacScale, zoom);
+        return ShouldKeepClassification(highway, footway, snowmobile, informal, trailVisibility, sacScale, zoom, HighwayTileZoomProfile.Default);
     }
 
-    public static double GetSimplificationEpsilon(int zoom)
-        => zoom switch
+    public static bool ShouldKeepFeature(ShardFeature feature, int zoom, HighwayTileZoomProfile profile)
+    {
+        string? highway = null;
+        string? footway = null;
+        string? snowmobile = null;
+        string? informal = null;
+        string? trailVisibility = null;
+        string? sacScale = null;
+
+        foreach (var tag in feature.Tags)
         {
-            <= 7 => 0.0130,
-            8 => 0.0070,
-            9 => 0.0040,
-            10 => 0.0020,
-            11 => 0.0005,
-            12 => 0.0001,
-            _ => 0d
-        };
+            if (tag.KeyId == HighwayTagKeyId)
+                highway = DecodeValue(tag.ValueId);
+            else if (tag.KeyId == FootwayTagKeyId)
+                footway = DecodeValue(tag.ValueId);
+            else if (tag.KeyId == SnowmobileTagKeyId)
+                snowmobile = DecodeValue(tag.ValueId);
+            else if (tag.KeyId == InformalTagKeyId)
+                informal = DecodeValue(tag.ValueId);
+            else if (tag.KeyId == TrailVisibilityTagKeyId)
+                trailVisibility = DecodeValue(tag.ValueId);
+            else if (tag.KeyId == SacScaleTagKeyId)
+                sacScale = DecodeValue(tag.ValueId);
+        }
+
+        return ShouldKeepClassification(highway, footway, snowmobile, informal, trailVisibility, sacScale, zoom, profile);
+    }
+
+    public static HighwayTileZoomStep GetStep(int zoom, HighwayTileZoomProfile profile)
+        => profile.Steps
+            .OrderBy(step => step.MinZoom)
+            .Last(step => step.MinZoom <= zoom);
+
+    public static double GetSimplificationEpsilon(int zoom)
+        => GetStep(zoom, HighwayTileZoomProfile.Default).SimplificationEpsilon;
+
+    public static double GetSimplificationEpsilon(int zoom, HighwayTileZoomProfile profile)
+        => GetStep(zoom, profile).SimplificationEpsilon;
+
+    public static double GetMinClippedLengthMeters(int zoom, HighwayTileZoomProfile profile)
+        => GetStep(zoom, profile).MinClippedLengthMeters;
 
     private static bool ShouldKeepClassification(
         string? highway,
         string? footway,
         string? snowmobile,
+        string? informal,
         string? trailVisibility,
         string? sacScale,
-        int zoom)
+        int zoom,
+        HighwayTileZoomProfile profile)
     {
         var values = GetDistinctNonEmptyValues(highway, footway);
-        if (HasSnowmobileAccess(snowmobile) && zoom >= 7)
+        if (HasSnowmobileAccess(snowmobile) && zoom >= profile.SnowmobileMinZoom)
             return true;
 
         if (values.Count == 0)
             return false;
 
-        return values.Any(value => IsVisibleAtZoom(value, trailVisibility, sacScale, zoom));
+        return values.Any(value => IsVisibleAtZoom(value, footway, informal, trailVisibility, sacScale, zoom, profile));
     }
 
     private static bool HasSnowmobileAccess(string? snowmobile)
         => snowmobile is "yes" or "designated" or "permissive" or "official";
 
-    private static bool IsVisibleAtZoom(string value, string? trailVisibility, string? sacScale, int zoom)
+    private static bool IsVisibleAtZoom(string value, string? footway, string? informal, string? trailVisibility, string? sacScale, int zoom, HighwayTileZoomProfile profile)
     {
         if (MajorRoads.Contains(value))
-            return true;
+            return zoom >= profile.MajorRoadsMinZoom;
 
         if (ArterialRoads.Contains(value))
-            return zoom >= 10;
+            return zoom >= profile.ArterialRoadsMinZoom;
 
         if (value is "service" or "services")
-            return zoom >= 12;
+            return zoom >= profile.ServiceRoadsMinZoom;
 
-        // Highway tiles are materialized only through canonical z12 shards and
-        // then overzoomed on the client, so any class gated above z12 would
-        // never render at all.
         if (value is "residential" or "living_street")
-            return zoom >= 12;
+            return zoom >= profile.LocalRoadsMinZoom;
 
         if (LocalRoads.Contains(value))
-            return zoom >= 12;
+            return zoom >= profile.LocalRoadsMinZoom;
 
         if (IsTrailValue(value))
-            return zoom >= GetTrailMinimumZoom(value, trailVisibility, sacScale);
+            return zoom >= GetTrailMinimumZoom(value, footway, informal, trailVisibility, sacScale, profile);
 
         return false;
     }
 
-    private static int GetTrailMinimumZoom(string value, string? trailVisibility, string? sacScale)
+    private static int GetTrailMinimumZoom(string value, string? footway, string? informal, string? trailVisibility, string? sacScale, HighwayTileZoomProfile profile)
     {
         var baseZoom = value switch
         {
-            _ when TrailBackbone.Contains(value) => 7,
-            _ when TrailNetwork.Contains(value) => 10,
-            _ when LocalPathways.Contains(value) => 11,
+            _ when IsInformalValue(value, footway, informal) => profile.InformalMinZoom,
+            _ when TrailBackbone.Contains(value) => profile.TrailBackboneMinZoom,
+            _ when Cycleways.Contains(value) => profile.CyclewayMinZoom,
+            _ when LocalPathways.Contains(value) => profile.LocalPathwaysMinZoom,
             _ => int.MaxValue
         };
 
-        return baseZoom + GetTrailVisibilityPenalty(trailVisibility) + GetSacScalePenalty(sacScale);
+        if (LowVisibilityTrailValues.Contains(trailVisibility ?? string.Empty))
+            baseZoom = Math.Max(baseZoom, profile.LowVisibilityTrailMinZoom);
+        if (HighDifficultySacScales.Contains(sacScale ?? string.Empty))
+            baseZoom = Math.Max(baseZoom, profile.HighDifficultySacMinZoom);
+        else if (MediumDifficultySacScales.Contains(sacScale ?? string.Empty))
+            baseZoom = Math.Max(baseZoom, profile.MediumDifficultySacMinZoom);
+
+        return baseZoom;
     }
 
     private static bool IsTrailValue(string value)
-        => TrailBackbone.Contains(value) || TrailNetwork.Contains(value) || LocalPathways.Contains(value);
+        => TrailBackbone.Contains(value)
+            || Cycleways.Contains(value)
+            || LocalPathways.Contains(value)
+            || string.Equals(value, "informal", StringComparison.Ordinal);
 
-    private static int GetTrailVisibilityPenalty(string? trailVisibility)
-    {
-        if (string.IsNullOrWhiteSpace(trailVisibility))
-            return 0;
-
-        if (HighVisibilityTrailValues.Contains(trailVisibility))
-            return 0;
-
-        return LowVisibilityTrailValues.Contains(trailVisibility)
-            ? LowVisibilityPenalty
-            : 0;
-    }
-
-    private static int GetSacScalePenalty(string? sacScale)
-    {
-        if (string.IsNullOrWhiteSpace(sacScale))
-            return 0;
-
-        if (LowDifficultySacScales.Contains(sacScale))
-            return 0;
-        if (HighDifficultySacScales.Contains(sacScale))
-            return 2;
-        if (MediumDifficultySacScales.Contains(sacScale))
-            return 1;
-
-        return 0;
-    }
-
-    private static (string? highway, string? footway, string? snowmobile, string? trailVisibility, string? sacScale) GetRoadClassifications(IDictionary<string, dynamic> properties)
+    private static (string? highway, string? footway, string? snowmobile, string? informal, string? trailVisibility, string? sacScale) GetRoadClassifications(IDictionary<string, dynamic> properties)
     {
         var highway = TryReadProperty(properties, "highway");
         var footway = TryReadProperty(properties, "footway");
         var snowmobile = TryReadProperty(properties, "snowmobile");
+        var informal = TryReadProperty(properties, "informal");
         var trailVisibility = TryReadProperty(properties, "trail_visibility");
         var sacScale = TryReadProperty(properties, "sac_scale");
-        return (highway, footway, snowmobile, trailVisibility, sacScale);
+        return (highway, footway, snowmobile, informal, trailVisibility, sacScale);
     }
+
+    private static bool IsTruthy(string? value)
+        => value is "yes" or "true" or "1";
+
+    private static bool IsInformalValue(string value, string? footway, string? informal)
+        => string.Equals(value, "informal", StringComparison.Ordinal)
+            || string.Equals(footway, "informal", StringComparison.Ordinal)
+            || IsTruthy(informal);
 
     private static string? TryReadProperty(IDictionary<string, dynamic> properties, string key)
     {
@@ -271,7 +299,7 @@ public static class HighwayZoomRules
         var values = MajorRoads
             .Concat(ArterialRoads)
             .Concat(LocalRoads)
-            .Concat(TrailNetwork)
+            .Concat(Cycleways)
             .Concat(LocalPathways)
             .Concat(LowVisibilityTrailValues)
             .Concat(HighVisibilityTrailValues)

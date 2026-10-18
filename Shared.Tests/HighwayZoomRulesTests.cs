@@ -46,6 +46,24 @@ public class HighwayZoomRulesTests
     }
 
     [Fact]
+    public void ShouldKeepFeature_HidesInformalUntilZoom13()
+    {
+        var informal = CreateFeature("path", informal: "yes");
+
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(informal, 12));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(informal, 13));
+    }
+
+    [Fact]
+    public void ShouldKeepFeature_HidesFootwayInformalUntilZoom13()
+    {
+        var informalFootway = CreateFeature("footway", footway: "informal");
+
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(informalFootway, 12));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(informalFootway, 13));
+    }
+
+    [Fact]
     public void ShouldKeepFeature_AppliesZoom14GateAtHigherZooms()
     {
         var localRoad = CreateFeature("busway");
@@ -93,14 +111,19 @@ public class HighwayZoomRulesTests
         Assert.Equal(0.0040, HighwayZoomRules.GetSimplificationEpsilon(9));
         Assert.Equal(0.0020, HighwayZoomRules.GetSimplificationEpsilon(10));
         Assert.Equal(0.0005, HighwayZoomRules.GetSimplificationEpsilon(11));
-        Assert.Equal(0.0001, HighwayZoomRules.GetSimplificationEpsilon(12));
+        Assert.Equal(0.00015, HighwayZoomRules.GetSimplificationEpsilon(12));
+        Assert.Equal(0.00008, HighwayZoomRules.GetSimplificationEpsilon(13));
+        Assert.Equal(0.00001, HighwayZoomRules.GetSimplificationEpsilon(15));
+        Assert.Equal(0.000003, HighwayZoomRules.GetSimplificationEpsilon(16));
     }
 
     private static Feature CreateFeature(
         string? highway,
         string? trailVisibility = null,
         string? sacScale = null,
-        string? snowmobile = null)
+        string? snowmobile = null,
+        string? informal = null,
+        string? footway = null)
     {
         var properties = new Dictionary<string, dynamic>();
 
@@ -115,6 +138,12 @@ public class HighwayZoomRulesTests
 
         if (!string.IsNullOrWhiteSpace(snowmobile))
             properties["snowmobile"] = snowmobile;
+
+        if (!string.IsNullOrWhiteSpace(informal))
+            properties["informal"] = informal;
+
+        if (!string.IsNullOrWhiteSpace(footway))
+            properties["footway"] = footway;
 
         return new Feature(
             new LineString(

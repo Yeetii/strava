@@ -272,6 +272,26 @@ public class ShardStackTests
     }
 
     [Fact]
+    public void BlobTileService_FilterByClippedLength_RemovesShortFragmentsAtLowZoom()
+    {
+        var shortFeature = new Feature(
+            new LineString(
+            [
+                new Position(10.0, 59.0),
+                new Position(10.0001, 59.0001)
+            ]),
+            new Dictionary<string, dynamic> { ["highway"] = "path" },
+            null,
+            new FeatureId("short"));
+
+        var keptAtHighZoom = BlobTileService.FilterByClippedLength([shortFeature], 13, HighwayTileZoomProfile.Default).ToList();
+        var removedAtLowZoom = BlobTileService.FilterByClippedLength([shortFeature], 7, HighwayTileZoomProfile.Default).ToList();
+
+        Assert.Single(keptAtHighZoom);
+        Assert.Empty(removedAtLowZoom);
+    }
+
+    [Fact]
     public void HighwayZoomIndexService_IndexBlobPath_IsStable()
     {
         var path = HighwayZoomIndexService.GetIndexBlobPath(9, 277, 168);
@@ -334,27 +354,6 @@ public class ShardStackTests
         Assert.Equal([(2200, 1320), (2201, 1320)], selection.Shards);
         Assert.Equal(0, shardRepository.GetCalls);
         blob.Verify(client => client.UploadAsync(It.IsAny<BinaryData>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task BlobShardRepository_GetShardAsync_UpdatesExistingIndexesWhenShardMaterializes()
-    {
-        var container = new InMemoryBlobContainer();
-        var shardPath = BlobShardRepository.GetBlobPath(12, 2200, 1320);
-        container.SeedBlob(shardPath, BinaryData.FromBytes(ShardBinarySerializer.Serialize(new Shard())));
-        var indexPath = HighwayZoomIndexService.GetIndexBlobPath(7, 68, 41);
-        container.SeedBlob(indexPath, BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(
-            new HighwayTileShardIndex(4, 7, 68, 41, false, []),
-            JsonOptions)));
-
-        var repository = CreateBlobShardRepositoryWithIndexSync(container);
-
-        var loaded = await repository.GetShardAsync(12, 2200, 1320, CancellationToken.None);
-
-        Assert.Single(loaded.Owned);
-        var index = JsonSerializer.Deserialize<HighwayTileShardIndex>(container.GetContent(indexPath), JsonOptions);
-        Assert.NotNull(index);
-        Assert.Contains(index.Shards, shardRef => shardRef.X == 2200 && shardRef.Y == 1320);
     }
 
     [Fact]
@@ -532,6 +531,13 @@ public class ShardStackTests
             RebuildRequests.Add((z, x, y));
             return Task.FromResult(_selection);
         }
+
+        public override Task<DateTimeOffset?> TryGetIndexLastModifiedAsync(
+            int z,
+            int x,
+            int y,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<DateTimeOffset?>(null);
     }
 
     private sealed class InMemoryBlobContainer
