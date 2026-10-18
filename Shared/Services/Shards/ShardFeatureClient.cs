@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using BAMCIS.GeoJSON;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
@@ -7,12 +8,13 @@ namespace Shared.Services.Shards;
 
 public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardFeatureClient> logger, int canonicalZoom = 12)
 {
+    private const int MaxConcurrentShardLoads = 12;
     private readonly IShardRepository _shardRepository = shardRepository;
     private readonly ILogger<ShardFeatureClient> _logger = logger;
     private readonly int _canonicalZoom = canonicalZoom;
     public int CanonicalZoom => _canonicalZoom;
 
-    private const int ShardCacheMaxSize = 150;
+    private const int ShardCacheMaxSize = 500;
     private readonly ConcurrentDictionary<string, (Shard Shard, long LastAccessTicks)> _shardCache = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _shardLocks = new();
     private readonly object _evictionLock = new();
@@ -121,24 +123,50 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
     public virtual async Task<IReadOnlyList<Feature>> GetFeaturesForShards(
         IEnumerable<(int x, int y)> shardKeys,
         CancellationToken cancellationToken = default)
+        => await GetFeaturesForShardsInternal(shardKeys, null, null, cancellationToken);
+
+    public virtual async Task<IReadOnlyList<Feature>> GetFeaturesForShards(
+        IEnumerable<(int x, int y)> shardKeys,
+        int zoom,
+        HighwayTileZoomProfile profile,
+        CancellationToken cancellationToken = default)
+        => await GetFeaturesForShardsInternal(shardKeys, zoom, profile, cancellationToken);
+
+    private async Task<IReadOnlyList<Feature>> GetFeaturesForShardsInternal(
+        IEnumerable<(int x, int y)> shardKeys,
+        int? zoom,
+        HighwayTileZoomProfile? profile,
+        CancellationToken cancellationToken)
     {
         var keys = shardKeys.Distinct().ToList();
         if (keys.Count == 0)
             return [];
 
-        // Fetch all shards in parallel to avoid timeout on low zoom levels (which require many shards).
-        // Failures are isolated per shard: a single broken tile logs a warning but does not abort the
-        // entire batch (which would cause all activities in the batch to fail and retry).
-        var shardTasks = keys.Select(key => GetShardWithContext(key, cancellationToken)).ToList();
-        var shardResults = await Task.WhenAll(shardTasks.Select(async t =>
-        {
-            try { return await t; }
-            catch (Exception ex)
+        var stopwatch = Stopwatch.StartNew();
+        var cacheHitCount = keys.Count(key => _shardCache.ContainsKey($"{key.x}/{key.y}"));
+
+        // Bound shard-load concurrency. Low-zoom tiles can fan out to hundreds of canonical shards;
+        // loading all of them at once can overwhelm blob storage and produce very long tail latencies.
+        var shardResults = new Shard?[keys.Count];
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, keys.Count),
+            new ParallelOptions
             {
-                _logger.LogWarning(ex, "Failed to load a highway shard; features from that tile will be missing for this batch.");
-                return null;
-            }
-        }));
+                MaxDegreeOfParallelism = MaxConcurrentShardLoads,
+                CancellationToken = cancellationToken,
+            },
+            async (index, ct) =>
+            {
+                try
+                {
+                    shardResults[index] = await GetShardWithContext(keys[index], ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to load a highway shard; features from that tile will be missing for this batch.");
+                    shardResults[index] = null;
+                }
+            });
 
         var features = new List<Feature>();
         var seen = new HashSet<ulong>();
@@ -149,11 +177,24 @@ public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardF
                 continue;
             foreach (var owned in shard.Owned)
             {
+                if (zoom.HasValue && profile is not null && !HighwayZoomRules.ShouldKeepFeature(owned, zoom.Value, profile))
+                    continue;
                 if (!seen.Add(owned.Id))
                     continue;
                 features.Add(ToFeature(owned));
             }
         }
+
+        _logger.LogInformation(
+            "Loaded highway shard features (requestedShardCount={RequestedShardCount}, cacheHitCount={CacheHitCount}, blobLoadCount={BlobLoadCount}, loadedShardCount={LoadedShardCount}, zoom={Zoom}, maxConcurrentShardLoads={MaxConcurrentShardLoads}, featureCount={FeatureCount}, elapsedMs={ElapsedMs})",
+            keys.Count,
+            cacheHitCount,
+            Math.Max(0, keys.Count - cacheHitCount),
+            shardResults.Count(result => result is not null),
+            zoom,
+            MaxConcurrentShardLoads,
+            features.Count,
+            stopwatch.ElapsedMilliseconds);
 
         return features;
     }

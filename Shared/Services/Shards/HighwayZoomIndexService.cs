@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Azure;
 using Azure.Storage.Blobs;
 using Microsoft.Extensions.Logging;
@@ -34,7 +35,16 @@ public class HighwayZoomIndexService(
 
         var cached = await TryReadIndexAsync(z, x, y, cancellationToken);
         if (cached is not null)
+        {
+            _logger.LogInformation(
+                "Resolved highway shard selection from cached index for z{Z}/{X}/{Y} (shardCount={ShardCount}, isComplete={IsComplete}).",
+                z,
+                x,
+                y,
+                cached.Shards.Count,
+                cached.IsComplete);
             return cached;
+        }
 
         var built = await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
         return built;
@@ -122,6 +132,7 @@ public class HighwayZoomIndexService(
 
     private async Task<HighwayTileShardSelection> BuildAndPersistIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         var candidateShards = BlobTileService.GetIntersectingShardKeys(z, x, y, _canonicalZoom);
         var retained = new List<(int x, int y)>();
         var isComplete = true;
@@ -155,8 +166,8 @@ public class HighwayZoomIndexService(
         await blob.UploadAsync(BinaryData.FromBytes(payload), overwrite: true, cancellationToken);
 
         _logger.LogInformation(
-            "Built highway shard index for z{Z}/{X}/{Y}. Referenced shards: {ShardCount}. IsComplete: {IsComplete}.",
-            z, x, y, retained.Count, isComplete);
+            "Built highway shard index for z{Z}/{X}/{Y}. CandidateShards={CandidateShardCount}, ReferencedShards={ShardCount}, IsComplete={IsComplete}, elapsedMs={ElapsedMs}.",
+            z, x, y, candidateShards.Count, retained.Count, isComplete, stopwatch.ElapsedMilliseconds);
 
         return new HighwayTileShardSelection(isComplete, retained);
     }

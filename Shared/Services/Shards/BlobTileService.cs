@@ -24,20 +24,53 @@ public class BlobTileService(
 
     public async Task<HighwayTileBuildResult> BuildTileAsync(int z, int x, int y, CancellationToken cancellationToken = default)
     {
-        var selection = await _zoomIndexService.GetShardKeysAsync(z, x, y, cancellationToken);
-        var shardKeys = selection.Shards;
         var stopwatch = Stopwatch.StartNew();
+        var selectionStopwatch = Stopwatch.StartNew();
+        var selection = await _zoomIndexService.GetShardKeysAsync(z, x, y, cancellationToken);
+        selectionStopwatch.Stop();
+        var shardKeys = selection.Shards;
 
         try
         {
+            var featureLoadStopwatch = Stopwatch.StartNew();
             var features = await _featureClient.GetFeaturesForShards(shardKeys, cancellationToken);
+            featureLoadStopwatch.Stop();
+
+            var transformStopwatch = Stopwatch.StartNew();
             var filtered = FilterByZoom(features, z, _profile);
             var clipped = ClipToTileBounds(filtered, z, x, y);
             var lengthFiltered = FilterByClippedLength(clipped, z, _profile);
             var simplified = SimplifyByZoom(lengthFiltered, z, _profile);
-            var pbf = MvtTileEncoder.EncodeLayer("highways", simplified, z, x, y);
-            var sourceWrittenAt = await GetTileSourceWrittenAtAsync(z, x, y, shardKeys, cancellationToken);
-            return new HighwayTileBuildResult(Gzip(pbf), selection.IsComplete, sourceWrittenAt);
+            var simplifiedList = simplified.ToList();
+            transformStopwatch.Stop();
+
+            var encodeStopwatch = Stopwatch.StartNew();
+            var pbf = MvtTileEncoder.EncodeLayer("highways", simplifiedList, z, x, y);
+            var gzipped = Gzip(pbf);
+            encodeStopwatch.Stop();
+
+            DateTimeOffset? sourceWrittenAt = null;
+            var metadataStopwatch = Stopwatch.StartNew();
+            metadataStopwatch.Stop();
+
+            _logger.LogInformation(
+                "Built highway tile z{Z}/{X}/{Y} (isComplete={IsComplete}, shardZoom={ShardZoom}, shardCount={ShardCount}, shardSample={ShardSample}, featureCount={FeatureCount}, selectionMs={SelectionMs}, featureLoadMs={FeatureLoadMs}, transformMs={TransformMs}, encodeMs={EncodeMs}, metadataMs={MetadataMs}, totalMs={TotalMs})",
+                z,
+                x,
+                y,
+                selection.IsComplete,
+                _shardZoom,
+                shardKeys.Count,
+                FormatShardSample(shardKeys),
+                simplifiedList.Count,
+                selectionStopwatch.ElapsedMilliseconds,
+                featureLoadStopwatch.ElapsedMilliseconds,
+                transformStopwatch.ElapsedMilliseconds,
+                encodeStopwatch.ElapsedMilliseconds,
+                metadataStopwatch.ElapsedMilliseconds,
+                stopwatch.ElapsedMilliseconds);
+
+            return new HighwayTileBuildResult(gzipped, selection.IsComplete, sourceWrittenAt);
         }
         catch (Exception ex) when (cancellationToken.IsCancellationRequested)
         {
@@ -85,7 +118,9 @@ public class BlobTileService(
                 await _featureClient.RefreshShards(shardKeys, cancellationToken);
             }
 
-            return await BuildTileAsync(z, x, y, cancellationToken);
+            var built = await BuildTileAsync(z, x, y, cancellationToken);
+            var sourceWrittenAt = await GetTileSourceWrittenAtAsync(z, x, y, shardKeys, cancellationToken);
+            return built with { SourceWrittenAt = sourceWrittenAt };
         }
         catch (Exception ex) when (cancellationToken.IsCancellationRequested)
         {

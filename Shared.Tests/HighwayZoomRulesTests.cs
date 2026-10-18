@@ -109,12 +109,19 @@ public class HighwayZoomRulesTests
         Assert.Equal(0.0130, HighwayZoomRules.GetSimplificationEpsilon(7));
         Assert.Equal(0.0070, HighwayZoomRules.GetSimplificationEpsilon(8));
         Assert.Equal(0.0040, HighwayZoomRules.GetSimplificationEpsilon(9));
-        Assert.Equal(0.0020, HighwayZoomRules.GetSimplificationEpsilon(10));
-        Assert.Equal(0.0005, HighwayZoomRules.GetSimplificationEpsilon(11));
+        Assert.Equal(0.0030, HighwayZoomRules.GetSimplificationEpsilon(10));
+        Assert.Equal(0.0008, HighwayZoomRules.GetSimplificationEpsilon(11));
         Assert.Equal(0.00015, HighwayZoomRules.GetSimplificationEpsilon(12));
         Assert.Equal(0.00008, HighwayZoomRules.GetSimplificationEpsilon(13));
         Assert.Equal(0.00001, HighwayZoomRules.GetSimplificationEpsilon(15));
         Assert.Equal(0.000003, HighwayZoomRules.GetSimplificationEpsilon(16));
+    }
+
+    [Fact]
+    public void ShouldKeepFeature_ShowsCyclewayFromZoom11()
+    {
+        Assert.False(HighwayZoomRules.ShouldKeepFeature(CreateFeature("cycleway"), 10));
+        Assert.True(HighwayZoomRules.ShouldKeepFeature(CreateFeature("cycleway"), 11));
     }
 
     private static Feature CreateFeature(
