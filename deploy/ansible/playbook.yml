@@ -27,52 +27,6 @@
           - unattended-upgrades
         state: present
 
-    - name: Create Docker apt keyring directory
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: "0755"
-
-    - name: Download Docker apt key
-      ansible.builtin.get_url:
-        url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
-        dest: /etc/apt/keyrings/docker.asc
-        mode: "0644"
-
-    - name: Add Docker apt repository
-      ansible.builtin.apt_repository:
-        repo: >-
-          deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') | replace('aarch64', 'arm64') }}
-          signed-by=/etc/apt/keyrings/docker.asc]
-          https://download.docker.com/linux/{{ ansible_distribution | lower }}
-          {{ ansible_distribution_release }} stable
-        filename: docker
-        state: present
-
-    - name: Install Docker Engine and Compose plugin
-      ansible.builtin.apt:
-        name:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-          - docker-buildx-plugin
-          - docker-compose-plugin
-        state: present
-        update_cache: true
-
-    - name: Enable Docker
-      ansible.builtin.systemd:
-        name: docker
-        enabled: true
-        state: started
-
-    - name: Add the deploy user to the docker group
-      ansible.builtin.user:
-        name: "{{ ansible_user }}"
-        groups: docker
-        append: true
-      when: ansible_user != 'root'
-
     - name: Create deployment directories
       ansible.builtin.file:
         path: "{{ item }}"
@@ -80,7 +34,6 @@
         mode: "0755"
       loop:
         - "{{ deploy_dir }}"
-        - "{{ deploy_dir }}/backups"
 
     - name: Check for the controller-side .env
       ansible.builtin.stat:
@@ -117,24 +70,6 @@
         state: directory
         recurse: true
         owner: "{{ ansible_user }}"
-
-    - name: Install backup systemd units
-      ansible.builtin.copy:
-        src: "{{ deploy_dir }}/systemd/{{ item }}"
-        dest: "/etc/systemd/system/{{ item }}"
-        mode: "0644"
-        remote_src: true
-      loop:
-        - peakshunters-backup.service
-        - peakshunters-backup.timer
-      notify: Reload systemd
-
-    - name: Enable backup timer
-      ansible.builtin.systemd:
-        name: peakshunters-backup.timer
-        enabled: true
-        state: started
-        daemon_reload: true
 
     - name: Configure UFW
       community.general.ufw:
@@ -176,8 +111,3 @@
       ansible.builtin.command:
         cmd: docker compose up -d --remove-orphans --wait
         chdir: "{{ deploy_dir }}"
-
-  handlers:
-    - name: Reload systemd
-      ansible.builtin.systemd:
-        daemon_reload: true

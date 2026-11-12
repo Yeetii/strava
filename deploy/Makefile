@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: up down logs ps pull deploy verify backup smoke config
+.PHONY: up down logs ps pull deploy verify smoke config
 
 up:
 	$(COMPOSE) up -d --remove-orphans
@@ -24,9 +24,6 @@ deploy:
 
 verify:
 	./scripts/verify-function-coverage.sh
-
-backup:
-	./scripts/backup.sh
 
 smoke:
 	./scripts/smoke-test.sh

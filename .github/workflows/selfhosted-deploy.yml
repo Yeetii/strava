@@ -133,7 +133,7 @@ jobs:
             --exclude 'backups' \
             --exclude 'ansible/inventory.ini' \
             -e "ssh -i ${HOME}/.ssh/selfhosted -p ${port} -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new" \
-            deploy/ "${SSH_USER}@${SSH_HOST}:/opt/peakshunters/"
+            deploy/ "${SSH_USER}@${SSH_HOST}:/opt/stacks/strava/"
 
           ssh \
             -i "${HOME}/.ssh/selfhosted" \
@@ -142,4 +142,4 @@ jobs:
             -o ConnectTimeout=15 \
             -o StrictHostKeyChecking=accept-new \
             "${SSH_USER}@${SSH_HOST}" \
-            "bash /opt/peakshunters/scripts/deploy.sh '${IMAGE_TAG}'"
+            "bash /opt/stacks/strava/scripts/deploy.sh '${IMAGE_TAG}'"

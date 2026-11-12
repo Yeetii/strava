@@ -15,6 +15,8 @@ Strava webhook during this phase.
 ## Prerequisites
 
 - A Linux server on your home network (Ubuntu 22.04+ or Debian 12+)
+- Docker Engine with the Compose plugin and `rsync` installed
+  (`https://docs.docker.com/engine/install/`)
 - SSH access as a user with `sudo`
 - The Azure connection strings, app secrets, and Strava credentials to hand
 
@@ -26,18 +28,20 @@ No DNS records, open firewall ports, or domain names are needed.
 
 ### 1. Provision the server
 
-SSH into the server, clone the repo, and run the bootstrap script:
+SSH into the server, clone the repo to `/opt/repos/strava`, and run the
+bootstrap script:
 
 ```bash
-git clone git@github.com:<your-org>/strava.git
-cd strava
+sudo mkdir -p /opt/repos && sudo chown "$USER" /opt/repos
+git clone git@github.com:<your-org>/strava.git /opt/repos/strava
+cd /opt/repos/strava
 sudo ./deploy/scripts/bootstrap-server.sh
 ```
 
-This installs Docker, the Compose plugin, UFW (SSH-only), fail2ban, unattended
-upgrades, and log rotation. It copies the deployment files to
-`/opt/stacks/strava`, generates a `.env` with random Redis password,
-and installs the daily backup systemd timer.
+The repository stays in `/opt/repos/strava`. The bootstrap copies the
+deployment files (Docker Compose and scripts) to `/opt/stacks/strava`
+and generates a `.env` with a generated `AdminApiKey`. Docker (with the
+Compose plugin) is assumed to be already installed and configured.
 
 ### 2. Fill in `.env`
 
@@ -121,7 +125,7 @@ automatically whenever `API/`, `Backend/`, `Shared/`, `deploy/`, or
 1. Verifies every Backend function is assigned to a container
 2. Builds and pushes `peakshunters-api` and `peakshunters-backend` images to
    GHCR tagged with the commit SHA
-3. Rsyncs `deploy/` to the server (without touching `.env` or backups)
+3. Rsyncs `deploy/` to the server (without touching `.env`)
 4. Pulls the new images and restarts the stack with a 5-minute health-check
    timeout
 5. Rolls back to the previous image tag automatically if startup fails
@@ -168,7 +172,7 @@ COMPOSE_PROFILES=workers
 Then apply:
 
 ```bash
-cd /opt/peakshunters
+cd /opt/stacks/strava
 docker compose up -d --wait
 ```
 
@@ -187,7 +191,7 @@ COMPOSE_PROFILES=workers,schedules
 ```
 
 ```bash
-cd /opt/peakshunters
+cd /opt/stacks/strava
 docker compose up -d --wait
 ```
 
@@ -198,7 +202,7 @@ docker compose up -d --wait
 ### View logs
 
 ```bash
-cd /opt/peakshunters
+cd /opt/stacks/strava
 docker compose logs -f --tail=200
 # single service
 docker compose logs -f --tail=200 worker-heavy
@@ -216,29 +220,10 @@ docker compose restart worker-heavy
 docker compose ps
 ```
 
-### Grafana / monitoring
+### Monitoring
 
 Container and host metrics are covered by Beszel. Application logs are via
 `docker compose logs` (see below).
-
-### Manual backup
-
-```bash
-cd /opt/peakshunters
-./scripts/backup.sh
-# backups land in /opt/stacks/strava/backups/<timestamp>/
-```
-
-Automated backups run daily at 03:30 UTC and keep 14 days by default
-(`BACKUP_RETENTION_DAYS` in `.env`).
-
-### Restore from backup
-
-```bash
-cd /opt/peakshunters
-docker compose down
-./scripts/restore.sh /opt/stacks/strava/backups/<timestamp>
-```
 
 ---
 

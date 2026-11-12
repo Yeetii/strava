@@ -3,7 +3,9 @@
 This directory contains the Phase 1/2 implementation of
 [`Shared/MIGRATION_PLAN_SELF_HOSTED.md`](../Shared/MIGRATION_PLAN_SELF_HOSTED.md):
 the existing backend now runs in Docker on a self-hosted server while the Azure
-Function Apps remain deployed and unchanged.
+Function Apps remain deployed and unchanged. The stack is internal-only: no
+ports are published and it is reachable only from the home network or over an
+SSH tunnel.
 
 ## What this phase does and does not do
 
@@ -14,8 +16,8 @@ Function Apps remain deployed and unchanged.
 - Splits the Backend into separate API, scheduled, and heavy-worker containers
   using function-level selection, so heavy queue processing cannot starve HTTP
   traffic.
-- Adds Caddy with automatic TLS, Docker Compose, Redis, Prometheus, Grafana,
-  cAdvisor, node-exporter, and backups.
+- Deploys them with Docker Compose as an internal-only stack: no ports are
+  published, everything stays on a private Docker network.
 - Provides a GitHub Actions deployment workflow and repeatable host
   provisioning (bootstrap script and Ansible playbook).
 
@@ -24,44 +26,34 @@ Function Apps remain deployed and unchanged.
 - Cosmos DB is **not** moved. It remains the source of truth.
 - Azure Service Bus is **not** moved. Workers still consume the existing queues.
 - PostgreSQL is **not** deployed. That is deliberately deferred to Phase 5.
-- Redis is deployed and configured, but no application code uses it yet. It is
-  ready for the Phase 4 caching work. Its current eviction policy is
-  `allkeys-lru` because it is a cache; change that before using the same Redis
-  for durable queues.
+- Redis is **not** deployed. It is deferred until the Phase 4 caching work
+  actually needs it.
+- There are no automated host backups yet (the backup script was removed for
+  now). Cosmos DB and Azure Storage still have their own platform backups.
 
 ## Architecture
 
 ```
-                         Internet
-                            |
-                    +-------v--------+
-                    |     Caddy      |  80/443, automatic TLS
-                    +---+--------+---+
-                        |        |
-             api.domain |        | backend.domain        grafana.domain
-                        |        |                            |
-             +----------v--+  +--v---------------+     +------v------+
-             |     api     |  |   backend-api    |     |   grafana   |
-             |  (all API   |  | (Backend HTTP:   |     +------+------+
-             |  functions) |  |  webhook, admin) |            |
-             +------+------+  +--------+---------+            |
-                    |                  |                      |
-                    +---------+--------+----------------------+
-                              |
-                       Docker network
-                              |
-        +---------------------+----------------------+
-        |                     |                      |
- +------v------+      +-------v-------+      +-------v-------+
- |worker-      |      | worker-heavy  |      | redis /       |
- |schedule     |      | (Service Bus  |      | prometheus /  |
- |(timers)     |      | + change feed)|      | exporters     |
- +------+------+      +-------+-------+      +---------------+
-        |                     |
-        +----------+----------+
-                   |
-        Azure Service Bus + Cosmos DB + Blob Storage
-        (still the production backing services)
+          Home network / SSH tunnel
+                     |
+              +------v-------+
+              | Docker network|
+              |   (backend)   |
+              +--+---------+--+
+                 |         |
+        +--------v--+ +----v-----------+
+        |    api    | |  backend-api   |
+        | (all API  | | (Backend HTTP: |
+        | functions)| |  webhook, etc.)|
+        +-----------+ +----------------+
+
+  worker-schedule   timer jobs - profile "schedules" (off by default)
+  worker-heavy      Service Bus + Cosmos change feed - profile "workers"
+                    (off by default)
+                     |
+                     v
+      Azure Service Bus + Cosmos DB + Blob Storage
+      (still the production backing services)
 ```
 
 The `worker-schedule` and `worker-heavy` containers are behind Compose profiles
@@ -96,20 +88,10 @@ without being assigned to exactly one container.
 
 ## First-time setup
 
-### 1. DNS
+### 1. Network access to Azure
 
-Create A/AAAA records for the three hostnames to the server:
-
-- `API_DOMAIN` (for example `api.example.com`)
-- `BACKEND_DOMAIN` (for example `backend.example.com`)
-- `GRAFANA_DOMAIN` (for example `grafana.example.com`)
-
-Ports 80 and 443 must be reachable from the internet for Caddy to obtain
-certificates.
-
-### 1b. Network access to Azure
-
-The server must be able to reach the existing Cosmos DB account, Service Bus
+The stack is internal-only: no DNS records, domains, or open inbound ports are
+needed. The server must be able to reach the existing Cosmos DB account, Service Bus
 namespace, Storage account, and SignalR service, plus Strava, Mistral, and
 Overpass. If those Azure resources use IP firewalls or private endpoints, allow
 the server's egress IP. `CosmosConnectionMode=Gateway` is the default because it
@@ -117,18 +99,21 @@ tolerates container networking better than Direct mode.
 
 ### 2. Provision the server
 
-On a fresh Ubuntu or Debian host:
+On a Docker host (Engine + Compose plugin + rsync already installed), with the
+repository cloned to `/opt/repos/strava`:
 
 ```bash
-git clone <this repository>
-cd strava
+sudo mkdir -p /opt/repos && sudo chown "$USER" /opt/repos
+git clone <this repository> /opt/repos/strava
+cd /opt/repos/strava
 sudo ./deploy/scripts/bootstrap-server.sh
 ```
 
-The script installs Docker, the Compose plugin, firewall rules, unattended
-upgrades, fail2ban, log rotation, copies the deployment files to
-`/opt/stacks/strava`, generates `.env` from the example, and installs the
-daily backup timer.
+The bootstrap copies the deployment files from `deploy/` (Docker Compose and
+scripts) to `/opt/stacks/strava` and generates `.env` from the example. The
+repository stays in `/opt/repos/strava`;
+`/opt/stacks/strava` is the stack's runtime directory that GitHub Actions
+keeps in sync on every deploy.
 
 Ansible users can do the same with:
 
@@ -147,12 +132,10 @@ Edit `/opt/stacks/strava/.env` (or `deploy/.env` before Ansible) and replace all
 `REPLACE` values:
 
 - `IMAGE_NAMESPACE`: lowercase GitHub owner that publishes the GHCR packages.
-- `API_DOMAIN`, `BACKEND_DOMAIN`, `GRAFANA_DOMAIN`, `ACME_EMAIL`.
 - `CosmosDBConnection`, `ServiceBusConnection`, `AzureWebJobsStorage`,
   `BlobStorageConnection`, `AzureSignalRConnectionString`.
-- `StravaClientSecret`, `stravaVerifyToken`, `AdminApiKey`, Mistral settings.
-- Generated Redis/Grafana passwords (the bootstrap script fills these in; do not
-  reuse the example values).
+- `StravaClientSecret`, `stravaVerifyToken`, Mistral settings.
+- `AdminApiKey`: generated by the bootstrap script; change it if desired.
 
 `CosmosAccountResourceId` can stay empty. Live RU/s reporting then falls back to
 “unavailable” because the host has no Azure identity. Set it only if you also
@@ -181,12 +164,11 @@ docker compose ps
 
 At this point:
 
-- `https://API_DOMAIN/api/...` serves the self-hosted API.
-- `https://BACKEND_DOMAIN/...` serves the Backend HTTP functions.
-- `https://GRAFANA_DOMAIN` serves Grafana.
+- `api` and `backend-api` serve on the internal Docker network, reachable from
+  the home network or through an SSH tunnel.
 - No workers are consuming Azure Service Bus queues or running timers.
 
-Run the public smoke test when DNS/TLS are ready:
+Run the smoke test:
 
 ```bash
 ./scripts/smoke-test.sh
@@ -200,20 +182,17 @@ locally while still using the Azure backing services:
 ```bash
 cd deploy
 cp .env.example .env
-# set API_DOMAIN=api.localhost, BACKEND_DOMAIN=backend.localhost,
-# GRAFANA_DOMAIN=grafana.localhost, then fill in the Azure values
+# then fill in the Azure values
 docker compose -f docker-compose.yml -f docker-compose.local.yml \
   --profile workers --profile schedules up -d --build
 ```
 
-Caddy uses its internal CA for `*.localhost`.
-
 ## GitHub Actions automatic deploy
 
-`.github/workflows/selfhosted-deploy.yml` builds both images, pushes them to
-GHCR tagged with the commit SHA and `latest`, syncs `deploy/` to the server
-over SSH (without touching `.env` or backups), validates Caddy/Prometheus
-configuration, then pulls and restarts the stack.
+`.github/workflows/selfhosted-deploy.yml` verifies every Backend function is
+assigned to a container, builds both images, pushes them to GHCR tagged with
+the commit SHA and `latest`, syncs `deploy/` to the server over SSH (without
+touching `.env`), then pulls and restarts the stack.
 
 Configure a GitHub Environment named `self-hosted` with these secrets:
 
@@ -227,10 +206,6 @@ Configure a GitHub Environment named `self-hosted` with these secrets:
 The deployment script (`/opt/stacks/strava/scripts/deploy.sh`) pulls the new
 image tag, writes it to `.env`, waits for health checks, and automatically rolls
 back to the previous tag if startup fails.
-
-Changes to the systemd backup units under `deploy/systemd/` are copied by the
-sync but still need `sudo cp … /etc/systemd/system/ && sudo systemctl daemon-reload`
-or a bootstrap re-run to take effect.
 
 Manual rollback:
 
@@ -253,13 +228,12 @@ workflow builds amd64 images and the Compose services are pinned to
 
 ### Step 1 - verify the self-hosted API in parallel
 
-Leave `COMPOSE_PROFILES=` empty. Test the self-hosted API directly via
-`API_DOMAIN`, or point a staging client at it. Cosmos and Service Bus are shared
+Leave `COMPOSE_PROFILES=` empty. Test the self-hosted API from the home
+network or through an SSH tunnel. Cosmos and Service Bus are shared
 with Azure, and no queues are consumed by the new stack.
 
-When you are ready to send real traffic to the self-hosted API, update the
-frontend/mobile API base URL and the Strava webhook callback URL to the new
-`API_DOMAIN` / `BACKEND_DOMAIN`. Until then, both deployments remain live.
+The Azure Function Apps keep serving all external traffic (including the
+Strava webhook) until you deliberately move clients over.
 
 ### Step 2 - move the heavy workers
 
@@ -276,7 +250,7 @@ First decide how you want to split Service Bus traffic:
 # edit /opt/stacks/strava/.env
 COMPOSE_PROFILES=workers
 
-cd /opt/peakshunters
+cd /opt/stacks/strava
 docker compose up -d --wait
 ```
 
@@ -297,7 +271,8 @@ COMPOSE_PROFILES=workers,schedules
 
 ### Step 4 - later phases
 
-- Phase 4: wire Redis caching and queue/backpressure changes into `Shared`.
+- Phase 4: add Redis and wire caching and queue/backpressure changes into
+  `Shared`.
 - Phase 5: add Postgres only when read offloading is ready to be implemented.
 - Phase 6+: dual-write and final Cosmos cutover.
 
@@ -310,59 +285,32 @@ COMPOSE_PROFILES=workers,schedules
 - `AzureFunctionsWebHost__hostid` is unique per container so the Functions host
   does not collide on timer/listener locks when sharing the Azure storage
   account with the Azure Function Apps.
-- The Functions host administration API (`/admin/*`) is blocked at Caddy. Use an
-  SSH tunnel if you need host-level diagnostics.
+- The stack is internal-only. Use an SSH tunnel if you need host-level
+  diagnostics or the Functions administration API (`/admin/*`).
 - `AuthorizationLevel.Function` endpoints still require a Functions key. By
   default the key store lives in the configured `AzureWebJobsStorage` account
   under the self-hosted host ID. Retrieve or manage keys through the Functions
   admin API over an SSH tunnel, or switch `AzureWebJobsSecretStorageType` to
-  `files` and persist the key directory if you prefer local key storage. Caddy
-  forwards the `x-functions-key` header unchanged.
+  `files` and persist the key directory if you prefer local key storage.
 
 ## Monitoring
 
-- Prometheus: bound to `127.0.0.1:9090` on the host (use an SSH tunnel).
-- Grafana: `https://GRAFANA_DOMAIN`, provisioned with the Prometheus datasource
-  and the “Peakshunters self-hosted” dashboard.
-- Alerts: target down, HTTP probe failure, host CPU/memory/disk, container
-  restarts, and Redis memory pressure. Prometheus evaluates the rules; add an
-  Alertmanager/contact point if you want out-of-band notifications.
+- Host and container metrics are covered by Beszel (deployed separately on
+  the server).
 - Logs: `docker compose logs -f --tail=200`, with json-file rotation at
   20 MB x 5 per container.
 
-Azure-side metrics (Cosmos RU usage, Function executions) are not scraped yet.
+Azure-side metrics (Cosmos RU usage, Function executions) are not collected.
 Use the Azure portal or Azure Monitor while the migration is in the parallel
-phase; an Azure Monitor exporter can be added later.
-
-## Backups
-
-`scripts/backup.sh` backs up:
-
-- `.env` (mode 600)
-- rendered Compose state with secrets redacted
-- Redis RDB snapshot
-- Grafana and Caddy volumes
-- optional Prometheus data (`BACKUP_PROMETHEUS=1`)
-
-The systemd timer runs daily at 03:30 UTC and keeps 14 days by default
-(`BACKUP_RETENTION_DAYS`). Cosmos DB and Azure Storage are still platform-backed
-and are not part of this script.
-
-Restore into a stopped stack:
-
-```bash
-docker compose down
-./scripts/restore.sh /opt/stacks/strava/backups/<timestamp>
-```
+phase.
 
 ## Security checklist
 
 - SSH key authentication only; disable password login in `sshd_config`.
-- UFW allows only the SSH port, 80/tcp, 443/tcp, and 443/udp.
-- Only Caddy publishes ports. Redis, Grafana, Prometheus, and the Functions
-  containers stay on the internal Docker network (Prometheus is bound to
-  localhost only).
-- `/admin/*` is not publicly proxied.
+- Only the SSH port needs to be reachable from outside the home network.
+- No container publishes host ports; everything stays on the internal Docker
+  network.
+- `/admin/*` is reachable only from the internal network (use an SSH tunnel).
 - Keep `.env` at mode 600 and out of git.
 - Protect the `self-hosted` GitHub Environment with required reviewers if you
   want manual approval before production deploys.
