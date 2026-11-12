@@ -1,0 +1,15 @@
+[Unit]
+Description=Peakshunters self-hosted backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/stacks/strava
+ExecStart=/opt/stacks/strava/scripts/backup.sh
+User=root
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

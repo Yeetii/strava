@@ -1,0 +1,62 @@
+groups:
+  - name: peakshunters-selfhosted
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus target is down"
+          description: "{{ $labels.job }} / {{ $labels.instance }} has been down for 5 minutes."
+
+      - alert: HostHighCpu
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host CPU above 85%"
+          description: "{{ $labels.instance }} CPU has been above 85% for 10 minutes."
+
+      - alert: HostHighMemory
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host memory above 90%"
+          description: "{{ $labels.instance }} memory usage has been above 90% for 10 minutes."
+
+      - alert: HostDiskAlmostFull
+        expr: |
+          (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} /
+               node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host disk above 85%"
+          description: "{{ $labels.instance }} {{ $labels.mountpoint }} is more than 85% full."
+
+      - alert: ContainerRestarted
+        expr: |
+          changes(container_start_time_seconds{
+            container_label_com_docker_compose_project="peakshunters",
+            container_label_com_docker_compose_service!=""
+          }[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container restarted"
+          description: "{{ $labels.container_label_com_docker_compose_service }} restarted in the last 15 minutes."
+
+      - alert: RedisHighMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9 and redis_memory_max_bytes > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory above 90% of maxmemory"
+          description: "Redis has been above 90% of its configured maxmemory for 10 minutes."

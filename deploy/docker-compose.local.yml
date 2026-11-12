@@ -1,0 +1,38 @@
+# Local build override. Use together with docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#
+# Point API_DOMAIN/BACKEND_DOMAIN/GRAFANA_DOMAIN at *.localhost in .env for
+# local TLS via Caddy's internal CA.
+
+services:
+  api:
+    image: peakshunters-api:local
+    build:
+      context: ..
+      dockerfile: deploy/docker/functions.Dockerfile
+      args:
+        PROJECT: API
+
+  backend-api:
+    image: peakshunters-backend:local
+    build:
+      context: ..
+      dockerfile: deploy/docker/functions.Dockerfile
+      args:
+        PROJECT: Backend
+
+  worker-schedule:
+    image: peakshunters-backend:local
+    build:
+      context: ..
+      dockerfile: deploy/docker/functions.Dockerfile
+      args:
+        PROJECT: Backend
+
+  worker-heavy:
+    image: peakshunters-backend:local
+    build:
+      context: ..
+      dockerfile: deploy/docker/functions.Dockerfile
+      args:
+        PROJECT: Backend

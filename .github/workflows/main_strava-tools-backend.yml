@@ -10,6 +10,8 @@ on:
     paths-ignore:
     - 'API/**'
     - 'API.Tests/**'
+    - 'deploy/**'
+    - 'Shared/MIGRATION_PLAN_SELF_HOSTED.md'
   workflow_dispatch:
 
 env:

@@ -1,0 +1,4 @@
+.env
+backups/
+ansible/inventory.ini
+ansible/.ssh/

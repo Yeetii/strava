@@ -1,0 +1,145 @@
+name: Deploy self-hosted backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'API/**'
+      - 'Backend/**'
+      - 'Shared/**'
+      - 'Directory.Build.props'
+      - 'deploy/**'
+      - '.github/workflows/selfhosted-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Existing image tag to deploy (leave empty to build the current commit)'
+        required: false
+        default: ''
+
+concurrency:
+  group: selfhosted-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify every Backend function is assigned to a container
+        run: ./deploy/scripts/verify-function-coverage.sh
+
+  build:
+    needs: verify
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_tag != '') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: api
+            project: API
+          - name: backend
+            project: Backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalise image namespace
+        run: echo "IMAGE_NAMESPACE=${GITHUB_REPOSITORY_OWNER,,}" >>"${GITHUB_ENV}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.name }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/functions.Dockerfile
+          build-args: |
+            PROJECT=${{ matrix.project }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/peakshunters-${{ matrix.name }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/peakshunters-${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs:
+      - verify
+      - build
+    if: >-
+      always() &&
+      needs.verify.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: self-hosted
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate image tag
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${REQUESTED_TAG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid image tag: ${REQUESTED_TAG}" >&2
+            exit 1
+          fi
+
+      - name: Sync deployment assets and deploy over SSH
+        env:
+          SSH_HOST: ${{ secrets.SELFHOSTED_HOST }}
+          SSH_USER: ${{ secrets.SELFHOSTED_USER }}
+          SSH_PORT: ${{ secrets.SELFHOSTED_PORT }}
+          SSH_KEY: ${{ secrets.SELFHOSTED_SSH_KEY }}
+          IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SSH_HOST}" || -z "${SSH_USER}" || -z "${SSH_KEY}" ]]; then
+            echo "SELFHOSTED_HOST, SELFHOSTED_USER and SELFHOSTED_SSH_KEY must be configured." >&2
+            exit 1
+          fi
+
+          port="${SSH_PORT:-22}"
+          install -m 700 -d "${HOME}/.ssh"
+          printf '%s\n' "${SSH_KEY}" >"${HOME}/.ssh/selfhosted"
+          chmod 600 "${HOME}/.ssh/selfhosted"
+          ssh-keyscan -p "${port}" -H "${SSH_HOST}" >>"${HOME}/.ssh/known_hosts"
+
+          rsync -az --delete \
+            --exclude '.env' \
+            --exclude 'backups' \
+            --exclude 'ansible/inventory.ini' \
+            -e "ssh -i ${HOME}/.ssh/selfhosted -p ${port} -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new" \
+            deploy/ "${SSH_USER}@${SSH_HOST}:/opt/peakshunters/"
+
+          ssh \
+            -i "${HOME}/.ssh/selfhosted" \
+            -p "${port}" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o StrictHostKeyChecking=accept-new \
+            "${SSH_USER}@${SSH_HOST}" \
+            "bash /opt/peakshunters/scripts/deploy.sh '${IMAGE_TAG}'"
