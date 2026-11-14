@@ -33,9 +33,10 @@ instructions.
   - Compose stack at `/opt/stacks/strava`
   - Persistent data at `/opt/data/strava`
 - **GitHub Actions workflow** (`.github/workflows/selfhosted-deploy.yml`)
-  builds both images, pushes them to GHCR tagged with the commit SHA, rsyncs
-  `deploy/` to the server over SSH, and runs `scripts/deploy.sh` which pulls,
-  starts, health-checks, and auto-rolls-back on failure.
+  builds both images, pushes them to GHCR tagged with the commit SHA, joins
+  the tailnet as an ephemeral `tag:ci` node, rsyncs
+  `deploy/` to the server over Tailscale SSH, and runs `scripts/deploy.sh`
+  which pulls, starts, health-checks, and auto-rolls-back on failure.
 - **Existing Azure workflows** are unchanged and kept running in parallel.
   They ignore `deploy/**` and `Shared/MIGRATION_PLAN_SELF_HOSTED.md` so
   infra-only commits do not trigger Azure deploys.

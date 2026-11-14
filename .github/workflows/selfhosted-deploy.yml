@@ -108,38 +108,45 @@ jobs:
             exit 1
           fi
 
-      - name: Sync deployment assets and deploy over SSH
+      - name: Connect runner to the tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          hostname: strava-gh-deploy
+          # New tailnet peers need a moment to become reachable; the action
+          # retries this ping for up to 3 minutes before proceeding.
+          ping: ${{ secrets.SELFHOSTED_HOST }}
+
+      - name: Sync deployment assets and deploy over Tailscale SSH
         env:
           SSH_HOST: ${{ secrets.SELFHOSTED_HOST }}
           SSH_USER: ${{ secrets.SELFHOSTED_USER }}
-          SSH_PORT: ${{ secrets.SELFHOSTED_PORT }}
-          SSH_KEY: ${{ secrets.SELFHOSTED_SSH_KEY }}
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
         run: |
           set -euo pipefail
-          if [[ -z "${SSH_HOST}" || -z "${SSH_USER}" || -z "${SSH_KEY}" ]]; then
-            echo "SELFHOSTED_HOST, SELFHOSTED_USER and SELFHOSTED_SSH_KEY must be configured." >&2
+          if [[ -z "${SSH_HOST}" || -z "${SSH_USER}" ]]; then
+            echo "SELFHOSTED_HOST and SELFHOSTED_USER must be configured." >&2
+            exit 1
+          fi
+          if [[ -z "${TS_OAUTH_CLIENT_ID:-}" ]]; then
+            echo "TS_OAUTH_CLIENT_ID and TS_OAUTH_SECRET must be configured." >&2
             exit 1
           fi
 
-          port="${SSH_PORT:-22}"
-          install -m 700 -d "${HOME}/.ssh"
-          printf '%s\n' "${SSH_KEY}" >"${HOME}/.ssh/selfhosted"
-          chmod 600 "${HOME}/.ssh/selfhosted"
-          ssh-keyscan -p "${port}" -H "${SSH_HOST}" >>"${HOME}/.ssh/known_hosts"
+          # Tailscale SSH authenticates the connection (no SSH keys), handles
+          # host-key verification, and only works on port 22.
+          ssh_opts=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 
           rsync -az --delete \
             --exclude '.env' \
             --exclude 'backups' \
             --exclude 'ansible/inventory.ini' \
-            -e "ssh -i ${HOME}/.ssh/selfhosted -p ${port} -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new" \
+            -e "ssh ${ssh_opts[*]}" \
             deploy/ "${SSH_USER}@${SSH_HOST}:/opt/stacks/strava/"
 
-          ssh \
-            -i "${HOME}/.ssh/selfhosted" \
-            -p "${port}" \
-            -o BatchMode=yes \
-            -o ConnectTimeout=15 \
-            -o StrictHostKeyChecking=accept-new \
+          ssh "${ssh_opts[@]}" \
             "${SSH_USER}@${SSH_HOST}" \
             "bash /opt/stacks/strava/scripts/deploy.sh '${IMAGE_TAG}'"

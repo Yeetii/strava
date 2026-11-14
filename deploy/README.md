@@ -4,8 +4,9 @@ This directory contains the Phase 1/2 implementation of
 [`Shared/MIGRATION_PLAN_SELF_HOSTED.md`](../Shared/MIGRATION_PLAN_SELF_HOSTED.md):
 the existing backend now runs in Docker on a self-hosted server while the Azure
 Function Apps remain deployed and unchanged. The stack is internal-only: no
-ports are published and it is reachable only from the home network or over an
-SSH tunnel.
+ports are published and it is reachable only from the home network, over an
+SSH tunnel, or through a Tailscale tailnet (which is also how GitHub Actions
+deploys reach it).
 
 ## What this phase does and does not do
 
@@ -34,7 +35,7 @@ SSH tunnel.
 ## Architecture
 
 ```
-          Home network / SSH tunnel
+          Home network / Tailscale tailnet
                      |
               +------v-------+
               | Docker network|
@@ -191,17 +192,23 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml \
 
 `.github/workflows/selfhosted-deploy.yml` verifies every Backend function is
 assigned to a container, builds both images, pushes them to GHCR tagged with
-the commit SHA and `latest`, syncs `deploy/` to the server over SSH (without
-touching `.env`), then pulls and restarts the stack.
+the commit SHA and `latest`, connects the runner to the tailnet as an
+ephemeral `tag:ci` node, syncs `deploy/` to the server over Tailscale SSH
+(without touching `.env`), then pulls and restarts the stack.
+
+Tailscale SSH authenticates the deploy connections, so no SSH keys are stored
+in GitHub. The server must be enrolled as a tagged node with Tailscale SSH
+enabled, and the tailnet policy must allow `tag:ci → tag:server` — see
+[DEPLOY.md](DEPLOY.md) for the full Tailscale setup.
 
 Configure a GitHub Environment named `self-hosted` with these secrets:
 
 | Secret | Meaning |
 | --- | --- |
-| `SELFHOSTED_HOST` | Server hostname or IP |
-| `SELFHOSTED_USER` | SSH user with access to Docker; use the same user passed as `DEPLOY_USER` during bootstrap |
-| `SELFHOSTED_PORT` | SSH port (optional, defaults to 22) |
-| `SELFHOSTED_SSH_KEY` | Private SSH key for that user |
+| `SELFHOSTED_HOST` | Server's Tailscale IP (100.x.y.z) or MagicDNS name |
+| `SELFHOSTED_USER` | SSH user with access to Docker; use the same user passed as `DEPLOY_USER` during bootstrap, and list it in the tailnet `ssh` rule `users` |
+| `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client ID (writable `auth_keys` scope, tag `tag:ci`) |
+| `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
 
 The deployment script (`/opt/stacks/strava/scripts/deploy.sh`) pulls the new
 image tag, writes it to `.env`, waits for health checks, and automatically rolls
@@ -307,7 +314,9 @@ phase.
 ## Security checklist
 
 - SSH key authentication only; disable password login in `sshd_config`.
-- Only the SSH port needs to be reachable from outside the home network.
+- No ports need to be reachable from outside the home network: GitHub Actions
+  deploys go through the Tailscale tailnet from an ephemeral `tag:ci` node,
+  authenticated by Tailscale SSH rather than SSH keys.
 - No container publishes host ports; everything stays on the internal Docker
   network.
 - `/admin/*` is reachable only from the internal network (use an SSH tunnel).

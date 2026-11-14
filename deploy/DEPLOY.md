@@ -6,7 +6,9 @@ rollout decisions see [README.md](README.md).
 
 **This setup is internal-only.** No ports are opened to the internet. The
 workers connect outbound to Azure (Cosmos DB, Service Bus, Strava, etc.) but
-the server itself is not reachable from outside your home network. The Azure
+the server itself is reachable only from your home network and your
+[Tailscale](https://tailscale.com) tailnet. GitHub Actions deploys reach it
+over the tailnet using Tailscale SSH. The Azure
 API Function App stays up and continues handling all external traffic and the
 Strava webhook during this phase.
 
@@ -18,6 +20,8 @@ Strava webhook during this phase.
 - Docker Engine with the Compose plugin and `rsync` installed
   (`https://docs.docker.com/engine/install/`)
 - SSH access as a user with `sudo`
+- A Tailscale account (the free Personal plan is enough) — the deploy pipeline
+  reaches the server through your tailnet
 - The Azure connection strings, app secrets, and Strava credentials to hand
 
 No DNS records, open firewall ports, or domain names are needed.
@@ -78,32 +82,77 @@ docker login ghcr.io -u <your-github-username>
 
 If the packages are public this step is not needed.
 
-### 4. Configure GitHub Actions secrets
+### 4. Connect the server to Tailscale
+
+Deploys reach the server through a Tailscale tailnet using
+[Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh), so no firewall
+ports need to be opened or forwarded. Install Tailscale on the server and
+enrol it as a **tagged** node with Tailscale SSH enabled:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --ssh --advertise-tags=tag:server
+```
+
+If the server is already enrolled, re-run
+`sudo tailscale up --advertise-tags=tag:server --force-reauth` and then
+`sudo tailscale set --ssh`. Tagging matters: Tailscale SSH only allows
+connections from tagged devices (the CI runner) to tagged devices.
+
+Next, allow the CI runner to SSH in. In the Tailscale admin console under
+**Settings → Access controls**, the policy needs both a network rule and an
+`ssh` rule for `tag:ci → tag:server`:
+
+```json
+{
+  "tagOwners": {
+    "tag:server": ["<your-tailnet-user>"],
+    "tag:ci": ["<your-tailnet-user>"]
+  },
+  "grants": [
+    { "src": ["tag:ci"], "dst": ["tag:server"], "ip": ["*"] }
+  ],
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["tag:ci"],
+      "dst": ["tag:server"],
+      "users": ["deploy"]
+    }
+  ]
+}
+```
+
+Replace `deploy` in `users` with the SSH user configured as `SELFHOSTED_USER`
+below (the user from bootstrap). `action: accept` is required — `check` mode
+needs an interactive browser login, which CI cannot do.
+
+### 5. Configure GitHub Actions secrets
 
 In the GitHub repository go to **Settings → Environments → New environment**
 and create an environment named `self-hosted`. Add these secrets:
 
 | Secret | Value |
 | --- | --- |
-| `SELFHOSTED_HOST` | Server IP or hostname on your network |
-| `SELFHOSTED_USER` | The SSH user (same as `DEPLOY_USER` used during bootstrap) |
-| `SELFHOSTED_SSH_KEY` | Private SSH key for that user |
-| `SELFHOSTED_PORT` | SSH port — omit if 22 |
+| `SELFHOSTED_HOST` | Server's Tailscale IP (100.x.y.z) or MagicDNS name |
+| `SELFHOSTED_USER` | The SSH user (same as `DEPLOY_USER` used during bootstrap); must be listed in the `ssh` rule `users` |
+| `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client ID for CI nodes |
+| `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
 
-Generate a dedicated ed25519 key pair for deployments:
+Create the OAuth client in the Tailscale admin console under
+**Settings → OAuth clients**
+(<https://console.tailscale.com/settings/oauth>):
 
-```bash
-ssh-keygen -t ed25519 -C "peakshunters-deploy" -f ~/.ssh/peakshunters_deploy
-# add the public key to the server's ~/.ssh/authorized_keys
-# paste the private key into the SELFHOSTED_SSH_KEY secret
-```
+- Scope: **Auth keys — writable** (`auth_keys`)
+- Tags: `tag:ci`
 
-The GitHub Actions runner needs to be able to reach the server over SSH. If your
-home network is behind NAT, either use a self-hosted GitHub Actions runner on
-the same network, or expose SSH through your router (a non-standard port is
-fine).
+The GitHub-hosted runner joins the tailnet as an ephemeral, tagged node
+(`tag:ci`, hostname `strava-gh-deploy`) for the duration of the deploy job and
+is removed automatically afterwards. Tailscale SSH authenticates the
+connection, so no SSH keys are stored in GitHub and no ports need to be
+exposed to the internet.
 
-### 5. Start the stack
+### 6. Start the stack
 
 ```bash
 cd /opt/stacks/strava
@@ -125,7 +174,8 @@ automatically whenever `API/`, `Backend/`, `Shared/`, `deploy/`, or
 1. Verifies every Backend function is assigned to a container
 2. Builds and pushes `peakshunters-api` and `peakshunters-backend` images to
    GHCR tagged with the commit SHA
-3. Rsyncs `deploy/` to the server (without touching `.env`)
+3. Connects the runner to the tailnet and rsyncs `deploy/` to the server over
+   Tailscale SSH (without touching `.env`)
 4. Pulls the new images and restarts the stack with a 5-minute health-check
    timeout
 5. Rolls back to the previous image tag automatically if startup fails
@@ -241,12 +291,24 @@ A missing or wrong connection string is the most common cause.
 
 **GitHub Actions can't SSH to the server**
 
-If your home network is behind NAT, the GitHub-hosted runner can't reach the
-server directly. Options:
-- Run a [self-hosted GitHub Actions runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/about-self-hosted-runners) on the same network
-- Forward a non-standard SSH port through your router to the server and set `SELFHOSTED_PORT` accordingly
+The runner joins the tailnet in the **Connect runner to the tailnet** step,
+then authenticates with Tailscale SSH. Check, in order:
 
-**`SELFHOSTED_HOST`, `SELFHOSTED_USER` and `SELFHOSTED_SSH_KEY` must be configured**
+- The **Connect runner to the tailnet** step succeeded. It waits up to 3
+  minutes for the server to become reachable; while the job runs, the
+  ephemeral `strava-gh-deploy` node is visible in the Tailscale admin console
+  under **Machines**.
+- The server is enrolled and tagged, and advertises Tailscale SSH:
+  `sudo tailscale up --ssh --advertise-tags=tag:server`.
+- The tailnet policy has **both** the `grants` rule and the `ssh` rule for
+  `tag:ci → tag:server`, and the `ssh` rule's `users` list includes
+  `SELFHOSTED_USER`.
+- The OAuth client has the writable `auth_keys` scope and the `tag:ci` tag,
+  matching the `tags` value in the workflow.
+- `SELFHOSTED_HOST` is the server's Tailscale IP (100.x.y.z) or MagicDNS
+  name, not its LAN address. Tailscale SSH only works on port 22.
+
+**`SELFHOSTED_HOST and SELFHOSTED_USER must be configured` or `TS_OAUTH_CLIENT_ID and TS_OAUTH_SECRET must be configured`**
 
 The GitHub Environment secrets are missing or the environment name does not
 match `self-hosted` exactly.
