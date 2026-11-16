@@ -270,3 +270,4 @@ __*
 **.gpkg
 
 .DS_Store
+.atl/
