@@ -25,4 +25,18 @@ docker compose exec -T backend-api \
     exit 1
 }
 
+echo "Checking worker containers respond on port 80..."
+for svc in worker-schedule worker-heavy; do
+    if [ -n "$(docker compose ps -q "${svc}")" ]; then
+        docker compose exec -T "${svc}" \
+            bash -c 'exec 3<>/dev/tcp/127.0.0.1/80' || {
+            echo "${svc} health check failed" >&2
+            exit 1
+        }
+        echo "${svc} OK"
+    else
+        echo "${svc} not running (profile disabled) - skipped"
+    fi
+done
+
 echo "Smoke test passed."

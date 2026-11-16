@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-11-16
 - **Deciders:** Erik Magnusson
-- **Related:** [`Shared/MIGRATION_PLAN_SELF_HOSTED.md`](../../Shared/MIGRATION_PLAN_SELF_HOSTED.md), [`deploy/DEPLOY.md`](../../deploy/DEPLOY.md), [`specs/pmtile-build-performance-plan.md`](../../specs/pmtile-build-performance-plan.md)
+- **Related:** [`Shared/MIGRATION_PLAN_SELF_HOSTED.md`](../../Shared/MIGRATION_PLAN_SELF_HOSTED.md), [`deploy/DEPLOY.md`](../../deploy/DEPLOY.md), [`specs/functions-runtime-exit.md`](../../specs/functions-runtime-exit.md), [`specs/pmtile-build-performance-plan.md`](../../specs/pmtile-build-performance-plan.md)
 
 ---
 
@@ -153,8 +153,8 @@ comparing both paths against the goals above.
 | Step | Work | Source |
 |------|------|--------|
 | 1 | Validate `worker-heavy` against production traffic | Plan: "Immediate next actions" |
-| 2 | Phase 2 — shed the Functions model: plain ASP.NET Core API + worker containers | Plan: Phase 2 |
-| 3 | Phase 4 — Redis (cache + queues) | Plan: Phase 4 |
+| 2 | Phase 2 — shed the Functions model **and exit Service Bus** (one campaign, sequenced: traffic first, then queues) | [`specs/functions-runtime-exit.md`](../../specs/functions-runtime-exit.md) |
+| 3 | Phase 4 — Redis caching (queue/timer storage lands with the Functions exit above) | Plan: Phase 4 |
 | 4 | Phase 5–7 — PostgreSQL, dual-write, cutover | Plan: Phases 5–7 |
 | 5 | **In parallel, any time: port `PmtilesJob` to Rust** (pilot; own spec to follow) | This ADR |
 | 6 | Phase 8 — decommission remaining Azure services | Plan: Phase 8 |
