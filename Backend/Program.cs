@@ -1,210 +1,104 @@
-using System.Configuration;
+using Backend;
+using Hangfire;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
-using System.Net.Http.Headers;
-using System.Text.Json;
-using Azure.Identity;
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
-using Azure.Monitor.Query;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Shared.Geo.SummitsCalculator;
-using Shared.Models;
-using Shared.Services;
-using Shared.Services.StravaClient;
-using Shared.Constants;
-using Microsoft.Extensions.Logging;
-using Azure.Storage.Blobs;
-using Backend;
-using Shared.Services.Shards;
+using Microsoft.Extensions.Options;
+using Shared.Hosting;
+using System.Text.Json;
 
-var host = new HostBuilder()
-    .ConfigureAppConfiguration(c => c.AddJsonFile("local.settings.shared.json", optional: true))
-    .ConfigureFunctionsWebApplication()
-    .ConfigureServices((hostingContext, services) =>
+// Plain .NET host replacing the Functions worker for the Backend project.
+// WORKER_ROLE selects the container role:
+//   api       -> ASP.NET Core (Kestrel) hosting the backend HTTP functions
+//   schedule  -> Generic Host running Hangfire recurring jobs (the 12 crons)
+//   heavy     -> Generic Host running Service Bus consumers + Cosmos feeds
+//
+// Service Bus remains the queue transport in P1a; P2 swaps the producers and
+// consumers to Hangfire behind a feature flag.
+
+var role = Environment.GetEnvironmentVariable("WORKER_ROLE")
+           ?? Environment.GetEnvironmentVariable("WorkerRole")
+           ?? "api";
+
+var registry = FunctionWorkerRegistry.Discover(typeof(Program).Assembly);
+
+if (string.Equals(role, "api", StringComparison.OrdinalIgnoreCase))
+{
+    var app = WebApplication.CreateBuilder(args);
+    app.Services.AddBackendServices(app.Configuration);
+    QueueTransport.AddHangfireStorage(app.Services, app.Configuration);
+    app.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     {
-        var configuration = hostingContext.Configuration;
-        services.Configure<JsonSerializerOptions>(options =>
-        {
-            options.PropertyNameCaseInsensitive = true;
-            options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-            options.Converters.Add(new GeometrySystemTextJsonConverter());
-            options.Converters.Add(new FeatureIdJsonConverter());
-        });
-        var socketsHttpHandler = new SocketsHttpHandler();
-        services.AddSingleton(socketsHttpHandler);
-        services.AddHttpClient(
-            "apiClient",
-            client =>
-            {
-                client.BaseAddress = new Uri(configuration.GetValue<string>("ApiUrl") ?? throw new ConfigurationErrorsException("No API Url found in config"));
-            });
-        services.AddHttpClient(
-            "backendApiClient",
-            client =>
-            {
-                client.BaseAddress = new Uri(configuration.GetValue<string>("BackendApiUrl") ?? throw new ConfigurationErrorsException("No Backend API Url found in config"));
-            });
-        services.AddHttpClient(
-            "stravaClient",
-            client =>
-            {
-                client.BaseAddress = new Uri("https://www.strava.com/api/v3/");
-            });
-        services.AddSingleton(serviceProvider =>
-        {
-            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
-            var stravaClient = httpClientFactory.CreateClient("stravaClient");
-            return new ActivitiesApi(stravaClient);
-        });
-        services.AddHttpClient<OverpassClient>(
-            client =>
-            {
-                client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
-                client.Timeout = TimeSpan.FromMinutes(10); // large country geometries (Russia, Canada) can take several minutes
-            });
-        services.AddHttpClient<ILocationGeocodingService, NominatimLocationGeocodingService>(
-            client =>
-            {
-                client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
-                client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
-                client.Timeout = TimeSpan.FromSeconds(10);
-            });
-        services.AddSharedGeocodingCache(configuration);
-        string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection") ?? throw new Exception("No cosmos connection string found");
-        CosmosClientOptions cosmosClientOptions = new()
-        {
-            HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
-            SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
-            AllowBulkExecution = true,
-            MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(3)
-        };
-        // Register as instance so the DI container does not own or dispose it during host shutdown.
-        // Using a factory (AddSingleton(factory)) would cause the container to call Dispose() when
-        // the host recycles, failing any in-flight Cosmos operations with ObjectDisposedException.
-        services.AddSingleton(new CosmosClient(cosmosDbConnectionString, cosmosClientOptions));
+        var origins = app.Configuration.GetValue<string>("AllowedOrigins")?
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
+        if (origins.Length > 0)
+            policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+        else
+            policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+    }));
 
-        services.AddSingleton(serviceProvider =>
-        {
-            var configuration = serviceProvider.GetRequiredService<IConfiguration>();
-            var storageConnectionString = configuration.GetValue<string>("AzureWebJobsStorage")
-                ?? throw new Exception("No AzureWebJobsStorage connection string found");
-            return new BlobServiceClient(storageConnectionString);
-        });
+    var webApp = app.Build();
+    FunctionsJson.Options = webApp.Services.GetRequiredService<IOptions<JsonSerializerOptions>>().Value;
+    webApp.UseCors();
+    webApp.MapFunctions(typeof(Program).Assembly);
+    webApp.MapGet("/health", () => Results.Ok("ok"));
+    webApp.Run();
+    return;
+}
 
-        new CollectionClientBuilder(services)
-            .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
-            .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)
-            .AddCollection<UserSyncItem>(DatabaseConfig.CosmosDb, DatabaseConfig.UserSyncItemsContainer)
-            .AddCollection<Session>(DatabaseConfig.CosmosDb, DatabaseConfig.SessionsContainer)
-            .AddCollection<Activity>(DatabaseConfig.CosmosDb, DatabaseConfig.ActivitiesContainer)
-            .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
-            .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer)
-            .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
+// Worker roles: a Generic Host with Hangfire for timers and hosted services
+// for queue consumers / change feeds.
+var hostBuilder = Host.CreateApplicationBuilder(args);
+hostBuilder.Services.AddBackendServices(hostBuilder.Configuration);
 
-        services.AddSingleton(serviceProvider =>
-        {
-            var cfg = serviceProvider.GetRequiredService<IConfiguration>();
-            var connStr = cfg.GetValue<string>("BlobStorageConnection")
-                ?? throw new Exception("BlobStorageConnection is not configured");
-            var containerName = BlobContainerNames.RaceOrganizers;
-            var containerClient = new BlobContainerClient(connStr, containerName);
-            containerClient.CreateIfNotExists();
-            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            return new BlobOrganizerStore(containerClient, loggerFactory);
-        });
-        services.AddSingleton(serviceProvider =>
-        {
-            var cfg = serviceProvider.GetRequiredService<IConfiguration>();
-            var connStr = cfg.GetValue<string>("BlobStorageConnection")
-                ?? throw new Exception("BlobStorageConnection is not configured");
-            var containerClient = new BlobContainerClient(connStr, BlobContainerNames.HighwaysShards);
-            containerClient.CreateIfNotExists();
-            return new HighwaysShardContainer(containerClient);
-        });
-        services.AddSingleton<IShardRepository>(serviceProvider =>
-        {
-            var repositoryLogger = serviceProvider.GetRequiredService<ILogger<BlobShardRepository>>();
-            var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
-            var overpass = serviceProvider.GetRequiredService<OverpassClient>();
-            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-            var shardBufferMeters = configuration.GetValue<int?>(AppConfig.BlobShardBufferMeters) ?? 200;
-            return new BlobShardRepository(
-                containerClient,
-                repositoryLogger,
-                overpass.GetHighways,
-                shardZoom,
-                shardBufferMeters,
-                async (x, y, shard, cancellationToken) =>
-                {
-                    var zoomIndexService = serviceProvider.GetRequiredService<HighwayZoomIndexService>();
-                    await zoomIndexService.SyncIndexesForShardAsync(x, y, shard, cancellationToken);
-                });
-        });
-        services.AddSingleton(serviceProvider =>
-        {
-            var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
-            var shardLogger = serviceProvider.GetRequiredService<ILogger<ShardFeatureClient>>();
-            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-            return new ShardFeatureClient(shardRepository, shardLogger, shardZoom);
-        });
-        services.AddSingleton(serviceProvider =>
-        {
-            var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
-            var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
-            var indexLogger = serviceProvider.GetRequiredService<ILogger<HighwayZoomIndexService>>();
-            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-            return new HighwayZoomIndexService(containerClient, shardRepository, indexLogger, shardZoom);
-        });
+// Hangfire storage is registered exactly once here, not in BackendServices.
+QueueTransport.AddHangfireStorage(hostBuilder.Services, hostBuilder.Configuration);
+hostBuilder.Services.AddHangfireServer(options => options.WorkerCount = 1);
 
-        services.AddSingleton<AdminBoundaryMetricsEnricher>();
+var isHeavy = string.Equals(role, "heavy", StringComparison.OrdinalIgnoreCase);
+var isSchedule = string.Equals(role, "schedule", StringComparison.OrdinalIgnoreCase);
+if (isSchedule)
+    hostBuilder.AddFunctionTimers(registry, (descriptor, services, ct) =>
+        FunctionInvoker.InvokeAsync(descriptor, services, ct));
+hostBuilder.AddFunctionWorkers(
+    registry,
+    (descriptor, services, ct) => FunctionInvoker.InvokeAsync(descriptor, services, ct),
+    enableQueues: isHeavy,
+    enableChangeFeeds: isHeavy,
+    includeQueue: queue => !QueueTransport.IsHangfire(queue));
 
-        services.AddScoped(serviceProvider =>
-        {
-            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
-            var httpClient = httpClientFactory.CreateClient();
-            return new AuthenticationApi(httpClient, configuration);
-        });
-        services.AddSingleton(s =>
-        {
-            var sbConnectionString = configuration.GetValue<string>("ServiceBusConnection");
-            return new ServiceBusClient(sbConnectionString);
-        });
-        services.AddSingleton(s =>
-        {
-            var sbConnectionString = configuration.GetValue<string>("ServiceBusConnection");
-            return new ServiceBusAdministrationClient(sbConnectionString);
-        });
-        services.AddScoped(serviceProvider =>
-        {
-            var usersCollection = serviceProvider.GetRequiredService<CollectionClient<Shared.Models.User>>();
-            var sessionsCollection = serviceProvider.GetRequiredService<CollectionClient<Session>>();
-            return new UserAuthenticationService(usersCollection, sessionsCollection);
-        });
-        services.AddScoped<UserSyncStatusService>();
-        services.AddScoped<ISummitsCalculator>(serviceProvider =>
-        {
-            return new SummitsCalculatorWithBoundingBoxFilter();
-        });
-        services.AddSingleton<RaceDiscoveryService>();
-        services.AddSingleton<DiscoverDuvRaces>();
-        services.AddSingleton<DiscoverTraceDeTrailRaces>();
-        services.AddSingleton<DiscoverItraRaces>();
-        services.AddSingleton<DiscoverTrailrunningSwedenRaces>();
-        services.AddSingleton<DiscoverSkyrunningRaces>();
-        services.AddSingleton<DiscoverLopplistanRaces>();
-        services.AddSingleton<DiscoverMittloppRaces>();
+// Timers run only in the schedule role; queue consumers and feeds only in the
+// heavy role. P1a keeps both roles available so they can be taken over
+// independently per the plan's handshake.
+if (isSchedule)
+    hostBuilder.Services.AddSingleton<IHostedService>(sp =>
+        new TimerRegistrationHostedService(registry));
 
-        var cosmosResourceId = configuration.GetValue<string>("CosmosAccountResourceId");
-        if (!string.IsNullOrEmpty(cosmosResourceId))
-            services.AddSingleton(new MetricsQueryClient(new DefaultAzureCredential()));
-    })
-    .Build();
+var host = hostBuilder.Build();
 
-ServiceBusRescheduler.Initialize(
-    host.Services.GetRequiredService<ServiceBusAdministrationClient>(),
-    metricsQueryClient: host.Services.GetService<MetricsQueryClient>(),
-    cosmosResourceId: host.Services.GetRequiredService<IConfiguration>().GetValue<string>("CosmosAccountResourceId"));
+FunctionsJson.Options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+if (isHeavy)
+{
+    using (var scope = host.Services.CreateScope())
+    {
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        // Hangfire storage schema is created on first use; force it here so the
+        // empty-state check (P0 step 4) is observable at startup.
+        scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
+    }
+}
 
 host.Run();
+
+/// <summary>
+/// No-op marker hosted service so the schedule role still starts when only
+/// Hangfire recurring jobs are registered.
+/// </summary>
+public sealed class TimerRegistrationHostedService(FunctionWorkerRegistry registry) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}

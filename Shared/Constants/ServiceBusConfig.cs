@@ -8,17 +8,6 @@ namespace Shared.Constants
             .Select(field => (string)field.GetRawConstantValue()!)
             .OrderBy(queueName => queueName)];
 
-        public static readonly string[] NonTimeCriticalQueues = [
-            CalculateSummitsJobs,
-            CalculateVisitedPathsJobs,
-            CalculateVisitedAreasJobs,
-            ActivityDeleteJobs,
-            AccountDeleteJobs,
-            EnrichAdminBoundaryJobs,
-            RaceDiscoveryJobs,
-            ScrapeRace
-        ];
-
         public const string CalculateSummitsJobs = "calculateSummitsJobs";
         public const string CalculateVisitedPathsJobs = "calculateVisitedPathsJobs";
         public const string CalculateVisitedAreasJobs = "calculateVisitedAreasJobs";

@@ -23,9 +23,9 @@ instructions.
 ### What is done
 
 - **Docker Compose stack** with `api`, `backend-api`, `worker-schedule`
-  (profile: `schedules`), and `worker-heavy` (profile: `workers`) containers.
-  The existing `API` and `Backend` Azure Functions projects run unchanged in the
-  official .NET 10 isolated-worker image — no backend code is forked.
+  (profile: `schedules`), `worker-heavy` (profile: `workers`) and a durable
+  `redis` container. The `API` and `Backend` projects now run as plain .NET 10
+  ASP.NET Core / Generic Hosts — the Functions runtime has been removed.
 - **Internal-only deployment.** No public ports, no TLS, no reverse proxy.
   The server lives on the home network and connects outbound to Azure. The Azure
   API Function App stays up and handles all external traffic during this phase.
@@ -40,8 +40,9 @@ instructions.
 - **Existing Azure workflows** are unchanged and kept running in parallel.
   They ignore `deploy/**` and `Shared/MIGRATION_PLAN_SELF_HOSTED.md` so
   infra-only commits do not trigger Azure deploys.
-- **Function coverage gate** — `scripts/verify-function-coverage.sh` fails CI
-  if a Backend function is added without being assigned to exactly one container.
+- **Role coverage gate** — `deploy/scripts/verify-role-coverage.sh` fails CI if the
+  plain-host trigger inventory (12 queues / 3 feeds / 12 crons) drifts or legacy
+  function-list env vars reappear.
 - **Monitoring** via the existing Beszel instance on the server.
 - **Automated daily backups** of `.env` via systemd timer (03:30 UTC, 14-day
   retention). Cosmos DB and Azure Storage have their own platform backups.
@@ -62,9 +63,10 @@ instructions.
 
 - **No Caddy/TLS** — not needed for an internal worker-only deployment.
 - **No Prometheus/Grafana** — Beszel already covers host and container metrics.
-- **No Redis yet** — no application code uses it; will be added when Phase 4
-  caching work begins. Note: use `allkeys-lru` eviction for cache-only use,
-  but change it before using Redis for durable queues.
+- **Redis is deployed as durable Hangfire storage** (P0 of the Functions exit
+  plan): `--appendonly yes` and `--maxmemory-policy noeviction`. The old
+  `allkeys-lru` cache-only default would silently drop queued jobs.
+  Redis *caching* (Phase 4) is still out of scope.
 - **Cosmos change-feed triggers** (`QueueActivityJobs`, `OsmFeaturesChangeTrigger`,
   `NewSummitedPeak`) share lease containers with Azure. Running both simultaneously
   causes lease hand-off on container restarts — disable Azure-side before enabling

@@ -40,17 +40,6 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     public async Task Run(
         [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions, CancellationToken cancellationToken)
     {
-        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
-                serviceBusAdministrationClient,
-                _serviceBusClient,
-                ServiceBusConfig.CalculateSummitsJobs,
-                jobs,
-                actions,
-                _logger,
-                cancellationToken))
-        {
-            return;
-        }
 
         var jobIds = jobs.Select(x => x.Body.ToString()).ToList();
         var activities = await _activitiesCollection.GetByIdsAsync(jobIds, cancellationToken);
@@ -58,7 +47,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var peaks = (await FetchNearbyPeaks(activitiesById.Values)).ToList();
 
         // Renew locks after the potentially slow peak fetch before per-job processing
-        var realJobs = jobs.Where(ServiceBusRescheduler.HasRealLockToken).ToList();
+        var realJobs = jobs.Where(ServiceBusMessageGuard.HasLockToken).ToList();
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
@@ -109,7 +98,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                 await CleanupStaleSummitedPeaksForActivity(activity, new HashSet<string>(StringComparer.Ordinal), cancellationToken);
                 await SendActivityProcessedEvent(activity, []);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-                if (ServiceBusRescheduler.HasRealLockToken(job))
+                if (ServiceBusMessageGuard.HasLockToken(job))
                     try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
                 await actions.CompleteMessageAsync(job);
                 return;
@@ -123,20 +112,14 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
             await CleanupStaleSummitedPeaksForActivity(activity, currentDocumentIds, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-            if (ServiceBusRescheduler.HasRealLockToken(job))
+            if (ServiceBusMessageGuard.HasLockToken(job))
                 try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
             await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
         {
-            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
-            {
-                ServiceBusRescheduler.RecordCosmosThrottle();
-            }
+            throw;
 
-            await ServiceBusRescheduler.HandleRetryAsync(
-                ex, actions, job, _serviceBusClient, ServiceBusConfig.CalculateSummitsJobs, _logger, cancellationToken);
-            return;
         }
     }
 

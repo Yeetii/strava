@@ -50,17 +50,6 @@ public class VisitedAreasWorker(
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
-        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
-                serviceBusAdministrationClient,
-                _serviceBusClient,
-                Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs,
-                jobs,
-                actions,
-                _logger,
-                cancellationToken))
-        {
-            return;
-        }
 
         var ids = jobs.Select(x => x.Body.ToString());
         var activities = await _activitiesCollection.GetByIdsAsync(ids);
@@ -88,7 +77,7 @@ public class VisitedAreasWorker(
         CancellationToken cancellationToken)
     {
         var activityId = job.Body.ToString();
-        var hasRealLockToken = ServiceBusRescheduler.HasRealLockToken(job);
+        var hasRealLockToken = ServiceBusMessageGuard.HasLockToken(job);
         try
         {
             var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
@@ -143,20 +132,6 @@ public class VisitedAreasWorker(
                 .Concat(FindVisitedRegionAreas(nearbyRegions))
                 .Concat(FindVisitedCountriesFromRegions(nearbyRegions))
                 .ToList();
-
-            if (hasRealLockToken && ServiceBusRescheduler.IsCosmosUnderPressure)
-            {
-                await ServiceBusRescheduler.DeferMessagesAsync(
-                    _serviceBusClient,
-                    Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs,
-                    [job],
-                    actions,
-                    _logger,
-                    cancellationToken,
-                    CosmosPressureWriteDeferralDelay,
-                    "Visited areas worker is low priority and Cosmos is under pressure before write phase");
-                return;
-            }
 
             var currentDocumentIds = visitedAreas
                 .Select(area => activity.UserId + "-" + area.AreaId)
@@ -246,24 +221,14 @@ public class VisitedAreasWorker(
         }
         catch (Exception ex)
         {
-            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
-            {
-                ServiceBusRescheduler.RecordCosmosThrottle();
-            }
 
-            if (hasRealLockToken)
-            {
-                await ServiceBusRescheduler.HandleRetryAsync(
-                    ex, actions, job, _serviceBusClient, Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs, _logger, cancellationToken);
-                return;
-            }
-
-            _logger.LogError(ex,
+_logger.LogError(ex,
                 "Failed to process visited areas for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
                 activityId,
                 job.MessageId,
                 job.DeliveryCount);
-            return;
+            throw;
+
         }
     }
 

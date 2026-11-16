@@ -33,7 +33,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
                         parseError,
                         bodyPreview);
 
-                    if (ServiceBusRescheduler.HasRealLockToken(message))
+                    if (ServiceBusMessageGuard.HasLockToken(message))
                     {
                         await actions.DeadLetterMessageAsync(
                             message,
@@ -122,10 +122,8 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
             }
             catch (Exception ex)
             {
-                var scheduledEnqueueTimeUtc = (ex as StravaRateLimitExceededException)?.RetryAtUtc;
-                await ServiceBusRescheduler.HandleRetryAsync(
-                    ex, actions, message, _serviceBusClient, Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, _logger, cancellationToken, maxRetryCount: 3, scheduledEnqueueTimeUtc: scheduledEnqueueTimeUtc);
-                return;
+                throw;
+
             }
         }
 

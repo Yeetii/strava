@@ -1,12 +1,14 @@
 name: peakshunters
 
-# Internal-only deployment: no ports are published to the internet.
-# Caddy and TLS are intentionally absent; the stack is reachable only from
-# within the home network or over an SSH tunnel.
+# Internal-only deployment. Public exposure is provided by Tailscale Funnel
+# (see docs/tailscale-funnel-runbook.md), not by published ports.
 #
-# Cosmos DB and Azure Service Bus are intentionally NOT migrated in this phase.
-# Every backend container below still uses the Azure connection strings supplied
-# through .env.
+# Azure Functions is gone: all four containers run plain .NET 10 hosts. Roles
+# are selected with WORKER_ROLE (api | schedule | heavy) instead of the old
+# per-function whitelist environment entries.
+#
+# Cosmos DB, Blob, Tables and Azure SignalR stay on Azure. Service Bus is kept
+# for P1a and removed in P2 (see the Azure Functions Runtime Exit plan).
 
 x-logging: &default-logging
   driver: json-file
@@ -14,14 +16,9 @@ x-logging: &default-logging
     max-size: "20m"
     max-file: "5"
 
-x-functions-env: &functions-env
-  FUNCTIONS_WORKER_RUNTIME: dotnet-isolated
-  FUNCTIONS_EXTENSION_VERSION: "~4"
-  WEBSITES_ENABLE_APP_SERVICE_STORAGE: "false"
+x-plain-env: &plain-env
   DOTNET_ENVIRONMENT: Production
-  AzureFunctionsJobHost__Logging__Console__IsEnabled: "true"
-  AzureFunctionsJobHost__Logging__LogLevel__default: ${FUNCTIONS_LOG_LEVEL:-Warning}
-  AzureFunctionsJobHost__Logging__ApplicationInsights__SamplingSettings__IsEnabled: ${APPINSIGHTS_SAMPLING_ENABLED:-true}
+  RedisConnectionString: ${REDIS_CONNECTION_STRING:-redis:6379,abortConnect=false}
 
 x-service: &service
   restart: unless-stopped
@@ -34,98 +31,82 @@ x-app-service: &app-service
   env_file:
     - .env
 
-x-function-healthcheck: &function-healthcheck
+x-http-healthcheck: &http-healthcheck
   test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/80'"]
   interval: 30s
   timeout: 5s
   retries: 3
-  start_period: 120s
+  start_period: 30s
+
+x-worker-healthcheck: &worker-healthcheck
+  test: ["CMD-SHELL", "pgrep -f 'dotnet' >/dev/null"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
 
 services:
   # ---------------------------------------------------------------------------
-  # User-facing API. This is the container that eventually replaces the Azure
-  # API Function App. It loads every function in the API project.
+  # User-facing API. ASP.NET Core (Kestrel) hosting all 59 API endpoints at
+  # their original /api/... routes.
   # ---------------------------------------------------------------------------
   api:
     <<: *app-service
-    # The official Functions image is currently published for linux/amd64.
-    platform: linux/amd64
     image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-api:${IMAGE_TAG:-latest}
     environment:
-      <<: *functions-env
-      AzureFunctionsWebHost__hostid: peakshunters-api-selfhosted
+      <<: *plain-env
+      WORKER_ROLE: api
     expose:
       - "80"
-    healthcheck: *function-healthcheck
+    # Tailscale Funnel on the host forwards to a loopback port. Only publish
+    # on 127.0.0.1 so the API stays off the public interface and LAN.
+    ports:
+      - "127.0.0.1:8080:80"
+    healthcheck: *http-healthcheck
     mem_limit: ${API_MEMORY_LIMIT:-1g}
     cpus: "${API_CPUS:-1.0}"
+    depends_on:
+      redis:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # Backend HTTP functions: Strava webhook/token refresh plus admin, debug and
-  # backfill endpoints. Kept separate from the heavy queue consumers so admin
-  # work cannot starve scheduled jobs.
+  # Backend HTTP functions: Strava webhook, token refresh, admin and backfill
+  # endpoints. Same image as the workers; the role selects the HTTP host.
   # ---------------------------------------------------------------------------
   backend-api:
     <<: *app-service
-    platform: linux/amd64
     image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-backend:${IMAGE_TAG:-latest}
     environment:
-      <<: *functions-env
+      <<: *plain-env
+      WORKER_ROLE: api
       ApiUrl: http://api/api/
       BackendApiUrl: http://backend-api/api/
-      AzureFunctionsWebHost__hostid: peakshunters-backend-api-selfhosted
-      AzureFunctionsJobHost__functions__0: QueueAllScrapeJobsHttp
-      AzureFunctionsJobHost__functions__1: QueueAllVisitedPathsJobs
-      AzureFunctionsJobHost__functions__2: QueueAllSummitJobs
-      AzureFunctionsJobHost__functions__3: QueueAllVisitedAreasJobs
-      AzureFunctionsJobHost__functions__4: BackfillVisitedPathOsmHighwayIds
-      AzureFunctionsJobHost__functions__5: BackfillVisitedPathOsmHighwayIdsAll
-      AzureFunctionsJobHost__functions__6: BackfillAdminBoundaryMetrics
-      AzureFunctionsJobHost__functions__7: TestScrapeUrl
-      AzureFunctionsJobHost__functions__8: RunSummitsForActivity
-      AzureFunctionsJobHost__functions__9: RefreshStravaToken
-      AzureFunctionsJobHost__functions__10: StravaWebhook
-      AzureFunctionsJobHost__functions__11: ScrapeRaceHttp
-      AzureFunctionsJobHost__functions__12: StoreCuratedPeaksGroups
-      AzureFunctionsJobHost__functions__13: CleanupExcludedActivityTypes
     expose:
       - "80"
-    healthcheck: *function-healthcheck
+    healthcheck: *http-healthcheck
     mem_limit: ${BACKEND_API_MEMORY_LIMIT:-1g}
     cpus: "${BACKEND_API_CPUS:-1.0}"
     depends_on:
       api:
         condition: service_healthy
+      redis:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # Scheduled jobs (timer triggers). Enable with COMPOSE_PROFILES=schedules
-  # after disabling the matching timer functions in the Azure Backend app.
+  # Scheduled jobs (the 12 weekly crons) as Hangfire recurring jobs on Redis.
+  # Enable with COMPOSE_PROFILES=schedules after disabling the matching Azure
+  # timer functions.
   # ---------------------------------------------------------------------------
   worker-schedule:
     <<: *app-service
-    platform: linux/amd64
     image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-backend:${IMAGE_TAG:-latest}
     profiles: ["schedules"]
     environment:
-      <<: *functions-env
+      <<: *plain-env
+      WORKER_ROLE: schedule
       ApiUrl: http://api/api/
       BackendApiUrl: http://backend-api/api/
-      AzureFunctionsWebHost__hostid: peakshunters-worker-schedule-selfhosted
-      AzureFunctionsJobHost__functions__0: QueueAllScrapeJobs
-      AzureFunctionsJobHost__functions__1: DiscoverLoppkartanRaces
-      AzureFunctionsJobHost__functions__2: DiscoverLopplistanRaces
-      AzureFunctionsJobHost__functions__3: DiscoverBetrailRaces
-      AzureFunctionsJobHost__functions__4: DiscoverUtmbRaces
-      AzureFunctionsJobHost__functions__5: DiscoverMittloppRaces
-      AzureFunctionsJobHost__functions__6: DiscoverTraceDeTrailRaces
-      AzureFunctionsJobHost__functions__7: DiscoverSkyrunningRaces
-      AzureFunctionsJobHost__functions__8: DiscoverRunagainRaces
-      AzureFunctionsJobHost__functions__9: DiscoverItraRaces
-      AzureFunctionsJobHost__functions__10: DiscoverTrailrunningSwedenRaces
-      AzureFunctionsJobHost__functions__11: DiscoverDuvRaces
-    expose:
-      - "80"
-    healthcheck: *function-healthcheck
+    healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_SCHEDULE_MEMORY_LIMIT:-1g}
     cpus: "${WORKER_SCHEDULE_CPUS:-1.0}"
     depends_on:
@@ -133,42 +114,25 @@ services:
         condition: service_healthy
       backend-api:
         condition: service_healthy
+      redis:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # Heavy workers (Service Bus + Cosmos DB change feed triggers). Enable with
-  # COMPOSE_PROFILES=workers. While both Azure and this container listen to the
-  # same Service Bus queues they act as competing consumers, so messages are
-  # split rather than duplicated. Disable the Azure worker functions when you
-  # want self-hosting to take 100% of the load.
+  # Heavy workers: Service Bus queue consumers + Cosmos change-feed processors.
+  # Enable with COMPOSE_PROFILES=workers. While Azure and this container both
+  # listen to a queue they act as competing consumers; disable the Azure worker
+  # functions to take 100% of the load. P2 swaps these to Hangfire jobs.
   # ---------------------------------------------------------------------------
   worker-heavy:
     <<: *app-service
-    platform: linux/amd64
     image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-backend:${IMAGE_TAG:-latest}
     profiles: ["workers"]
     environment:
-      <<: *functions-env
+      <<: *plain-env
+      WORKER_ROLE: heavy
       ApiUrl: http://api/api/
       BackendApiUrl: http://backend-api/api/
-      AzureFunctionsWebHost__hostid: peakshunters-worker-heavy-selfhosted
-      AzureFunctionsJobHost__functions__0: AdminBoundaryEnrichmentWorker
-      AzureFunctionsJobHost__functions__1: ActivityEventWorker
-      AzureFunctionsJobHost__functions__2: VisitedPathsWorker
-      AzureFunctionsJobHost__functions__3: SummitsWorker
-      AzureFunctionsJobHost__functions__4: ScrapeRaceWorker
-      AzureFunctionsJobHost__functions__5: RaceDiscoveryWorker
-      AzureFunctionsJobHost__functions__6: ScrapeRaceMistralWorker
-      AzureFunctionsJobHost__functions__7: VisitedAreasWorker
-      AzureFunctionsJobHost__functions__8: DeleteAccountWorker
-      AzureFunctionsJobHost__functions__9: DeleteActivityWorker
-      AzureFunctionsJobHost__functions__10: StravaActivitiesFetcher
-      AzureFunctionsJobHost__functions__11: StravaActivityFetcher
-      AzureFunctionsJobHost__functions__12: QueueActivityJobs
-      AzureFunctionsJobHost__functions__13: OsmFeaturesChangeTrigger
-      AzureFunctionsJobHost__functions__14: NewSummitedPeak
-    expose:
-      - "80"
-    healthcheck: *function-healthcheck
+    healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_HEAVY_MEMORY_LIMIT:-2g}
     cpus: "${WORKER_HEAVY_CPUS:-2.0}"
     depends_on:
@@ -176,7 +140,35 @@ services:
         condition: service_healthy
       backend-api:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Durable Redis backing Hangfire (recurring + queue jobs). AOF + noeviction
+  # are required: Hangfire job state must never be evicted under memory pressure.
+  # ---------------------------------------------------------------------------
+  redis:
+    <<: *service
+    image: redis:7-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
 networks:
   backend:
     driver: bridge
+
+volumes:
+  redis-data:

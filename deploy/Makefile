@@ -23,7 +23,7 @@ deploy:
 	./scripts/deploy.sh "$(TAG)"
 
 verify:
-	./scripts/verify-function-coverage.sh
+	./scripts/verify-role-coverage.sh
 
 smoke:
 	./scripts/smoke-test.sh

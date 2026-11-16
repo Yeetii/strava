@@ -34,17 +34,6 @@ public class DeleteAccountWorker(
         if (deleteJob == null)
             throw new InvalidOperationException("Account delete job payload is invalid.");
 
-        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
-                serviceBusAdministrationClient,
-                _serviceBusClient,
-                ServiceBusConfig.AccountDeleteJobs,
-                message,
-                actions,
-                _logger,
-                cancellationToken))
-        {
-            return;
-        }
 
         try
         {
@@ -60,19 +49,7 @@ public class DeleteAccountWorker(
         }
         catch (Exception ex)
         {
-            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
-            {
-                ServiceBusRescheduler.RecordCosmosThrottle();
-            }
-
-            await ServiceBusRescheduler.HandleRetryAsync(
-                ex,
-                actions,
-                message,
-                _serviceBusClient,
-                ServiceBusConfig.AccountDeleteJobs,
-                _logger,
-                cancellationToken);
+            throw;
         }
     }
 

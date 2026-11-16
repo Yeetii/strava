@@ -57,17 +57,6 @@ public class RaceDiscoveryWorker(
 
         var normalizedMessage = discoveryMessage with { Agent = discoveryMessage.Agent.Trim().ToLowerInvariant() };
 
-        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
-                serviceBusAdministrationClient,
-                serviceBusClient,
-                ServiceBusConfig.RaceDiscoveryJobs,
-                message,
-                actions,
-                logger,
-                cancellationToken))
-        {
-            return;
-        }
 
         try
         {

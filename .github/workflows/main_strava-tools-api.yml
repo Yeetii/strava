@@ -3,15 +3,10 @@
 
 name: Build and deploy API
 
+# Automatic Azure Function App deploys are disabled: production traffic is
+# moving to the self-hosted ASP.NET Core hosts. Kept as workflow_dispatch only
+# so the Azure app can still be redeployed for rollback until P3 decommission.
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-    - 'Backend/**'
-    - 'Backend.Tests/**'
-    - 'deploy/**'
-    - 'Shared/MIGRATION_PLAN_SELF_HOSTED.md'
   workflow_dispatch:
 
 env:
