@@ -50,6 +50,8 @@ echo "==> Starting stack (profiles from .env: $(grep -E '^COMPOSE_PROFILES=' .en
 if docker compose up -d --remove-orphans --wait --wait-timeout 300; then
     echo "==> Deployment succeeded"
     docker compose ps
+    echo "==> pmtiles status"
+    docker compose ps pmtiles
     docker image prune -f >/dev/null || true
     exit 0
 fi

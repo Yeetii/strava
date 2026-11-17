@@ -7,6 +7,7 @@ on:
     paths:
       - 'API/**'
       - 'Backend/**'
+      - 'PmtilesJob/**'
       - 'Shared/**'
       - 'Shared.Hosting/**'
       - 'Directory.Build.props'
@@ -50,8 +51,13 @@ jobs:
         include:
           - name: api
             project: API
+            dockerfile: deploy/docker/plain-host.Dockerfile
           - name: backend
             project: Backend
+            dockerfile: deploy/docker/plain-host.Dockerfile
+          - name: pmtiles
+            project: PmtilesJob
+            dockerfile: PmtilesJob/Dockerfile
 
     steps:
       - uses: actions/checkout@v4
@@ -73,7 +79,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/docker/plain-host.Dockerfile
+          file: ${{ matrix.dockerfile }}
           build-args: |
             PROJECT=${{ matrix.project }}
           platforms: linux/amd64
