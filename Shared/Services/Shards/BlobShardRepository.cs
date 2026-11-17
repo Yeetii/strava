@@ -125,54 +125,8 @@ public class BlobShardRepository(
 
     internal static string GetBlobPath(int z, int x, int y) => $"{z}/{x}/{y}.pbf";
 
-    private async Task<Shard> BuildShardAsync(int x, int y, CancellationToken cancellationToken)
-    {
-        var (southWest, northEast) = SlippyTileCalculator.TileIndexToWGS84(x, y, _canonicalZoom);
-        var bufferedSouthWest = GeoSpatialFunctions.ShiftCoordinate(southWest, -_overlapBufferMeters, -_overlapBufferMeters);
-        var bufferedNorthEast = GeoSpatialFunctions.ShiftCoordinate(northEast, _overlapBufferMeters, _overlapBufferMeters);
-        var fetched = (await _fetchFeatures(bufferedSouthWest, bufferedNorthEast, cancellationToken)).ToList();
-
-        var clippedFeatures = BlobTileService.ClipToTileBounds(fetched, _canonicalZoom, x, y).ToList();
-
-        // Track how many fragments per OSM ID have been seen so that multi-fragment paths
-        // (an OSM way that enters/exits the tile boundary more than once) each get a unique
-        // tile-scoped ID.  Without this, duplicate IDs would cause later deduplication in
-        // ShardFeatureClient.GetFeaturesForShards to silently drop all but the first fragment.
-        var fragmentCountByOsmId = new Dictionary<string, int>();
-        var shard = new Shard();
-        foreach (var feature in clippedFeatures)
-        {
-            var osmId = feature.Id.Value?.ToString() ?? Guid.NewGuid().ToString("N");
-            fragmentCountByOsmId.TryGetValue(osmId, out var fragmentIndex);
-            fragmentCountByOsmId[osmId] = fragmentIndex + 1;
-            var logicalId = fragmentIndex == 0 ? osmId : $"{osmId}_f{fragmentIndex}";
-
-            var (featureType, geometryBytes) = PackedGeometryCodec.Encode(feature.Geometry);
-            shard.Owned.Add(new ShardFeature
-            {
-                Id = CreateTileScopedFeatureId(logicalId, x, y),
-                OsmId = osmId,
-                Name = feature.Properties.TryGetValue("name", out var rawName)
-                    ? rawName?.ToString()
-                    : null,
-                Type = featureType,
-                Geometry = geometryBytes,
-                Tags = [.. feature.Properties
-                    .Select(property => new ShardTag
-                    {
-                        KeyId = ShardEncodingIds.TagIdFromString(property.Key),
-                        ValueId = ShardEncodingIds.TagIdFromString(property.Value?.ToString() ?? string.Empty)
-                    })]
-            });
-        }
-
-        _logger.LogInformation("Built shard z{Zoom}/{X}/{Y} with {Owned} clipped features.",
-            _canonicalZoom, x, y, shard.Owned.Count);
-        return shard;
-    }
-
-    private ulong CreateTileScopedFeatureId(string logicalId, int x, int y)
-        => ShardEncodingIds.FeatureIdFromString($"{_canonicalZoom}/{x}/{y}/{logicalId}");
+    private Task<Shard> BuildShardAsync(int x, int y, CancellationToken cancellationToken)
+        => ShardBuilder.BuildAsync(x, y, _canonicalZoom, _overlapBufferMeters, _fetchFeatures, _logger, cancellationToken);
 
     private async Task NotifyShardChangedAsync(int x, int y, Shard? shard, CancellationToken cancellationToken)
     {

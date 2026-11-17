@@ -343,7 +343,7 @@ public class ShardStackTests
 
         var shardRepository = new FakeShardRepository(new Dictionary<(int z, int x, int y), Shard>());
         var service = new HighwayZoomIndexService(
-            container.Object,
+            new BlobShardIndexStore(container.Object),
             shardRepository,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<HighwayZoomIndexService>.Instance,
             canonicalZoom: 12);
@@ -434,7 +434,7 @@ public class ShardStackTests
             });
 
         indexService = new HighwayZoomIndexService(
-            container.Client.Object,
+            new BlobShardIndexStore(container.Client.Object),
             repository,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<HighwayZoomIndexService>.Instance,
             canonicalZoom: 12);
@@ -515,7 +515,7 @@ public class ShardStackTests
 
     private sealed class RecordingHighwayZoomIndexService(HighwayTileShardSelection selection)
         : HighwayZoomIndexService(
-            new Azure.Storage.Blobs.BlobContainerClient("UseDevelopmentStorage=true", "ignored"),
+            new BlobShardIndexStore(new Azure.Storage.Blobs.BlobContainerClient("UseDevelopmentStorage=true", "ignored")),
             new FakeShardRepository(new Dictionary<(int z, int x, int y), Shard>()),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<HighwayZoomIndexService>.Instance,
             canonicalZoom: 12)

@@ -1,7 +1,6 @@
 using System.Configuration;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Azure.Storage.Blobs;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -75,13 +74,6 @@ public static class BackendServices
         };
         services.AddSingleton(new CosmosClient(cosmosDbConnectionString, cosmosClientOptions));
 
-        services.AddSingleton(serviceProvider =>
-        {
-            var storageConnectionString = configuration.GetValue<string>("AzureWebJobsStorage")
-                ?? throw new Exception("No AzureWebJobsStorage connection string found");
-            return new BlobServiceClient(storageConnectionString);
-        });
-
         new CollectionClientBuilder(services)
             .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
             .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)
@@ -93,29 +85,7 @@ public static class BackendServices
             .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
 
         services.AddOrganizerStore(configuration);
-        services.AddSingleton(serviceProvider =>
-        {
-            var connStr = configuration.GetValue<string>("BlobStorageConnection")
-                ?? throw new Exception("BlobStorageConnection is not configured");
-            var containerClient = new BlobContainerClient(connStr, BlobContainerNames.HighwaysShards);
-            containerClient.CreateIfNotExists();
-            return new HighwaysShardContainer(containerClient);
-        });
-        services.AddSingleton<IShardRepository>(serviceProvider =>
-        {
-            var repositoryLogger = serviceProvider.GetRequiredService<ILogger<BlobShardRepository>>();
-            var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
-            var overpass = serviceProvider.GetRequiredService<OverpassClient>();
-            var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-            var shardBufferMeters = configuration.GetValue<int?>(AppConfig.BlobShardBufferMeters) ?? 200;
-            return new BlobShardRepository(
-                containerClient, repositoryLogger, overpass.GetHighways, shardZoom, shardBufferMeters,
-                async (x, y, shard, cancellationToken) =>
-                {
-                    var zoomIndexService = serviceProvider.GetRequiredService<HighwayZoomIndexService>();
-                    await zoomIndexService.SyncIndexesForShardAsync(x, y, shard, cancellationToken);
-                });
-        });
+        services.AddShardStore(configuration);
         services.AddSingleton(serviceProvider =>
         {
             var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
@@ -125,11 +95,11 @@ public static class BackendServices
         });
         services.AddSingleton(serviceProvider =>
         {
-            var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
+            var indexStore = serviceProvider.GetRequiredService<IShardIndexStore>();
             var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
             var indexLogger = serviceProvider.GetRequiredService<ILogger<HighwayZoomIndexService>>();
             var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-            return new HighwayZoomIndexService(containerClient, shardRepository, indexLogger, shardZoom);
+            return new HighwayZoomIndexService(indexStore, shardRepository, indexLogger, shardZoom);
         });
 
         services.AddSingleton<AdminBoundaryMetricsEnricher>();

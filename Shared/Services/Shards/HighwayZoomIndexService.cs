@@ -1,14 +1,12 @@
-using System.Text.Json;
 using System.Diagnostics;
-using Azure;
-using Azure.Storage.Blobs;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
 
 namespace Shared.Services.Shards;
 
 public class HighwayZoomIndexService(
-    BlobContainerClient container,
+    IShardIndexStore indexStore,
     IShardRepository shardRepository,
     ILogger<HighwayZoomIndexService> logger,
     int canonicalZoom = 12,
@@ -16,7 +14,7 @@ public class HighwayZoomIndexService(
 {
     private const int IndexVersion = 4;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly BlobContainerClient _container = container;
+    private readonly IShardIndexStore _indexStore = indexStore;
     private readonly IShardRepository _shardRepository = shardRepository;
     private readonly ILogger<HighwayZoomIndexService> _logger = logger;
     private readonly int _canonicalZoom = canonicalZoom;
@@ -57,9 +55,9 @@ public class HighwayZoomIndexService(
             var shift = _canonicalZoom - z;
             var x = shardX >> shift;
             var y = shardY >> shift;
-            var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
+            var path = GetIndexBlobPath(z, x, y);
 
-            var index = await TryReadIndexModelAsync(blob, z, x, y, cancellationToken);
+            var index = await TryReadIndexModelAsync(path, z, x, y, cancellationToken);
             if (index is null)
                 continue;
 
@@ -82,7 +80,7 @@ public class HighwayZoomIndexService(
                 continue;
 
             var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
-            await blob.UploadAsync(BinaryData.FromBytes(payload), overwrite: true, cancellationToken);
+            await _indexStore.WriteAsync(path, payload, cancellationToken);
 
             _logger.LogInformation(
                 "Updated highway shard index z{Z}/{X}/{Y} with shard {ShardX}/{ShardY}. Included={Included}.",
@@ -118,16 +116,7 @@ public class HighwayZoomIndexService(
         if (z >= _canonicalZoom)
             return null;
 
-        var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
-        try
-        {
-            var properties = await blob.GetPropertiesAsync(cancellationToken: cancellationToken);
-            return properties.Value.LastModified;
-        }
-        catch (RequestFailedException ex) when (ex.Status == 404)
-        {
-            return null;
-        }
+        return await _indexStore.TryGetLastModifiedAsync(GetIndexBlobPath(z, x, y), cancellationToken);
     }
 
     private async Task<HighwayTileShardSelection> BuildAndPersistIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
@@ -161,9 +150,8 @@ public class HighwayZoomIndexService(
         // Persist both complete and incomplete selections to avoid re-scanning all candidate
         // canonical shards on every low-zoom request. Incomplete indexes are safe to cache
         // because UpdateIndexesForShardAsync amends existing index blobs as shards materialize.
-        var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
         var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
-        await blob.UploadAsync(BinaryData.FromBytes(payload), overwrite: true, cancellationToken);
+        await _indexStore.WriteAsync(GetIndexBlobPath(z, x, y), payload, cancellationToken);
 
         _logger.LogInformation(
             "Built highway shard index for z{Z}/{X}/{Y}. CandidateShards={CandidateShardCount}, ReferencedShards={ShardCount}, IsComplete={IsComplete}, elapsedMs={ElapsedMs}.",
@@ -174,8 +162,7 @@ public class HighwayZoomIndexService(
 
     private async Task<HighwayTileShardSelection?> TryReadIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
     {
-        var blob = _container.GetBlobClient(GetIndexBlobPath(z, x, y));
-        var model = await TryReadIndexModelAsync(blob, z, x, y, cancellationToken);
+        var model = await TryReadIndexModelAsync(GetIndexBlobPath(z, x, y), z, x, y, cancellationToken);
         if (model is null)
             return null;
 
@@ -184,20 +171,24 @@ public class HighwayZoomIndexService(
             [.. model.Shards.Select(shard => (shard.X, shard.Y)).Distinct()]);
     }
 
-    private async Task<HighwayTileShardIndex?> TryReadIndexModelAsync(BlobClient blob, int z, int x, int y, CancellationToken cancellationToken)
+    private async Task<HighwayTileShardIndex?> TryReadIndexModelAsync(
+        string path,
+        int z,
+        int x,
+        int y,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var download = await blob.DownloadContentAsync(cancellationToken);
-            var model = JsonSerializer.Deserialize<HighwayTileShardIndex>(download.Value.Content.ToArray(), JsonOptions);
+            var content = await _indexStore.TryReadAsync(path, cancellationToken);
+            if (content is null)
+                return null;
+
+            var model = JsonSerializer.Deserialize<HighwayTileShardIndex>(content, JsonOptions);
             if (model is null || model.Version != IndexVersion || model.Zoom != z || model.X != x || model.Y != y)
                 return null;
 
             return model;
-        }
-        catch (RequestFailedException ex) when (ex.Status == 404)
-        {
-            return null;
         }
         catch (Exception ex)
         {

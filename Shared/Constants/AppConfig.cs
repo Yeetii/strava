@@ -12,6 +12,11 @@ public static class AppConfig
     public const string OrganizerStoreProvider = "OrganizerStore:Provider";
     public const string RaceDataDir = "OrganizerStore:RaceDataDir";
 
+    // Shard/index store selection. Blob keeps the existing behaviour; FileSystem
+    // is the self-hosted store. Opt in explicitly with ShardStore:Provider.
+    public const string ShardStoreProvider = "ShardStore:Provider";
+    public const string ShardStoreRootDir = "ShardStore:RootDir";
+
     // Shared Redis (Hangfire transport and the race-build geocoding cache).
     public const string RedisConnectionString = "RedisConnectionString";
 
@@ -23,6 +28,12 @@ public static class AppConfig
 }
 
 public static class OrganizerStoreProviders
+{
+    public const string Blob = "Blob";
+    public const string FileSystem = "FileSystem";
+}
+
+public static class ShardStoreProviders
 {
     public const string Blob = "Blob";
     public const string FileSystem = "FileSystem";

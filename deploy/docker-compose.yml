@@ -7,8 +7,9 @@ name: peakshunters
 # are selected with WORKER_ROLE (api | schedule | heavy) instead of the old
 # per-function whitelist environment entries.
 #
-# Cosmos DB, Blob, Tables and Azure SignalR stay on Azure. Service Bus is kept
-# for P1a and removed in P2 (see the Azure Functions Runtime Exit plan).
+# Cosmos DB and Azure SignalR stay on Azure. Organizer data, race tiles, highway
+# shards and zoom indexes are all local bind mounts; no Blob connection is used.
+# Service Bus is kept for P1a and removed in P2 (see the Functions Runtime Exit plan).
 
 x-logging: &default-logging
   driver: json-file
@@ -60,6 +61,10 @@ services:
       # writes and the weekly build see the same data.
       OrganizerStore__Provider: FileSystem
       OrganizerStore__RaceDataDir: /data/races
+      # Highway shards and zoom indexes are local too, so no Blob connection is
+      # needed by the API host.
+      ShardStore__Provider: FileSystem
+      ShardStore__RootDir: /data/shards
     expose:
       - "80"
     # Tailscale Funnel on the host forwards to a loopback port. Only publish
@@ -71,6 +76,7 @@ services:
     # /data/races/tiles/trails.pmtiles read-only.
     volumes:
       - ${RACE_DATA_DIR:-/opt/data/strava/races}:/data/races
+      - ${SHARD_DATA_DIR:-/opt/data/strava/shards}:/data/shards
     healthcheck: *http-healthcheck
     mem_limit: ${API_MEMORY_LIMIT:-1g}
     cpus: "${API_CPUS:-1.0}"
@@ -94,8 +100,11 @@ services:
       BackendApiUrl: http://api/api/
       OrganizerStore__Provider: FileSystem
       OrganizerStore__RaceDataDir: /data/races
+      ShardStore__Provider: FileSystem
+      ShardStore__RootDir: /data/shards
     volumes:
       - ${RACE_DATA_DIR:-/opt/data/strava/races}:/data/races
+      - ${SHARD_DATA_DIR:-/opt/data/strava/shards}:/data/shards
     healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_SCHEDULE_MEMORY_LIMIT:-1g}
     cpus: "${WORKER_SCHEDULE_CPUS:-1.0}"
@@ -122,8 +131,11 @@ services:
       BackendApiUrl: http://api/api/
       OrganizerStore__Provider: FileSystem
       OrganizerStore__RaceDataDir: /data/races
+      ShardStore__Provider: FileSystem
+      ShardStore__RootDir: /data/shards
     volumes:
       - ${RACE_DATA_DIR:-/opt/data/strava/races}:/data/races
+      - ${SHARD_DATA_DIR:-/opt/data/strava/shards}:/data/shards
     healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_HEAVY_MEMORY_LIMIT:-2g}
     cpus: "${WORKER_HEAVY_CPUS:-2.0}"
@@ -196,4 +208,5 @@ networks:
 volumes:
   redis-data:
   # Race data is a host bind mount at RACE_DATA_DIR (default /opt/data/strava/races)
-  # so it is visible and backup-able from the host. Only Redis uses a named volume.
+  # and highway shards/indexes at SHARD_DATA_DIR (default /opt/data/strava/shards),
+  # so both are visible and backup-able from the host. Only Redis uses a named volume.

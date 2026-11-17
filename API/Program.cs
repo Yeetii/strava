@@ -86,33 +86,7 @@ if (!string.Equals(
     new BlobContainerClient(blobConnection, BlobContainerNames.RaceOrganizers).CreateIfNotExists();
 }
 builder.Services.AddOrganizerStore(configuration);
-builder.Services.AddSingleton(serviceProvider =>
-{
-    var blobConnection = configuration.GetValue<string>("BlobStorageConnection")
-        ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
-    var containerClient = new BlobContainerClient(blobConnection, BlobContainerNames.HighwaysShards);
-    containerClient.CreateIfNotExists();
-    return new HighwaysShardContainer(containerClient);
-});
-builder.Services.AddSingleton<IShardRepository>(serviceProvider =>
-{
-    var repositoryLogger = serviceProvider.GetRequiredService<ILogger<BlobShardRepository>>();
-    var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
-    var overpass = serviceProvider.GetRequiredService<OverpassClient>();
-    var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-    var shardBufferMeters = configuration.GetValue<int?>(AppConfig.BlobShardBufferMeters) ?? 200;
-    return new BlobShardRepository(
-        containerClient,
-        repositoryLogger,
-        overpass.GetHighways,
-        shardZoom,
-        shardBufferMeters,
-        async (x, y, shard, cancellationToken) =>
-        {
-            var zoomIndexService = serviceProvider.GetRequiredService<HighwayZoomIndexService>();
-            await zoomIndexService.SyncIndexesForShardAsync(x, y, shard, cancellationToken);
-        });
-});
+builder.Services.AddShardStore(configuration);
 builder.Services.AddSingleton(serviceProvider =>
 {
     var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
@@ -122,11 +96,11 @@ builder.Services.AddSingleton(serviceProvider =>
 });
 builder.Services.AddSingleton(serviceProvider =>
 {
-    var containerClient = serviceProvider.GetRequiredService<HighwaysShardContainer>().Client;
+    var indexStore = serviceProvider.GetRequiredService<IShardIndexStore>();
     var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
     var indexLogger = serviceProvider.GetRequiredService<ILogger<HighwayZoomIndexService>>();
     var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-    return new HighwayZoomIndexService(containerClient, shardRepository, indexLogger, shardZoom);
+    return new HighwayZoomIndexService(indexStore, shardRepository, indexLogger, shardZoom);
 });
 builder.Services.AddSingleton(serviceProvider =>
 {
