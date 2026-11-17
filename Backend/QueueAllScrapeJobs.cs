@@ -12,7 +12,7 @@ namespace Backend;
 /// <c>POST /api/manage/queue-all-scrape-jobs</c> instead.
 /// </summary>
 public class QueueAllScrapeJobs(
-    BlobOrganizerStore raceOrganizerClient,
+    IOrganizerStore raceOrganizerClient,
     RaceDiscoveryService discoveryService,
     ILogger<QueueAllScrapeJobs> logger)
 {
