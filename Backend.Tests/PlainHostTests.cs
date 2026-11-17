@@ -93,6 +93,41 @@ public class PlainHostTests
     }
 
     [Fact]
+    public void MergedHost_HasNoCrossAssemblyRouteAndVerbCollisions()
+    {
+        var routes = new[]
+                     {
+                         typeof(API.SignalRNegotiate).Assembly,
+                         typeof(BackendServices).Assembly,
+                     }
+                     .SelectMany(assembly => assembly.GetTypes()
+                         .Where(type => type.IsClass && !type.IsAbstract)
+                         .SelectMany(type => type.GetMethods(
+                             BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                         .Select(method => (Trigger: FunctionAttributeLookup.Get<HttpTriggerAttribute>(method), Method: method)))
+                     .Where(item => item.Trigger is not null)
+                     .SelectMany(item =>
+                     {
+                         var name = item.Method.GetCustomAttribute<FunctionAttribute>()?.Name ?? item.Method.Name;
+                         var route = string.IsNullOrWhiteSpace(item.Trigger!.Route) ? name : item.Trigger.Route!;
+                         var verbs = item.Trigger.Methods.Length == 0 ? new[] { "get" } : item.Trigger.Methods;
+                         return verbs.Select(verb => $"{verb.ToUpperInvariant()} /api/{route}");
+                     })
+                     .ToList();
+
+        Assert.Contains("GET /api/StravaWebhook", routes);
+        Assert.Contains("POST /api/StravaWebhook", routes);
+
+        var collisions = routes.GroupBy(route => route)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToList();
+
+        Assert.True(collisions.Count == 0,
+            $"Cross-assembly route/verb collisions: {string.Join(", ", collisions)}");
+    }
+
+    [Fact]
     public async Task AddFunctionTimers_RegistersRecurringJobsViaInjectedManager()
     {
         var registry = FunctionWorkerRegistry.Discover(typeof(BackendServices).Assembly);
