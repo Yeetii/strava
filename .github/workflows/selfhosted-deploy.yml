@@ -8,6 +8,7 @@ on:
       - 'API/**'
       - 'Backend/**'
       - 'Shared/**'
+      - 'Shared.Hosting/**'
       - 'Directory.Build.props'
       - 'deploy/**'
       - '.github/workflows/selfhosted-deploy.yml'
@@ -34,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Verify every Backend function is assigned to a container
-        run: ./deploy/scripts/verify-function-coverage.sh
+        run: ./deploy/scripts/verify-role-coverage.sh
 
   build:
     needs: verify
@@ -72,7 +73,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/docker/functions.Dockerfile
+          file: deploy/docker/plain-host.Dockerfile
           build-args: |
             PROJECT=${{ matrix.project }}
           platforms: linux/amd64

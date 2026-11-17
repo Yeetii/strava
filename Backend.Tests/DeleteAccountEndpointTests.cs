@@ -36,6 +36,7 @@ public class DeleteAccountEndpointTests
         Assert.Equal("session", sessionCookie.Name);
         Assert.Equal(string.Empty, sessionCookie.Value);
         Assert.Equal(0, sessionCookie.MaxAge);
+        Assert.Null(sessionCookie.Domain); // host-only: works on the .ts.net funnel host
     }
 
     [Fact]

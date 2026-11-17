@@ -12,13 +12,10 @@ namespace Backend;
 public class AdminBoundaryEnrichmentWorker(
     AdminBoundaryMetricsEnricher enricher,
     CollectionClient<StoredFeature> storedFeaturesCollection,
-    ServiceBusClient serviceBusClient,
     ServiceBusAdministrationClient serviceBusAdministrationClient,
     ILogger<AdminBoundaryEnrichmentWorker> logger)
 {
-    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
     private static readonly TimeSpan InvocationSafetyBuffer = TimeSpan.FromSeconds(75);
-    private static readonly TimeSpan SpilloverDelay = TimeSpan.FromMinutes(1);
     /// <summary>How often to renew the Service Bus lock while a single boundary is being enriched.</summary>
     private static readonly TimeSpan LockRenewalInterval = TimeSpan.FromSeconds(240);
 
@@ -35,17 +32,6 @@ public class AdminBoundaryEnrichmentWorker(
         // valid locks to complete/schedule messages.
         await RenewLocksAsync(messages, actions, logger, cancellationToken);
 
-        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
-                serviceBusAdministrationClient,
-                _serviceBusClient,
-                ServiceBusConfig.EnrichAdminBoundaryJobs,
-                messages,
-                actions,
-                logger,
-                cancellationToken))
-        {
-            return;
-        }
 
         var invocationDeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(10) - InvocationSafetyBuffer;
 
@@ -63,13 +49,8 @@ public class AdminBoundaryEnrichmentWorker(
         }
         catch (Exception ex)
         {
-            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
-            {
-                ServiceBusRescheduler.RecordCosmosThrottle();
-            }
-
-            await RetryMessagesAsync(ex, messages, actions, logger, cancellationToken);
-            return;
+            logger.LogError(ex, "[AdminBoundaryEnrichmentWorker] Failed to load admin boundary documents");
+            throw;
         }
 
         var documentsById = documents.ToDictionary(document => document.Id, StringComparer.Ordinal);
@@ -83,20 +64,9 @@ public class AdminBoundaryEnrichmentWorker(
             var message = messages[index];
             if (DateTimeOffset.UtcNow >= invocationDeadlineUtc)
             {
-                var spillover = messages
-                    .Skip(index)
-                    .ToList();
-
-                await ServiceBusRescheduler.DeferMessagesAsync(
-                    _serviceBusClient,
-                    ServiceBusConfig.EnrichAdminBoundaryJobs,
-                    spillover,
-                    actions,
-                    logger,
-                    cancellationToken,
-                    SpilloverDelay,
-                    "invocation-time-budget");
-
+                // Leave the remaining messages unsettled so Service Bus redelivers
+                // them after their lock expires (no rescheduler to defer them).
+                logger.LogWarning("[AdminBoundaryEnrichmentWorker] Invocation time budget reached; {Remaining} messages left unsettled for redelivery", messages.Length - index);
                 break;
             }
 
@@ -139,34 +109,8 @@ public class AdminBoundaryEnrichmentWorker(
             }
             catch (Exception ex)
             {
-                if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
-                {
-                    ServiceBusRescheduler.RecordCosmosThrottle();
-                    await ServiceBusRescheduler.HandleRetryAsync(
-                        ex, actions, message, _serviceBusClient, ServiceBusConfig.EnrichAdminBoundaryJobs, logger, cancellationToken);
-
-                    var remaining = messages
-                        .Skip(index + 1)
-                        .ToList();
-                    if (remaining.Count > 0)
-                    {
-                        await ServiceBusRescheduler.DeferMessagesAsync(
-                            _serviceBusClient,
-                            ServiceBusConfig.EnrichAdminBoundaryJobs,
-                            remaining,
-                            actions,
-                            logger,
-                            cancellationToken,
-                            SpilloverDelay,
-                            "cosmos-throttle");
-                    }
-
-                    break;
-                }
-
-                await ServiceBusRescheduler.HandleRetryAsync(
-                    ex, actions, message, _serviceBusClient, ServiceBusConfig.EnrichAdminBoundaryJobs, logger, cancellationToken);
-                continue;
+                logger.LogError(ex, "[AdminBoundaryEnrichmentWorker] Failed to enrich admin boundary {BoundaryId}", boundaryId);
+                throw;
             }
         }
 
@@ -179,13 +123,8 @@ public class AdminBoundaryEnrichmentWorker(
             }
             catch (Exception ex)
             {
-                if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
-                {
-                    ServiceBusRescheduler.RecordCosmosThrottle();
-                }
-
-                await RetryMessagesAsync(ex, messagesToCompleteAfterPatch, actions, logger, cancellationToken);
-                return;
+                logger.LogError(ex, "[AdminBoundaryEnrichmentWorker] Failed to persist admin boundary patches");
+                throw;
             }
         }
 
@@ -218,7 +157,7 @@ public class AdminBoundaryEnrichmentWorker(
                 try
                 {
                     await Task.Delay(renewalInterval, renewalCts.Token);
-                    if (renewalCts.Token.IsCancellationRequested || !ServiceBusRescheduler.HasRealLockToken(message))
+                    if (renewalCts.Token.IsCancellationRequested || !ServiceBusMessageGuard.HasLockToken(message))
                         break;
                     await actions.RenewMessageLockAsync(message, cancellationToken);
                 }
@@ -249,7 +188,7 @@ public class AdminBoundaryEnrichmentWorker(
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        foreach (var message in messages.Where(ServiceBusRescheduler.HasRealLockToken))
+        foreach (var message in messages.Where(ServiceBusMessageGuard.HasLockToken))
         {
             try
             {
@@ -268,7 +207,7 @@ public class AdminBoundaryEnrichmentWorker(
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        if (!ServiceBusRescheduler.HasRealLockToken(message))
+        if (!ServiceBusMessageGuard.HasLockToken(message))
             return;
 
         try
@@ -280,26 +219,6 @@ public class AdminBoundaryEnrichmentWorker(
             logger.LogWarning(ex,
                 "[AdminBoundaryEnrichmentWorker] Message lock already lost while completing admin boundary enrichment message {MessageId}; message will be redelivered.",
                 message.MessageId);
-        }
-    }
-
-    private async Task RetryMessagesAsync(
-        Exception exception,
-        IReadOnlyList<ServiceBusReceivedMessage> messages,
-        ServiceBusMessageActions actions,
-        ILogger logger,
-        CancellationToken cancellationToken)
-    {
-        foreach (var message in messages)
-        {
-            await ServiceBusRescheduler.HandleRetryAsync(
-                exception,
-                actions,
-                message,
-                _serviceBusClient,
-                ServiceBusConfig.EnrichAdminBoundaryJobs,
-                logger,
-                cancellationToken);
         }
     }
 }

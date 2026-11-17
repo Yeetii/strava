@@ -12,7 +12,6 @@ public class PostLogout
     [Function(nameof(PostLogout))]
     public HttpResponseData Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "logout")] HttpRequestData req)
     {
-        var isLocal = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT"));
         var response = req.CreateResponse();
 
         var cookie = new HttpCookie("session", string.Empty)
@@ -20,7 +19,6 @@ public class PostLogout
             MaxAge = 0,
             SameSite = SameSite.ExplicitNone,
             Secure = true,
-            Domain = isLocal ? "localhost" : "erikmagnusson.com",
             Path = "/"
         };
         response.Cookies.Append(cookie);

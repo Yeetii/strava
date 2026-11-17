@@ -46,17 +46,6 @@ public class ScrapeRaceWorker(
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
-        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
-                serviceBusAdministrationClient,
-                _serviceBusClient,
-                ServiceBusConfig.ScrapeRace,
-                messages,
-                actions,
-                _logger,
-                cancellationToken))
-        {
-            return;
-        }
 
         await Parallel.ForEachAsync(messages,
             new ParallelOptions { MaxDegreeOfParallelism = messages.Length, CancellationToken = cancellationToken },
@@ -139,13 +128,8 @@ public class ScrapeRaceWorker(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            if (ex is Microsoft.Azure.Cosmos.CosmosException cosmosEx && cosmosEx.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            {
-                ServiceBusRescheduler.RecordCosmosThrottle();
-            }
 
-            await ServiceBusRescheduler.HandleRetryAsync(
-                ex, actions, message, _serviceBusClient, ServiceBusConfig.ScrapeRace, _logger, cancellationToken);
+            throw;
         }
     }
 
@@ -297,7 +281,7 @@ public class ScrapeRaceWorker(
 
     private async Task TryCompleteAsync(ServiceBusMessageActions actions, ServiceBusReceivedMessage message, CancellationToken ct)
     {
-        if (!ServiceBusRescheduler.HasRealLockToken(message))
+        if (!ServiceBusMessageGuard.HasLockToken(message))
         {
             _logger.LogDebug("Skipping message completion for {MessageId}: no real peek-lock token", message.MessageId);
             return;

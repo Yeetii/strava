@@ -134,7 +134,7 @@ public class ActivitiesApi(HttpClient _stravaClient)
         var isDailyLimitExceeded = snapshot is { } value && value.Usage.Daily >= value.Limit.Daily;
         var isFifteenMinuteLimitExceeded = snapshot is { } fifteenMinuteValue
             && fifteenMinuteValue.Usage.FifteenMinute >= fifteenMinuteValue.Limit.FifteenMinute;
-        var retryAtUtc = StravaActivityFetchScheduling.GetRateLimitRetryUtc(
+        var retryAtUtc = GetRateLimitRetryUtc(
             isDailyLimitExceeded,
             isFifteenMinuteLimitExceeded,
             now);
@@ -146,6 +146,27 @@ public class ActivitiesApi(HttpClient _stravaClient)
             snapshot?.Limit,
             snapshot?.Usage,
             responseBody);
+    }
+
+    /// <summary>
+    /// Earliest time the Strava rate limit resets: next midnight for the daily
+    /// limit, otherwise the next quarter-hour boundary.
+    /// </summary>
+    private static DateTimeOffset GetRateLimitRetryUtc(
+        bool isDailyLimitExceeded,
+        bool isFifteenMinuteLimitExceeded,
+        DateTimeOffset nowUtc)
+    {
+        if (isDailyLimitExceeded)
+        {
+            var nextDay = nowUtc.UtcDateTime.Date.AddDays(1);
+            return new DateTimeOffset(nextDay, TimeSpan.Zero);
+        }
+
+        var quarterStart = new DateTimeOffset(
+            nowUtc.Year, nowUtc.Month, nowUtc.Day,
+            nowUtc.Hour, nowUtc.Minute / 15 * 15, 0, TimeSpan.Zero);
+        return quarterStart.AddMinutes(15);
     }
 
     private static ((int FifteenMinute, int Daily) Limit, (int FifteenMinute, int Daily) Usage)? TryGetRateLimitSnapshot(

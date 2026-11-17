@@ -53,17 +53,6 @@ public class VisitedPathsWorker(
         ServiceBusMessageActions actions,
         CancellationToken cancellationToken)
     {
-        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
-                serviceBusAdministrationClient,
-                _serviceBusClient,
-                Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs,
-                jobs,
-                actions,
-                _logger,
-                cancellationToken))
-        {
-            return;
-        }
 
         var ids = jobs.Select(x => x.Body.ToString()).ToList();
         var activities = await FetchActivitySlims(ids);
@@ -78,7 +67,7 @@ public class VisitedPathsWorker(
             a => GeoSpatialFunctions.DecodePolyline(a.Polyline ?? a.SummaryPolyline).ToList());
 
         // Renew locks before the potentially slow shared data fetch
-        var realJobs = jobs.Where(ServiceBusRescheduler.HasRealLockToken).ToList();
+        var realJobs = jobs.Where(ServiceBusMessageGuard.HasLockToken).ToList();
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
@@ -125,7 +114,7 @@ public class VisitedPathsWorker(
                 {
                     await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
                 }
-                if (ServiceBusRescheduler.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+                if (ServiceBusMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
@@ -153,7 +142,7 @@ public class VisitedPathsWorker(
             {
                 await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-                if (ServiceBusRescheduler.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+                if (ServiceBusMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
@@ -218,7 +207,7 @@ public class VisitedPathsWorker(
                 }
             }
 
-            if (ServiceBusRescheduler.HasRealLockToken(job))
+            if (ServiceBusMessageGuard.HasLockToken(job))
             {
                 try { await actions.RenewMessageLockAsync(job); }
                 catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
@@ -229,24 +218,14 @@ public class VisitedPathsWorker(
             await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
             await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-            if (ServiceBusRescheduler.HasRealLockToken(job)) await actions.CompleteMessageAsync(job);
+            if (ServiceBusMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
         {
-            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
-            {
-                ServiceBusRescheduler.RecordCosmosThrottle();
-            }
-
-            if (ServiceBusRescheduler.HasRealLockToken(job))
-            {
-                await ServiceBusRescheduler.HandleRetryAsync(
-                    ex, actions, job, _serviceBusClient, Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, _logger, cancellationToken);
-                return;
-            }
 
             _logger.LogError(ex, "Failed to process visited paths for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
                 activityId, job.MessageId, job.DeliveryCount);
+            throw;
         }
     }
 

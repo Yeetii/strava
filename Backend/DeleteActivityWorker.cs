@@ -29,17 +29,6 @@ public class DeleteActivityWorker(
         if (deleteJob == null)
             throw new InvalidOperationException("Activity delete job payload is invalid.");
 
-        if (await ServiceBusRescheduler.TryDeferForBackpressureAsync(
-                serviceBusAdministrationClient,
-                _serviceBusClient,
-                ServiceBusConfig.ActivityDeleteJobs,
-                message,
-                actions,
-                _logger,
-                cancellationToken))
-        {
-            return;
-        }
 
         try
         {
@@ -52,17 +41,7 @@ public class DeleteActivityWorker(
         }
         catch (Exception ex)
         {
-            if (ex is CosmosException { StatusCode: System.Net.HttpStatusCode.TooManyRequests })
-                ServiceBusRescheduler.RecordCosmosThrottle();
-
-            await ServiceBusRescheduler.HandleRetryAsync(
-                ex,
-                actions,
-                message,
-                _serviceBusClient,
-                ServiceBusConfig.ActivityDeleteJobs,
-                _logger,
-                cancellationToken);
+            throw;
         }
     }
 

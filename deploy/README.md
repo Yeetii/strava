@@ -65,27 +65,29 @@ stealing Service Bus messages or double-running timer jobs from Azure.
 
 | Switch | Scope | Effect |
 | --- | --- | --- |
-| `COMPOSE_PROFILES` | Compose | `workers` enables heavy queue/change-feed workers; `schedules` enables timer jobs |
-| `AzureFunctionsJobHost__functions__N` | Container | Selects exactly which Functions each container loads |
-| `AzureWebJobs.<Function>.Disabled` | Container | Legacy per-function disable flag; mirror any disabled functions from the Azure app if needed |
+| `COMPOSE_PROFILES` | Compose | `workers` enables queue/change-feed workers; `schedules` enables timer jobs |
+| `WORKER_ROLE` | Container | Selects the plain-host role: `api`, `schedule` or `heavy` |
+| `HANGFIRE_QUEUES` | Container | P2 per-queue swap: comma-separated queue names, or `*` for all. Empty keeps Service Bus |
+| `REDIS_CONNECTION_STRING` | Container | Hangfire storage (durable Redis: AOF + `noeviction`) |
 
-The self-hosted worker containers do not automatically inherit
-`AzureWebJobs.<Function>.Disabled` settings from the Azure Function App. If a
-function is intentionally disabled in Azure, either remove it from the relevant
-`AzureFunctionsJobHost__functions__N` list or set the matching `Disabled`
-variable in `.env`.
+Trigger discovery is automatic: a Service Bus trigger becomes a queue consumer
+in the `heavy` role, a Cosmos trigger becomes an in-process change-feed
+processor, and a timer becomes a Hangfire recurring job in the `schedule` role.
+No per-function whitelist exists any more.
 
-## Container / function split
+## Container / role split
 
-| Container | Project | Functions |
-| --- | --- | --- |
-| `api` | `API` | All API functions (route prefix `/api`) |
-| `backend-api` | `Backend` | `QueueAllScrapeJobsHttp`, `QueueAllVisitedPathsJobs`, `QueueAllSummitJobs`, `QueueAllVisitedAreasJobs`, `BackfillVisitedPathOsmHighwayIds`, `BackfillVisitedPathOsmHighwayIdsAll`, `BackfillAdminBoundaryMetrics`, `TestScrapeUrl`, `RunSummitsForActivity`, `RefreshStravaToken`, `StravaWebhook`, `ScrapeRaceHttp`, `StoreCuratedPeaksGroups`, `CleanupExcludedActivityTypes` |
-| `worker-schedule` | `Backend` | All `Discover*` timer functions plus `QueueAllScrapeJobs` |
-| `worker-heavy` | `Backend` | All Service Bus and Cosmos change-feed workers |
+| Container | Project | Role | Work |
+| --- | --- | --- | --- |
+| `api` | `API` | `api` | All 59 endpoints (route prefix `/api`) on Kestrel |
+| `backend-api` | `Backend` | `api` | Backend HTTP functions (webhook, token refresh, admin, backfill) |
+| `worker-schedule` | `Backend` | `schedule` | 12 Hangfire recurring jobs |
+| `worker-heavy` | `Backend` | `heavy` | 12 queue consumers + 3 Cosmos change-feed processors |
+| `redis` | — | — | Durable Hangfire storage |
 
-`scripts/verify-function-coverage.sh` fails CI if a Backend function is added
-without being assigned to exactly one container.
+`scripts/verify-role-coverage.sh` fails CI if the trigger inventory no longer
+matches the plan (12 queues / 3 feeds / 12 crons) or if legacy function-list
+env vars reappear.
 
 ## First-time setup
 
@@ -287,7 +289,7 @@ COMPOSE_PROFILES=workers,schedules
 
 - Connection strings and secrets are read from `/opt/stacks/strava/.env` via
   Compose `env_file`. They are never baked into images.
-- `AzureFunctionsJobHost__functions__N` selects which functions each container
+- `WORKER_ROLE` selects which plain-host role each container runs
   loads. The `api` container intentionally loads all API functions.
 - `AzureFunctionsWebHost__hostid` is unique per container so the Functions host
   does not collide on timer/listener locks when sharing the Azure storage

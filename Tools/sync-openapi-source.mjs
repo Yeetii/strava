@@ -6,7 +6,7 @@ import path from 'node:path';
 const repoRoot = process.cwd();
 const brunoRoot = path.join(repoRoot, 'bruno');
 const outputFile = path.join(repoRoot, 'API', 'openapi', 'openapi.source.json');
-const sourceUrl = process.env.OPENAPI_SOURCE_URL || 'http://localhost:7075/api/openapi/v3.json';
+const sourceUrl = process.env.OPENAPI_SOURCE_URL || 'http://localhost:7075/openapi/v1.json';
 
 async function listBruFiles(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true });

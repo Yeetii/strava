@@ -27,7 +27,6 @@ public class PostLogin(
     [Function(nameof(PostLogin))]
     public async Task<ReturnBindings> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "{authCode}/login")] HttpRequestData req, string authCode)
     {
-        var isLocal = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT")); // set to "Development" locally
         var response = req.CreateResponse();
         var outputs = new ReturnBindings() { Response = response };
 
@@ -55,7 +54,6 @@ public class PostLogin(
             MaxAge = TimeSpan.FromDays(30).TotalSeconds,
             SameSite = SameSite.ExplicitNone,
             Secure = true,
-            Domain = isLocal ? "localhost" : "erikmagnusson.com",
             Path = "/"
         };
         response.Cookies.Append(cookie);

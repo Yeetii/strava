@@ -150,6 +150,12 @@ comparing both paths against the goals above.
 
 ## Execution sequence
 
+The Functions-runtime exit itself is now specified in detail by the separate
+"Azure Functions Runtime Exit — Refactoring Plan" (four phases: Redis
+foundations → plain hosts → Hangfire queue swap → decommission). That spec
+supersedes Phase 2 of the older migration plan for the HTTP/worker topology;
+PostgreSQL and the Rust pilot remain unchanged.
+
 | Step | Work | Source |
 |------|------|--------|
 | 1 | Validate `worker-heavy` against production traffic | Plan: "Immediate next actions" |
