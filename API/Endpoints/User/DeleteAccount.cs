@@ -42,13 +42,11 @@ public class DeleteAccount(UserAuthenticationService _userAuthService)
             UserId = user.Id
         };
 
-        var isLocal = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT"));
         var cookie = new HttpCookie("session", string.Empty)
         {
             MaxAge = 0,
             SameSite = SameSite.ExplicitNone,
             Secure = true,
-            Domain = isLocal ? "localhost" : "erikmagnusson.com",
             Path = "/"
         };
         response.Cookies.Append(cookie);
