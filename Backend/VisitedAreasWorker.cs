@@ -1,5 +1,3 @@
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Geo;
@@ -18,11 +16,10 @@ public class VisitedAreasWorker(
     CollectionClient<VisitedArea> _visitedAreasCollection,
     [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient _protectedAreasCollection,
     AdminBoundariesCollectionClient _adminBoundariesCollection,
-    ServiceBusClient serviceBusClient,
-    ServiceBusAdministrationClient serviceBusAdministrationClient,
+    QueueClient queueClient,
     UserSyncStatusService _userSyncStatusService)
 {
-    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+    private readonly QueueClient _queueClient = queueClient;
     private const int MaxDegreeOfParallelism = 1;
     private const int AreaTileZoom = 8;
     private const int AdminBoundaryTileZoom = 6;
@@ -45,9 +42,9 @@ public class VisitedAreasWorker(
 
     [Function(nameof(VisitedAreasWorker))]
     public async Task Run(
-        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedAreasJobs, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)]
-        ServiceBusReceivedMessage[] jobs,
-        ServiceBusMessageActions actions,
+        [QueueTrigger(Shared.Constants.QueueConfig.CalculateVisitedAreasJobs, IsBatched = true, AutoCompleteMessages = false)]
+        QueueMessage[] jobs,
+        QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
 
@@ -70,14 +67,14 @@ public class VisitedAreasWorker(
     }
 
     private async Task ProcessJob(
-        ServiceBusReceivedMessage job,
-        ServiceBusMessageActions actions,
+        QueueMessage job,
+        QueueMessageActions actions,
         List<Activity> activitiesList,
         List<StoredFeature> nearbyAreas,
         CancellationToken cancellationToken)
     {
         var activityId = job.Body.ToString();
-        var hasRealLockToken = ServiceBusMessageGuard.HasLockToken(job);
+        var hasRealLockToken = QueueMessageGuard.HasLockToken(job);
         try
         {
             var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
@@ -197,7 +194,7 @@ public class VisitedAreasWorker(
             if (hasRealLockToken)
             {
                 try { await actions.RenewMessageLockAsync(job); }
-                catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+                catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
                 {
                     _logger.LogWarning("Lock lost before writing areas for message {MessageId}; it will be redelivered.", job.MessageId);
                 }

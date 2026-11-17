@@ -11,23 +11,16 @@ Documents in our Cosmos containers can be very large (multi-thousand lines). Alw
 All API endpoints must have a corresponding Bruno request file in the `bruno/` folder.
 When adding, renaming, or removing an endpoint in the API project, update the matching `.bru` file under the appropriate subfolder (e.g. `bruno/^manage/` for admin endpoints).
 
-## Service Bus Worker Backpressure
+## Queue Retries
 
-The backend uses a combined rescheduler in `Backend/ServiceBusCosmosRetryHelper.cs` (renamed to `ServiceBusRescheduler`) for both failed-message retries and preemptive deferrals.
+All queues run on Hangfire/Redis. `QueueJobDispatcher.Execute` carries
+`[AutomaticRetry(Attempts = 5, DelaysInSeconds = [60, 300, 900, 1800, 3600])]`.
+Worker bodies should let exceptions propagate so Hangfire owns retries and the
+dead-letter list. There is no per-queue backpressure service and no SDK message
+settlement: `QueueMessageGuard.HasLockToken` only guards synthetic messages.
 
-- Prefer extending `ServiceBusRescheduler` instead of creating a second deferral service.
-- Use `ServiceBusRescheduler.HandleRetryAsync(...)` for genuine failures that should be rescheduled or dead-lettered.
-- Use `ServiceBusRescheduler.TryDeferForBackpressureAsync(...)` at the start of non-time-critical workers before Cosmos work or lock renewal.
-- The non-time-critical queues are defined in `Shared/Constants/ServiceBusConfig.cs`; keep that list in sync when queues are added or renamed.
-- When a worker catches a Cosmos `TooManyRequests` exception, call `ServiceBusRescheduler.RecordCosmosThrottle()` before retrying so later jobs can back off proactively.
-- Preserve the existing lock-token behavior: `HasRealLockToken(...)` guards settlement calls for synthetic/admin-triggered messages.
-
-Relevant workers that should follow this pattern are `SummitsWorker`, `VisitedPathsWorker`, `VisitedAreasWorker`, `DeleteAccountWorker`, `AdminBoundaryEnrichmentWorker`, `RaceDiscoveryWorker`, and `ScrapeRaceWorker`.
-
-Implementation notes:
-- Keep the retry-count application property on scheduled copies.
-- Use active Service Bus message counts, not scheduled counts, when deciding whether to defer.
-- Keep Cosmos hot-path checks lightweight; avoid Azure Monitor queries during worker execution.
+Keep Cosmos hot-path checks lightweight; avoid Azure Monitor queries during
+worker execution.
 
 ## Backfill Pattern
 
@@ -36,12 +29,12 @@ When a new field needs to be added to existing Cosmos documents:
 2. Write the field on all new/patched documents in the worker going forward.
 3. Create a backfill Azure Function (HTTP POST) in `Backend/` that:
    - Queries for documents missing the field (`WHERE NOT IS_DEFINED(c.field) OR IS_NULL(c.field)`).
-   - Collects `activityIds` from those documents and re-queues them onto the worker's Service Bus queue via `QueueActivityCollectionJobs.QueueActivityIdsAsync`.
+   - Collects `activityIds` from those documents and re-queues them onto the worker's Hangfire queue via `QueueActivityCollectionJobs.QueueActivityIdsAsync`.
    - Supports pagination via `continuationToken` query param + `ExecuteQueryPageAsync`.
    - Has both a single-page variant and an `/all` variant that loops until done.
 4. Add Bruno request files for both variants under `bruno/^manage/workers/`.
 
-**Before running a backfill locally:** the backfill re-queues onto the same Service Bus queue the production worker listens to. Disable or stop the remote (production) worker first to prevent it from consuming messages before the local worker can. Enable the relevant local worker in `local.settings.json` (`"AzureWebJobs.XxxWorker.Disabled": "0"`).
+**Before running a backfill locally:** the backfill enqueues onto the same Hangfire queue the production worker processes. Disable or stop the remote (production) heavy worker first so it cannot consume jobs before the local worker can.
 
 See `BackfillVisitedPathTileIndex` and `BackfillVisitedPathOsmHighwayIds` in `Backend/` as reference implementations.
 

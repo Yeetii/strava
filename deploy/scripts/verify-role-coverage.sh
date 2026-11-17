@@ -8,8 +8,8 @@ set -euo pipefail
 # the invariants that keep that mapping correct:
 #   1. no AzureFunctionsJobHost function-list plumbing remains
 #   2. every compose container declares exactly one valid WORKER_ROLE
-#   3. every Service Bus queue / change feed / cron is discovered by a role
-#   4. every queue constant is consumed by exactly one ServiceBusTrigger
+#   3. every queue / change feed / cron is discovered by a role
+#   4. every queue constant is consumed by exactly one QueueTrigger
 #   5. no two functions declare the same name (route identity)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +17,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/deploy/docker-compose.yml"
 BACKEND_DIR="${ROOT_DIR}/Backend"
 API_DIR="${ROOT_DIR}/API"
-SB_CONFIG="${ROOT_DIR}/Shared/Constants/ServiceBusConfig.cs"
+QUEUE_CONFIG="${ROOT_DIR}/Shared/Constants/QueueConfig.cs"
 
 status=0
 fail() { echo "FAIL: $*" >&2; status=1; }
@@ -54,11 +54,11 @@ for container in api worker-schedule worker-heavy; do
 done
 
 # Trigger inventory from the source.
-grep -rhoE '\[ServiceBusTrigger\(' "${BACKEND_DIR}" --include='*.cs' | wc -l | tr -d ' ' >"${tmp}/sb"
+grep -rhoE '\[QueueTrigger\(' "${BACKEND_DIR}" --include='*.cs' | wc -l | tr -d ' ' >"${tmp}/sb"
 grep -rhoE '\[CosmosDBTrigger\(' "${BACKEND_DIR}" --include='*.cs' | wc -l | tr -d ' ' >"${tmp}/feeds"
 grep -rhoE '\[TimerTrigger\(' "${BACKEND_DIR}" --include='*.cs' | wc -l | tr -d ' ' >"${tmp}/crons"
 
-[[ "$(cat "${tmp}/sb")" == "12" ]] || fail "expected 12 Service Bus triggers, found $(cat "${tmp}/sb")"
+[[ "$(cat "${tmp}/sb")" == "12" ]] || fail "expected 12 queue triggers, found $(cat "${tmp}/sb")"
 [[ "$(cat "${tmp}/feeds")" == "3" ]] || fail "expected 3 change-feed triggers, found $(cat "${tmp}/feeds")"
 [[ "$(cat "${tmp}/crons")" == "12" ]] || fail "expected 12 timer triggers, found $(cat "${tmp}/crons")"
 
@@ -75,10 +75,10 @@ grep -q '^ *1 \[TimerTrigger("0 0 3 \* \* 2")\]$' "${tmp}/cron-shapes" \
 # Every queue constant is referenced by at least one consumer/producer in Backend.
 while IFS='|' read -r constant queue; do
     [[ -z "${queue}" ]] && continue
-    if ! grep -rqE "ServiceBusConfig\.${constant}|\"${queue}\"" "${BACKEND_DIR}" --include='*.cs'; then
+    if ! grep -rqE "QueueConfig\.${constant}|\"${queue}\"" "${BACKEND_DIR}" --include='*.cs'; then
         fail "queue '${queue}' (${constant}) has no consumer in Backend"
     fi
-done < <(sed -nE 's/^[[:space:]]*public const string ([A-Za-z]+) = "([^"]+)";.*/\1|\2/p' "${SB_CONFIG}")
+done < <(sed -nE 's/^[[:space:]]*public const string ([A-Za-z]+) = "([^"]+)";.*/\1|\2/p' "${QUEUE_CONFIG}")
 
 # No duplicate function names within a project. Cross-assembly HTTP route and
 # verb collisions are checked by PlainHostTests in C#, which can see the actual

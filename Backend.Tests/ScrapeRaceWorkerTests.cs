@@ -1,4 +1,4 @@
-using Azure.Messaging.ServiceBus;
+using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 using Shared.Services;
 
@@ -9,8 +9,7 @@ public class ScrapeRaceWorkerTests
     [Fact]
     public void DeserializeMessage_AcceptsJsonAutomaticMessage()
     {
-        var received = ServiceBusModelFactory.ServiceBusReceivedMessage(
-            body: BinaryData.FromString("""{"organizerKey":"sample.com","isUrgent":false}"""));
+        var received = new QueueMessage(BinaryData.FromString("""{"organizerKey":"sample.com","isUrgent":false}"""));
 
         var message = ScrapeRaceWorker.DeserializeMessage(received);
 
@@ -21,8 +20,7 @@ public class ScrapeRaceWorkerTests
     [Fact]
     public void DeserializeMessage_FallsBackToPlainTextUrgentMessage()
     {
-        var received = ServiceBusModelFactory.ServiceBusReceivedMessage(
-            body: BinaryData.FromString("sample.com"));
+        var received = new QueueMessage(BinaryData.FromString("sample.com"));
 
         var message = ScrapeRaceWorker.DeserializeMessage(received);
 

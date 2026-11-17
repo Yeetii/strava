@@ -1,8 +1,6 @@
 using System.Configuration;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
 using Azure.Storage.Blobs;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
@@ -149,10 +147,6 @@ public static class BackendServices
             var factory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             return new AuthenticationApi(factory.CreateClient(), configuration);
         });
-        services.AddSingleton(_ => new ServiceBusClient(
-            configuration.GetValue<string>("ServiceBusConnection")));
-        services.AddSingleton(_ => new ServiceBusAdministrationClient(
-            configuration.GetValue<string>("ServiceBusConnection")));
         services.AddScoped(serviceProvider =>
         {
             var usersCollection = serviceProvider.GetRequiredService<CollectionClient<Shared.Models.User>>();
@@ -170,8 +164,8 @@ public static class BackendServices
         services.AddSingleton<DiscoverLopplistanRaces>();
         services.AddSingleton<DiscoverMittloppRaces>();
 
-        // P2: per-queue transport swap (HANGFIRE_QUEUES). Hangfire storage is
-        // registered once by each host entry point, not here.
+        // All queues run on Hangfire/Redis. Storage is registered once by each
+        // host entry point, not here.
         QueueTransport.AddHangfireQueueProducer(services);
 
     }

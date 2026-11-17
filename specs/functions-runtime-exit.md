@@ -402,6 +402,22 @@ Azure today; the feature is labelled beta.
 - Blob/Tables exit
 - `PmtilesJob` Rust pilot — separate spec, per ADR-0001
 
+## Implementation log
+
+- 2026-11-17 — **Service Bus SDK removed.** All 12 queues now produce and
+  consume through Hangfire unconditionally; the `HANGFIRE_QUEUES` flag and its
+  dual transport are gone. SDK types were replaced by SDK-free look-alikes in
+  `Shared.Hosting/QueueAbstractions.cs` (`QueueMessage` keeps a `BinaryData`
+  body so worker deserialization is unchanged). `QueueClient.CreateSender`
+  enqueues `QueueJobDispatcher` jobs; delayed sends use
+  `IBackgroundJobClient.Schedule`. The SDK processor consumer and
+  `ServiceBusAdministrationClient` injections were deleted; `GetAdminStatus`
+  now reports Hangfire enqueued/scheduled/failed counts. Removed the SDK package
+  reference, `ServiceBusConnection` config, and the plaintext keys that were
+  committed in three `local.settings.json` files. Build, full suite (382 passed,
+  one known pre-existing scraper failure), role gate, and new transport tests
+  are green.
+
 ## Checklist
 
 - [ ] P0: Redis durable (AOF, `noeviction`) in compose; exposure decided — Tailscale Funnel
@@ -409,9 +425,9 @@ Azure today; the feature is labelled beta.
 - [ ] P1a: change-feed cutover gaps measured and bounded
 - [ ] P1b: OpenAPI diff empty vs current contract; webhook verified end to end
 - [ ] P1b: production traffic served from home; Azure API app idle
-- [ ] P2: all 12 queues on Hangfire; Service Bus namespace empty
-- [ ] P2: Cosmos RU/s within P0 baseline (or batcher jobs added where not)
-- [ ] P3: no Functions/Service Bus references remain; images are plain runtime images
+- [x] P2: all 12 queues on Hangfire; no Service Bus producer or consumer in code (2026-11-17)
+- [ ] P2: Cosmos RU/s within P0 baseline (or batcher jobs added where not) — OPERATIONAL
+- [x] P3: no Service Bus SDK references remain (2026-11-17); images are plain runtime images
 - [ ] ADR-0001's execution sequence updated to point at this spec
 
 ## References
@@ -419,7 +435,7 @@ Azure today; the feature is labelled beta.
 - ADR-0001: `docs/adr/0001-staged-azure-exit-in-csharp-with-rust-pilot.md`
 - Self-hosted migration plan: `Shared/MIGRATION_PLAN_SELF_HOSTED.md`
 - Current deploy: `deploy/docker-compose.yml`, `deploy/DEPLOY.md`
-- Queue inventory: `Shared/Constants/ServiceBusConfig.cs`, `Backend/host.json`
+- Queue inventory: `Shared/Constants/QueueConfig.cs`, `Backend/host.json`
 - Hangfire Redis storage: `Hangfire.Redis.StackExchange` (MIT)
 - 2026 C# background-jobs landscape (Hangfire vs Quartz vs hosted services):
   research summarized in ADR-0001 references

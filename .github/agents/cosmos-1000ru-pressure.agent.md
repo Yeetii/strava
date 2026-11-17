@@ -42,7 +42,7 @@ Use this guidance when changing Cosmos-heavy code paths in this repository, espe
 ## Repository-Specific Signals
 
 - `Shared/Services/CollectionClient.cs` already uses a global write throttle to avoid overrunning the Cosmos budget.
-- `Backend/ServiceBusCosmosRetryHelper.cs` tracks Cosmos pressure and can defer non-time-critical work.
+- Hangfire `QueueJobDispatcher.Execute` owns queue retries; there is no separate backpressure service.
 - `API/Endpoints/Admin/GetAdminStatus.cs` exposes RU throughput and queue depth signals that are useful when diagnosing saturation.
 
 ## Worker Guidance

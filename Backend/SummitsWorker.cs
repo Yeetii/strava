@@ -3,11 +3,9 @@ using Shared.Models;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
 using Microsoft.Azure.Cosmos;
-using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.DependencyInjection;
 using Shared.Geo;
 using Shared.Constants;
-using Azure.Messaging.ServiceBus;
 using System.Text.Json;
 using System.Globalization;
 using Shared.Geo.SummitsCalculator;
@@ -21,13 +19,12 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
     [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
-    ServiceBusClient serviceBusClient,
-    ServiceBusAdministrationClient serviceBusAdministrationClient,
+    QueueClient queueClient,
     ISummitsCalculator _summitsCalculator,
     UserSyncStatusService _userSyncStatusService)
 {
-    readonly ServiceBusClient _serviceBusClient = serviceBusClient;
-    readonly ServiceBusSender _sbSender = serviceBusClient.CreateSender("activityprocessed");
+    readonly QueueClient _queueClient = queueClient;
+    readonly QueueSender _sbSender = queueClient.CreateSender("activityprocessed");
     private const int MaxDegreeOfParallelism = 4;
 
     private sealed class ActivityLinkedDocumentProjection
@@ -38,7 +35,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
 
     [Function("SummitsWorker")]
     public async Task Run(
-        [ServiceBusTrigger("calculateSummitsJobs", Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] jobs, ServiceBusMessageActions actions, CancellationToken cancellationToken)
+        [QueueTrigger("calculateSummitsJobs", IsBatched = true, AutoCompleteMessages = false)] QueueMessage[] jobs, QueueMessageActions actions, CancellationToken cancellationToken)
     {
 
         var jobIds = jobs.Select(x => x.Body.ToString()).ToList();
@@ -47,11 +44,11 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         var peaks = (await FetchNearbyPeaks(activitiesById.Values)).ToList();
 
         // Renew locks after the potentially slow peak fetch before per-job processing
-        var realJobs = jobs.Where(ServiceBusMessageGuard.HasLockToken).ToList();
+        var realJobs = jobs.Where(QueueMessageGuard.HasLockToken).ToList();
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
-            catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+            catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
             {
                 _logger.LogWarning("Lock lost before processing for message {MessageId}; it will be redelivered.", j.MessageId);
             }
@@ -80,7 +77,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                 await ProcessSummitJob(job, actions, peaks, activity, ct);
             });
     }
-    private async Task ProcessSummitJob(ServiceBusReceivedMessage job, ServiceBusMessageActions actions, List<Feature> peaks, Activity activity, CancellationToken cancellationToken)
+    private async Task ProcessSummitJob(QueueMessage job, QueueMessageActions actions, List<Feature> peaks, Activity activity, CancellationToken cancellationToken)
     {
         try
         {
@@ -98,8 +95,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                 await CleanupStaleSummitedPeaksForActivity(activity, new HashSet<string>(StringComparer.Ordinal), cancellationToken);
                 await SendActivityProcessedEvent(activity, []);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-                if (ServiceBusMessageGuard.HasLockToken(job))
-                    try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
+                if (QueueMessageGuard.HasLockToken(job))
+                    try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
                 await actions.CompleteMessageAsync(job);
                 return;
             }
@@ -112,8 +109,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
             await CleanupStaleSummitedPeaksForActivity(activity, currentDocumentIds, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-            if (ServiceBusMessageGuard.HasLockToken(job))
-                try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
+            if (QueueMessageGuard.HasLockToken(job))
+                try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
             await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
@@ -127,7 +124,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     {
         var processedEvent = new ActivityProcessedEvent(activity.Id, activity.UserId, [.. summitedPeaks.Select(x => x.Id.Value)], [.. summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "")]);
         var json = JsonSerializer.Serialize(processedEvent);
-        await _sbSender.SendMessageAsync(new ServiceBusMessage(json));
+        await _sbSender.SendMessageAsync(new QueueMessage(json));
     }
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)

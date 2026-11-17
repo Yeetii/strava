@@ -1,6 +1,4 @@
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
@@ -16,13 +14,12 @@ public class DeleteActivityWorker(
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
     CollectionClient<VisitedPath> _visitedPathsCollection,
     CollectionClient<VisitedArea> _visitedAreasCollection,
-    ServiceBusClient _serviceBusClient,
-    ServiceBusAdministrationClient serviceBusAdministrationClient)
+    QueueClient _queueClient)
 {
     [Function(nameof(DeleteActivityWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.ActivityDeleteJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
-        ServiceBusMessageActions actions,
+        [QueueTrigger(QueueConfig.ActivityDeleteJobs, AutoCompleteMessages = false)] QueueMessage message,
+        QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
         var deleteJob = message.Body.ToObjectFromJson<ActivityDeleteJob>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });

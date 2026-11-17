@@ -1,4 +1,3 @@
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
@@ -14,9 +13,9 @@ public class ActivityEventWorker(UserAuthenticationService _userAuthService, ILo
     [Function(nameof(ActivityEventWorker))]
     [SignalROutput(HubName = "peakshunters")]
     public async Task<IEnumerable<SignalRMessageAction>> Run(
-        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityProcessed, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)]
-        ServiceBusReceivedMessage[] messages,
-        ServiceBusMessageActions actions)
+        [QueueTrigger(Shared.Constants.QueueConfig.ActivityProcessed, IsBatched = true, AutoCompleteMessages = false)]
+        QueueMessage[] messages,
+        QueueMessageActions actions)
     {
         var allSignalRMessages = new List<SignalRMessageAction>();
         foreach (var message in messages)

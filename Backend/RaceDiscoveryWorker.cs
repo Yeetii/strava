@@ -1,6 +1,4 @@
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
@@ -15,8 +13,7 @@ public class RaceDiscoveryWorker(
     DiscoverMittloppRaces mittloppDiscovery,
     RaceDiscoveryService discoveryService,
     ILogger<RaceDiscoveryWorker> logger,
-    ServiceBusAdministrationClient serviceBusAdministrationClient,
-    ServiceBusClient serviceBusClient)
+    QueueClient queueClient)
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(10);
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web)
@@ -26,9 +23,9 @@ public class RaceDiscoveryWorker(
 
     [Function(nameof(RaceDiscoveryWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.RaceDiscoveryJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)]
-        ServiceBusReceivedMessage message,
-        ServiceBusMessageActions actions,
+        [QueueTrigger(QueueConfig.RaceDiscoveryJobs, AutoCompleteMessages = false)]
+        QueueMessage message,
+        QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
         RaceDiscoveryMessage? discoveryMessage;
@@ -101,6 +98,6 @@ public class RaceDiscoveryWorker(
         }
     }
 
-    internal static RaceDiscoveryMessage? DeserializeMessage(ServiceBusReceivedMessage message)
+    internal static RaceDiscoveryMessage? DeserializeMessage(QueueMessage message)
         => JsonSerializer.Deserialize<RaceDiscoveryMessage>(message.Body, JsonSerializerOptions);
 }

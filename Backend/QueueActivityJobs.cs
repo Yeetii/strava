@@ -1,4 +1,3 @@
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Shared.Constants;
@@ -7,7 +6,7 @@ using Shared.Services;
 
 namespace Backend
 {
-    public class QueueActivityJobs(ServiceBusClient serviceBusClient, CollectionClient<Activity> activitiesCollection)
+    public class QueueActivityJobs(QueueClient queueClient, CollectionClient<Activity> activitiesCollection)
     {
         [Function(nameof(QueueActivityJobs))]
         public async Task Run(
@@ -19,21 +18,21 @@ namespace Backend
             CreateLeaseContainerIfNotExists = true)] IReadOnlyList<Activity> updatedActivities,
             CancellationToken cancellationToken)
         {
-            var summitsSender = serviceBusClient.CreateSender(ServiceBusConfig.CalculateSummitsJobs);
-            var pathsSender = serviceBusClient.CreateSender(ServiceBusConfig.CalculateVisitedPathsJobs);
-            var areasSender = serviceBusClient.CreateSender(ServiceBusConfig.CalculateVisitedAreasJobs);
+            var summitsSender = queueClient.CreateSender(QueueConfig.CalculateSummitsJobs);
+            var pathsSender = queueClient.CreateSender(QueueConfig.CalculateVisitedPathsJobs);
+            var areasSender = queueClient.CreateSender(QueueConfig.CalculateVisitedAreasJobs);
 
             foreach (var activity in updatedActivities)
             {
                 var queueTasks = new List<Task>(capacity: 3);
                 if (ShouldQueueSummits(activity))
-                    queueTasks.Add(summitsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)));
+                    queueTasks.Add(summitsSender.SendMessageAsync(new QueueMessage(activity.Id)));
 
                 if (ShouldQueueVisitedPaths(activity))
-                    queueTasks.Add(pathsSender.SendMessageAsync(new ServiceBusMessage(activity.Id)));
+                    queueTasks.Add(pathsSender.SendMessageAsync(new QueueMessage(activity.Id)));
 
                 if (ShouldQueueVisitedAreas(activity))
-                    queueTasks.Add(areasSender.SendMessageAsync(new ServiceBusMessage(activity.Id)));
+                    queueTasks.Add(areasSender.SendMessageAsync(new QueueMessage(activity.Id)));
 
                 await Task.WhenAll(queueTasks);
                 await MarkExcludedIfNeededAsync(activity, cancellationToken);

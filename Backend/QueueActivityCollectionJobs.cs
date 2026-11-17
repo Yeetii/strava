@@ -1,5 +1,5 @@
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 using Shared.Services;
 using System.Security.Cryptography;
@@ -14,7 +14,7 @@ internal static class QueueActivityCollectionJobs
 
     public static async Task<int> QueueActivityIdsAsync(
         IEnumerable<string> activityIds,
-        ServiceBusClient serviceBusClient,
+        QueueClient queueClient,
         string queueName,
         TimeSpan? messageSpacing = null)
     {
@@ -27,10 +27,10 @@ internal static class QueueActivityCollectionJobs
             return 0;
 
         var spacing = messageSpacing ?? MessageSpacing;
-        var sender = serviceBusClient.CreateSender(queueName);
+        var sender = queueClient.CreateSender(queueName);
         for (var index = 0; index < ids.Count; index++)
         {
-            await sender.SendMessageAsync(new ServiceBusMessage(ids[index])
+            await sender.SendMessageAsync(new QueueMessage(ids[index])
             {
                 MessageId = BuildQueueAllMessageId(queueName, ids[index]),
                 // ScheduledEnqueueTime = DateTimeOffset.UtcNow.Add(spacing * index)
@@ -42,17 +42,17 @@ internal static class QueueActivityCollectionJobs
 
     public static async Task QueueAllActivitiesAsync(
         CollectionClient<Activity> activitiesClient,
-        ServiceBusClient serviceBusClient,
+        QueueClient queueClient,
         string queueName,
         string? userId = null)
     {
         var activityIds = await activitiesClient.ExecuteQueryAsync<string>(BuildActivityIdsQueryDefinition(userId));
-        await QueueActivityIdsAsync(activityIds, serviceBusClient, queueName);
+        await QueueActivityIdsAsync(activityIds, queueClient, queueName);
     }
 
     public static async Task QueueActivitiesExcludingTypesAsync(
         CollectionClient<Activity> activitiesClient,
-        ServiceBusClient serviceBusClient,
+        QueueClient queueClient,
         string queueName,
         IReadOnlySet<string> excludedSportTypes,
         ActivitySyncStage stage,
@@ -71,7 +71,7 @@ internal static class QueueActivityCollectionJobs
                 excluded.Add(p);
         }
 
-        await QueueActivityIdsAsync(included, serviceBusClient, queueName);
+        await QueueActivityIdsAsync(included, queueClient, queueName);
         await MarkExcludedActivitiesAsync(activitiesClient, excluded, stage);
     }
 

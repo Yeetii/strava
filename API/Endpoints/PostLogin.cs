@@ -1,5 +1,4 @@
 using System.Net;
-using Azure.Messaging.ServiceBus;
 using Shared.Models;
 using Microsoft.Azure.Functions.Worker;
 using System.Text.Json.Serialization;
@@ -16,10 +15,10 @@ namespace API.Endpoints;
 public class PostLogin(
     AuthenticationApi _authenticationApi,
     CollectionClient<Shared.Models.User> _usersCollection,
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     ILogger<PostLogin> _logger)
 {
-    private readonly ServiceBusSender _activitiesFetchSender = serviceBusClient.CreateSender(ServiceBusConfig.ActivitiesFetchJobs);
+    private readonly QueueSender _activitiesFetchSender = queueClient.CreateSender(QueueConfig.ActivitiesFetchJobs);
 
     [OpenApiOperation(tags: ["User management"])]
     [OpenApiParameter(name: "authCode", In = ParameterLocation.Path)]
@@ -83,7 +82,7 @@ public class PostLogin(
         if (shouldQueueInitialActivitiesFetch)
         {
             _logger.LogInformation("Queueing initial activities fetch for user {userId}", userId);
-            await _activitiesFetchSender.SendMessageAsync(new ServiceBusMessage(System.Text.Json.JsonSerializer.Serialize(new ActivitiesFetchJob { UserId = userId })));
+            await _activitiesFetchSender.SendMessageAsync(new QueueMessage(System.Text.Json.JsonSerializer.Serialize(new ActivitiesFetchJob { UserId = userId })));
         }
 
         outputs.User = null;

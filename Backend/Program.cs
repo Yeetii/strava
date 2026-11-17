@@ -48,8 +48,8 @@ if (string.Equals(role, "api", StringComparison.OrdinalIgnoreCase))
     return;
 }
 
-// Worker roles: a Generic Host with Hangfire for timers and hosted services
-// for queue consumers / change feeds.
+// Worker roles: a Generic Host with Hangfire for timers and queued jobs, and
+// hosted services for change feeds.
 var hostBuilder = Host.CreateApplicationBuilder(args);
 hostBuilder.Services.AddBackendServices(hostBuilder.Configuration);
 
@@ -65,14 +65,11 @@ if (isSchedule)
 hostBuilder.AddFunctionWorkers(
     registry,
     (descriptor, services, ct) => FunctionInvoker.InvokeAsync(descriptor, services, ct),
-    enableQueues: isHeavy,
-    enableChangeFeeds: isHeavy,
-    includeQueue: queue => !QueueTransport.IsHangfire(queue));
+    enableChangeFeeds: isHeavy);
 
-// Timers run only in the schedule role; queue consumers and feeds only in the
-// heavy role. P1a keeps both roles available so they can be taken over
-// independently per the plan's handshake. Recurring-job registration is done
-// by RecurringJobRegistrationHostedService (registered by AddFunctionTimers).
+// Timers run only in the schedule role; change feeds only in the heavy role.
+// Queued jobs run on the heavy role's Hangfire server. Recurring-job
+// registration is done by RecurringJobRegistrationHostedService.
 
 var host = hostBuilder.Build();
 

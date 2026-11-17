@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
 using BAMCIS.GeoJSON;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
@@ -20,11 +19,11 @@ public class RunSummitsForActivity(
     CollectionClient<Activity> activitiesCollection,
     CollectionClient<SummitedPeak> summitedPeaksCollection,
     [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient peaksCollection,
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     ISummitsCalculator summitsCalculator,
     UserSyncStatusService userSyncStatusService)
 {
-    private readonly ServiceBusSender _activityProcessedSender = serviceBusClient.CreateSender(ServiceBusConfig.ActivityProcessed);
+    private readonly QueueSender _activityProcessedSender = queueClient.CreateSender(QueueConfig.ActivityProcessed);
 
     [Function(nameof(RunSummitsForActivity))]
     public async Task<HttpResponseData> Run(
@@ -104,7 +103,7 @@ public class RunSummitsForActivity(
             [.. summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "")]);
 
         var json = JsonSerializer.Serialize(processedEvent);
-        await _activityProcessedSender.SendMessageAsync(new ServiceBusMessage(json));
+        await _activityProcessedSender.SendMessageAsync(new QueueMessage(json));
     }
 
     private static IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks, ISummitsCalculator summitsCalculator)

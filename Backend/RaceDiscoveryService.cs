@@ -1,4 +1,4 @@
-using Azure.Messaging.ServiceBus;
+using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Services;
@@ -8,11 +8,11 @@ using System.Text.Json;
 
 namespace Backend;
 
-public class RaceDiscoveryService(ServiceBusClient serviceBusClient, BlobOrganizerStore organizerClient, ILoggerFactory loggerFactory)
+public class RaceDiscoveryService(QueueClient queueClient, BlobOrganizerStore organizerClient, ILoggerFactory loggerFactory)
 {
     internal static readonly TimeSpan AutomaticScrapeFreshnessWindow = TimeSpan.FromDays(6);
-    private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);
-    private readonly ServiceBusSender _discoverySender = serviceBusClient.CreateSender(ServiceBusConfig.RaceDiscoveryJobs);
+    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.ScrapeRace);
+    private readonly QueueSender _discoverySender = queueClient.CreateSender(QueueConfig.RaceDiscoveryJobs);
     private readonly ILogger _logger = loggerFactory.CreateLogger<RaceDiscoveryService>();
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -48,7 +48,7 @@ public class RaceDiscoveryService(ServiceBusClient serviceBusClient, BlobOrganiz
         var messages = organizerKeys
             .Select((key, i) =>
             {
-                var message = BuildScrapeServiceBusMessage(new ScrapeRaceMessage(key, isUrgent));
+                var message = BuildScrapeQueueMessage(new ScrapeRaceMessage(key, isUrgent));
                 return message;
             })
             .ToList();
@@ -59,10 +59,10 @@ public class RaceDiscoveryService(ServiceBusClient serviceBusClient, BlobOrganiz
         _logger.LogInformation("Enqueued {Count} {Urgency} scrape messages", messages.Count, isUrgent ? "urgent" : "automatic");
     }
 
-    public static ServiceBusMessage BuildScrapeServiceBusMessage(ScrapeRaceMessage message)
+    public static QueueMessage BuildScrapeQueueMessage(ScrapeRaceMessage message)
     {
         var body = BinaryData.FromString(JsonSerializer.Serialize(message, JsonSerializerOptions));
-        return new ServiceBusMessage(body)
+        return new QueueMessage(body)
         {
             ContentType = "application/json",
             MessageId = BuildScrapeMessageId(message.OrganizerKey)
@@ -81,18 +81,18 @@ public class RaceDiscoveryService(ServiceBusClient serviceBusClient, BlobOrganiz
         CancellationToken cancellationToken)
     {
         var scheduledAt = delay.HasValue ? DateTimeOffset.UtcNow.Add(delay.Value) : (DateTimeOffset?)null;
-        var serviceBusMessage = BuildDiscoveryServiceBusMessage(message);
+        var queueMessage = BuildDiscoveryQueueMessage(message);
         if (scheduledAt.HasValue)
-            serviceBusMessage.ScheduledEnqueueTime = scheduledAt.Value;
+            queueMessage.ScheduledEnqueueTime = scheduledAt.Value;
 
-        await _discoverySender.SendMessageAsync(serviceBusMessage, cancellationToken);
+        await _discoverySender.SendMessageAsync(queueMessage, cancellationToken);
         _logger.LogInformation("Enqueued race discovery message for {Agent} page {Page}", message.Agent, message.Page);
     }
 
-    public static ServiceBusMessage BuildDiscoveryServiceBusMessage(RaceDiscoveryMessage message)
+    public static QueueMessage BuildDiscoveryQueueMessage(RaceDiscoveryMessage message)
     {
         var body = BinaryData.FromString(JsonSerializer.Serialize(message, JsonSerializerOptions));
-        var serviceBusMessage = new ServiceBusMessage(body)
+        var queueMessage = new QueueMessage(body)
         {
             ContentType = "application/json",
             MessageId = BuildDiscoveryMessageId(message),
@@ -100,17 +100,17 @@ public class RaceDiscoveryService(ServiceBusClient serviceBusClient, BlobOrganiz
         };
 
         if (!string.IsNullOrWhiteSpace(message.Country))
-            serviceBusMessage.ApplicationProperties["country"] = message.Country;
+            queueMessage.ApplicationProperties["country"] = message.Country;
         if (message.CountryIndex.HasValue)
-            serviceBusMessage.ApplicationProperties["countryIndex"] = message.CountryIndex.Value;
+            queueMessage.ApplicationProperties["countryIndex"] = message.CountryIndex.Value;
         if (message.CountryPage.HasValue)
-            serviceBusMessage.ApplicationProperties["countryPage"] = message.CountryPage.Value;
+            queueMessage.ApplicationProperties["countryPage"] = message.CountryPage.Value;
         if (message.CountryPageCount.HasValue)
-            serviceBusMessage.ApplicationProperties["countryPageCount"] = message.CountryPageCount.Value;
+            queueMessage.ApplicationProperties["countryPageCount"] = message.CountryPageCount.Value;
         if (message.RacesOnPage.HasValue)
-            serviceBusMessage.ApplicationProperties["racesOnPage"] = message.RacesOnPage.Value;
+            queueMessage.ApplicationProperties["racesOnPage"] = message.RacesOnPage.Value;
 
-        return serviceBusMessage;
+        return queueMessage;
     }
 
     internal static string BuildDiscoveryMessageId(RaceDiscoveryMessage message)

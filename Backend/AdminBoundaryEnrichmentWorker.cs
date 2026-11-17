@@ -1,5 +1,3 @@
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
@@ -12,7 +10,6 @@ namespace Backend;
 public class AdminBoundaryEnrichmentWorker(
     AdminBoundaryMetricsEnricher enricher,
     CollectionClient<StoredFeature> storedFeaturesCollection,
-    ServiceBusAdministrationClient serviceBusAdministrationClient,
     ILogger<AdminBoundaryEnrichmentWorker> logger)
 {
     private static readonly TimeSpan InvocationSafetyBuffer = TimeSpan.FromSeconds(75);
@@ -21,9 +18,9 @@ public class AdminBoundaryEnrichmentWorker(
 
     [Function(nameof(AdminBoundaryEnrichmentWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.EnrichAdminBoundaryJobs, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)]
-        ServiceBusReceivedMessage[] messages,
-        ServiceBusMessageActions actions,
+        [QueueTrigger(QueueConfig.EnrichAdminBoundaryJobs, IsBatched = true, AutoCompleteMessages = false)]
+        QueueMessage[] messages,
+        QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
         // Renew all locks immediately — messages may have been sitting in the Functions trigger's
@@ -56,7 +53,7 @@ public class AdminBoundaryEnrichmentWorker(
         var documentsById = documents.ToDictionary(document => document.Id, StringComparer.Ordinal);
 
         var patches = new List<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)>();
-        var messagesToCompleteAfterPatch = new List<ServiceBusReceivedMessage>();
+        var messagesToCompleteAfterPatch = new List<QueueMessage>();
         var patchedIds = new HashSet<string>(StringComparer.Ordinal);
 
         for (var index = 0; index < messages.Length; index++)
@@ -141,8 +138,8 @@ public class AdminBoundaryEnrichmentWorker(
     /// The background renewal loop is cancelled as soon as the work completes.
     /// </summary>
     private static async Task<T> RunWithPeriodicLockRenewalAsync<T>(
-        ServiceBusReceivedMessage message,
-        ServiceBusMessageActions actions,
+        QueueMessage message,
+        QueueMessageActions actions,
         ILogger logger,
         TimeSpan renewalInterval,
         Func<CancellationToken, Task<T>> work,
@@ -157,12 +154,12 @@ public class AdminBoundaryEnrichmentWorker(
                 try
                 {
                     await Task.Delay(renewalInterval, renewalCts.Token);
-                    if (renewalCts.Token.IsCancellationRequested || !ServiceBusMessageGuard.HasLockToken(message))
+                    if (renewalCts.Token.IsCancellationRequested || !QueueMessageGuard.HasLockToken(message))
                         break;
                     await actions.RenewMessageLockAsync(message, cancellationToken);
                 }
                 catch (OperationCanceledException) { break; }
-                catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost }
+                catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost }
                                         || ex.Message.Contains("MessageLockLost"))
                 {
                     logger.LogWarning("[AdminBoundaryEnrichmentWorker] SB lock lost mid-enrichment for message {MessageId}; message will be redelivered.", message.MessageId);
@@ -183,18 +180,18 @@ public class AdminBoundaryEnrichmentWorker(
     }
 
     internal static async Task RenewLocksAsync(
-        IEnumerable<ServiceBusReceivedMessage> messages,
-        ServiceBusMessageActions actions,
+        IEnumerable<QueueMessage> messages,
+        QueueMessageActions actions,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        foreach (var message in messages.Where(ServiceBusMessageGuard.HasLockToken))
+        foreach (var message in messages.Where(QueueMessageGuard.HasLockToken))
         {
             try
             {
                 await actions.RenewMessageLockAsync(message, cancellationToken);
             }
-            catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+            catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
             {
                 logger.LogWarning("[AdminBoundaryEnrichmentWorker] Lock lost before continuing admin boundary enrichment for message {MessageId}; it will be redelivered.", message.MessageId);
             }
@@ -202,19 +199,19 @@ public class AdminBoundaryEnrichmentWorker(
     }
 
     internal static async Task TryCompleteMessageAsync(
-        ServiceBusReceivedMessage message,
-        ServiceBusMessageActions actions,
+        QueueMessage message,
+        QueueMessageActions actions,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        if (!ServiceBusMessageGuard.HasLockToken(message))
+        if (!QueueMessageGuard.HasLockToken(message))
             return;
 
         try
         {
             await actions.CompleteMessageAsync(message, cancellationToken);
         }
-        catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+        catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
         {
             logger.LogWarning(ex,
                 "[AdminBoundaryEnrichmentWorker] Message lock already lost while completing admin boundary enrichment message {MessageId}; message will be redelivered.",

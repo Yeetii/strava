@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.IO;
-using Azure.Messaging.ServiceBus;
 using Backend.Scrapers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
@@ -18,7 +17,7 @@ public class ScrapeRaceMistralWorker
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly BlobOrganizerStore _organizerClient;
-    private readonly ServiceBusClient _serviceBusClient;
+    private readonly QueueClient _queueClient;
     private readonly ILogger<ScrapeRaceMistralWorker> _logger;
     private readonly string _agentId;
     private readonly string _apiKey;
@@ -28,13 +27,13 @@ public class ScrapeRaceMistralWorker
     public ScrapeRaceMistralWorker(
         IHttpClientFactory httpClientFactory,
         BlobOrganizerStore organizerClient,
-        ServiceBusClient serviceBusClient,
+        QueueClient queueClient,
         IConfiguration configuration,
         ILogger<ScrapeRaceMistralWorker> logger)
     {
         _httpClientFactory = httpClientFactory;
         _organizerClient = organizerClient;
-        _serviceBusClient = serviceBusClient;
+        _queueClient = queueClient;
         _logger = logger;
         _agentId = configuration.GetValue<string>("MistralStudioAgentId") ?? throw new Exception("MistralStudioAgentId is not configured");
         _apiKey = configuration.GetValue<string>("MistralStudioApiKey") ?? throw new Exception("MistralStudioApiKey is not configured");
@@ -43,8 +42,8 @@ public class ScrapeRaceMistralWorker
 
     [Function(nameof(ScrapeRaceMistralWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.MistralScrapeJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
-        ServiceBusMessageActions actions,
+        [QueueTrigger(QueueConfig.MistralScrapeJobs, AutoCompleteMessages = false)] QueueMessage message,
+        QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
         var rawBody = message.Body.ToString();

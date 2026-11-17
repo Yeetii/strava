@@ -1,5 +1,4 @@
 using System.Net;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -14,7 +13,7 @@ namespace API.Endpoints.Admin;
 
 public class PostRaceEvent(
     BlobOrganizerStore organizerClient,
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     IConfiguration configuration,
     ILogger<PostRaceEvent> logger)
 {
@@ -72,8 +71,8 @@ public class PostRaceEvent(
         // Enqueue a scrape message so the scraper picks it up.
         if (body.Scrape != false)
         {
-            var sender = serviceBusClient.CreateSender(ServiceBusConfig.ScrapeRace);
-            await sender.SendMessageAsync(new ServiceBusMessage(organizerKey), cancellationToken);
+            var sender = queueClient.CreateSender(QueueConfig.ScrapeRace);
+            await sender.SendMessageAsync(new QueueMessage(organizerKey), cancellationToken);
             logger.LogInformation("Manual discovery: enqueued scrape for {OrganizerKey}", organizerKey);
         }
 

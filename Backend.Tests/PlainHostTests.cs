@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using System.Reflection;
-using Azure.Messaging.ServiceBus;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Azure.Functions.Worker;
@@ -11,7 +10,7 @@ namespace Backend.Tests;
 /// <summary>
 /// Guards the plain-host envelope introduced by the Azure Functions Runtime
 /// Exit plan: every trigger must be discovered, routes must stay identical, and
-/// the Hangfire shim must produce a usable Service Bus envelope.
+/// the Hangfire shim must produce a usable queue envelope.
 /// </summary>
 public class PlainHostTests
 {
@@ -20,7 +19,7 @@ public class PlainHostTests
     {
         var registry = FunctionWorkerRegistry.Discover(typeof(BackendServices).Assembly);
 
-        Assert.Equal(12, registry.ServiceBus.Count);
+        Assert.Equal(12, registry.Queues.Count);
         Assert.Equal(3, registry.ChangeFeeds.Count);
         Assert.Equal(12, registry.Timers.Count);
     }
@@ -153,16 +152,20 @@ public class PlainHostTests
     }
 
     [Fact]
-    public void HangfireShim_ProducesUsableReceivedMessage()
+    public void QueueEnvelope_RoundTripsBodyAndMetadata()
     {
-        var factory = typeof(QueueTransport).Assembly
-            .GetType("Shared.Hosting.FakeReceivedMessage", throwOnError: true)!
-            .GetMethod("Create", BindingFlags.Public | BindingFlags.Static)!;
+        var envelope = QueueMessageEnvelope.From(new QueueMessage(BinaryData.FromString("activity-1"))
+        {
+            MessageId = "m1",
+            ContentType = "application/json",
+            ApplicationProperties = { ["country"] = "AF" },
+        });
 
-        var message = (ServiceBusReceivedMessage)factory.Invoke(null, ["activity-1"])!;
+        var message = envelope.ToMessage();
 
         Assert.Equal("activity-1", message.Body.ToString());
-        Assert.Equal(1, message.DeliveryCount);
-        Assert.False(string.IsNullOrEmpty(message.LockToken));
+        Assert.Equal("m1", message.MessageId);
+        Assert.Equal("application/json", message.ContentType);
+        Assert.Equal("AF", message.ApplicationProperties["country"]);
     }
 }

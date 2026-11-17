@@ -1,4 +1,3 @@
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Constants;
@@ -7,7 +6,7 @@ using Shared.Services;
 
 namespace Backend
 {
-    public class QueueAllSummitJobs(CollectionClient<Activity> _cosmosClient, ServiceBusClient serviceBusClient)
+    public class QueueAllSummitJobs(CollectionClient<Activity> _cosmosClient, QueueClient queueClient)
     {
         [Function(nameof(QueueAllSummitJobs))]
         public async Task Run(
@@ -15,8 +14,8 @@ namespace Backend
         {
             await QueueActivityCollectionJobs.QueueActivitiesExcludingTypesAsync(
                 _cosmosClient,
-                serviceBusClient,
-                ServiceBusConfig.CalculateSummitsJobs,
+                queueClient,
+                QueueConfig.CalculateSummitsJobs,
                 ActivityTypeFilters.ExcludedFromPeaks,
                 ActivitySyncStage.SummitedPeaks,
                 GetUserIdFilter(req.Url));

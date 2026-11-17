@@ -32,7 +32,7 @@ namespace Microsoft.Azure.Functions.Worker
     }
 
     [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Method)]
-    public sealed class ServiceBusTriggerAttribute(string queueName) : Attribute
+    public sealed class QueueTriggerAttribute(string queueName) : Attribute
     {
         public string QueueName { get; } = queueName;
         public string? Connection { get; set; }
@@ -58,7 +58,7 @@ namespace Microsoft.Azure.Functions.Worker
     }
 
     [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Method | AttributeTargets.Property)]
-    public sealed class ServiceBusOutputAttribute(string queueName) : Attribute
+    public sealed class QueueOutputAttribute(string queueName) : Attribute
     {
         public string QueueName { get; } = queueName;
         public string? Connection { get; set; }
@@ -126,50 +126,6 @@ namespace Microsoft.Azure.Functions.Worker
     public class FunctionContext
     {
         public virtual string InvocationId { get; set; } = Guid.NewGuid().ToString();
-    }
-
-    /// <summary>
-    /// Replaces the Functions <c>ServiceBusMessageActions</c>. Settlements are
-    /// delegated to the Service Bus SDK processor, so batch
-    /// complete/abandon/dead-letter semantics are preserved for P1a. In P2 these
-    /// calls become no-ops as Hangfire owns retries.
-    /// </summary>
-    public sealed class ServiceBusMessageActions
-    {
-        private readonly Func<global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage, CancellationToken, Task>? _complete;
-        private readonly Func<global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage, CancellationToken, Task>? _abandon;
-        private readonly Func<global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage, string?, string?, CancellationToken, Task>? _deadLetter;
-        private readonly Func<global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage, CancellationToken, Task>? _renew;
-
-        public ServiceBusMessageActions(
-            Func<global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage, CancellationToken, Task>? complete = null,
-            Func<global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage, CancellationToken, Task>? abandon = null,
-            Func<global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage, string?, string?, CancellationToken, Task>? deadLetter = null,
-            Func<global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage, CancellationToken, Task>? renew = null)
-        {
-            _complete = complete;
-            _abandon = abandon;
-            _deadLetter = deadLetter;
-            _renew = renew;
-        }
-
-        public Task CompleteMessageAsync(global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage message,
-            CancellationToken cancellationToken = default) =>
-            _complete?.Invoke(message, cancellationToken) ?? Task.CompletedTask;
-
-        public Task AbandonMessageAsync(global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage message,
-            CancellationToken cancellationToken = default) =>
-            _abandon?.Invoke(message, cancellationToken) ?? Task.CompletedTask;
-
-        public Task DeadLetterMessageAsync(global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage message,
-            string? deadLetterReason = null, string? deadLetterErrorDescription = null,
-            CancellationToken cancellationToken = default) =>
-            _deadLetter?.Invoke(message, deadLetterReason, deadLetterErrorDescription, cancellationToken)
-            ?? Task.CompletedTask;
-
-        public Task RenewMessageLockAsync(global::Azure.Messaging.ServiceBus.ServiceBusReceivedMessage message,
-            CancellationToken cancellationToken = default) =>
-            _renew?.Invoke(message, cancellationToken) ?? Task.CompletedTask;
     }
 
     namespace Http

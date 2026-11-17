@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
@@ -14,16 +13,16 @@ namespace Backend
         public required string ActivityId { get; set; }
     }
 
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient, UserSyncStatusService _userSyncStatusService)
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
     {
-        private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+        private readonly QueueClient _queueClient = queueClient;
         readonly HttpClient _backendApiClient = httpClientFactory.CreateClient("backendApiClient");
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
         [Function(nameof(StravaActivityFetcher))]
         public async Task Run(
-            [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
-            ServiceBusMessageActions actions,
+            [QueueTrigger(Shared.Constants.QueueConfig.ActivityFetchJobs, AutoCompleteMessages = false)] QueueMessage message,
+            QueueMessageActions actions,
             CancellationToken cancellationToken)
         {
             Activity? existingActivity = null;
@@ -40,7 +39,7 @@ namespace Backend
                         parseError,
                         bodyPreview);
 
-                    if (ServiceBusMessageGuard.HasLockToken(message))
+                    if (QueueMessageGuard.HasLockToken(message))
                     {
                         await actions.DeadLetterMessageAsync(
                             message,
@@ -89,7 +88,7 @@ namespace Backend
             }
         }
 
-        private static bool TryParseFetchJob(ServiceBusReceivedMessage message, out ActivityFetchJob fetchJob, out string error)
+        private static bool TryParseFetchJob(QueueMessage message, out ActivityFetchJob fetchJob, out string error)
         {
             fetchJob = null!;
             error = string.Empty;

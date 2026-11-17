@@ -1,4 +1,3 @@
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
@@ -8,17 +7,17 @@ using System.Text.Json;
 
 namespace Backend
 {
-public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, ServiceBusClient serviceBusClient, UserSyncStatusService _userSyncStatusService)
+public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
 {
         private const int MaxAccessTokenRequestAttempts = 3;
-        private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+        private readonly QueueClient _queueClient = queueClient;
         readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
-        readonly ServiceBusSender _activitiesFetchSender = serviceBusClient.CreateSender(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs);
+        readonly QueueSender _activitiesFetchSender = queueClient.CreateSender(Shared.Constants.QueueConfig.ActivitiesFetchJobs);
 
         [Function(nameof(StravaActivitiesFetcher))]
         public async Task Run(
-            [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.ActivitiesFetchJobs, Connection = "ServiceBusConnection", AutoCompleteMessages = false)] ServiceBusReceivedMessage message,
-            ServiceBusMessageActions actions,
+            [QueueTrigger(Shared.Constants.QueueConfig.ActivitiesFetchJobs, AutoCompleteMessages = false)] QueueMessage message,
+            QueueMessageActions actions,
             CancellationToken cancellationToken)
         {
             try
@@ -33,7 +32,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
                         parseError,
                         bodyPreview);
 
-                    if (ServiceBusMessageGuard.HasLockToken(message))
+                    if (QueueMessageGuard.HasLockToken(message))
                     {
                         await actions.DeadLetterMessageAsync(
                             message,
@@ -115,7 +114,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
                 if (hasMorePages)
                 {
                     fetchJob.Page = ++page;
-                    await _activitiesFetchSender.SendMessageAsync(new ServiceBusMessage(JsonSerializer.Serialize(fetchJob)), cancellationToken);
+                    await _activitiesFetchSender.SendMessageAsync(new QueueMessage(JsonSerializer.Serialize(fetchJob)), cancellationToken);
                 }
 
                 await actions.CompleteMessageAsync(message, cancellationToken);
@@ -127,7 +126,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
             }
         }
 
-        private static bool TryParseFetchJob(ServiceBusReceivedMessage message, out ActivitiesFetchJob fetchJob, out string error)
+        private static bool TryParseFetchJob(QueueMessage message, out ActivitiesFetchJob fetchJob, out string error)
         {
             fetchJob = null!;
             error = string.Empty;

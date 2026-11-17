@@ -1,5 +1,4 @@
 using System.Net;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -12,7 +11,7 @@ namespace Backend;
 
 public class BackfillVisitedPathOsmHighwayIds(
     CollectionClient<VisitedPath> visitedPathsCollection,
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     ILogger<BackfillVisitedPathOsmHighwayIds> logger)
 {
     private const int DefaultBatchSize = 200;
@@ -21,7 +20,7 @@ public class BackfillVisitedPathOsmHighwayIds(
     private const int MaxMaxPages = 10000;
 
     private readonly CollectionClient<VisitedPath> _visitedPathsCollection = visitedPathsCollection;
-    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+    private readonly QueueClient _queueClient = queueClient;
     private readonly ILogger<BackfillVisitedPathOsmHighwayIds> _logger = logger;
 
     private sealed class VisitedPathActivityProjection
@@ -138,8 +137,8 @@ WHERE NOT IS_DEFINED(c.osmHighwayId)
 
         var queuedActivities = await QueueActivityCollectionJobs.QueueActivityIdsAsync(
             activityIds,
-            _serviceBusClient,
-            ServiceBusConfig.CalculateVisitedPathsJobs,
+            _queueClient,
+            QueueConfig.CalculateVisitedPathsJobs,
             TimeSpan.Zero);
 
         return (items.Count, queuedActivities, nextContinuationToken);

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -14,7 +13,7 @@ public record PostRaceDiscoveryRequest(string Agent, int? PageStart = null, int?
 public record PostRaceDiscoveryResponse(string Agent, int PageStart, int PageEnd, int MessagesEnqueued);
 
 public class PostRaceDiscovery(
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     IConfiguration configuration)
 {
     [OpenApiOperation(tags: ["Admin"], Summary = "Queue one or more race discovery messages.")]
@@ -60,11 +59,11 @@ public class PostRaceDiscovery(
             return badReq;
         }
 
-        var sender = serviceBusClient.CreateSender(ServiceBusConfig.RaceDiscoveryJobs);
+        var sender = queueClient.CreateSender(QueueConfig.RaceDiscoveryJobs);
         for (var page = pageStart; page <= pageEnd; page++)
         {
             var payload = new { agent, page };
-            var message = new ServiceBusMessage(BinaryData.FromString(JsonSerializer.Serialize(payload)))
+            var message = new QueueMessage(BinaryData.FromString(JsonSerializer.Serialize(payload)))
             {
                 ContentType = "application/json",
                 MessageId = $"discovery:{agent}:{page}",

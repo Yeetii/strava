@@ -1,4 +1,3 @@
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Constants;
@@ -7,7 +6,7 @@ using Shared.Services;
 
 namespace Backend
 {
-    public class QueueAllVisitedAreasJobs(CollectionClient<Activity> _cosmosClient, ServiceBusClient serviceBusClient)
+    public class QueueAllVisitedAreasJobs(CollectionClient<Activity> _cosmosClient, QueueClient queueClient)
     {
         [Function(nameof(QueueAllVisitedAreasJobs))]
         public async Task Run(
@@ -15,8 +14,8 @@ namespace Backend
         {
             await QueueActivityCollectionJobs.QueueActivitiesExcludingTypesAsync(
                 _cosmosClient,
-                serviceBusClient,
-                ServiceBusConfig.CalculateVisitedAreasJobs,
+                queueClient,
+                QueueConfig.CalculateVisitedAreasJobs,
                 ActivityTypeFilters.ExcludedFromAreas,
                 ActivitySyncStage.VisitedAreas,
                 GetUserIdFilter(req.Url));

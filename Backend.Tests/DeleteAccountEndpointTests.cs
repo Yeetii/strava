@@ -1,7 +1,6 @@
 using System.Net;
 using System.Security.Claims;
 using System.Text;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;

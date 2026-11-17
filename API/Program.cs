@@ -7,8 +7,6 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Identity;
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
 using Azure.Monitor.Query;
 using Azure.Storage.Blobs;
 using Microsoft.Azure.Cosmos;
@@ -170,13 +168,8 @@ builder.Services.AddHttpClient<OverpassClient>(client =>
     client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
     client.Timeout = TimeSpan.FromMinutes(10);
 });
-builder.Services.AddSingleton(_ =>
-    new ServiceBusClient(configuration.GetValue<string>("ServiceBusConnection")));
-builder.Services.AddSingleton(_ =>
-    new ServiceBusAdministrationClient(configuration.GetValue<string>("ServiceBusConnection")));
-
-// P2: per-queue transport swap. Storage is registered once per host; the
-// producer shim is added only when HANGFIRE_QUEUES names a queue (or "*").
+// All queues run on Hangfire/Redis. Storage is registered once per host; the
+// producer shim turns QueueClient sends into Hangfire jobs.
 QueueTransport.AddHangfireStorage(builder.Services, configuration);
 QueueTransport.AddHangfireQueueProducer(builder.Services);
 builder.Services.AddSingleton(new MetricsQueryClient(new DefaultAzureCredential()));

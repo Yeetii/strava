@@ -1,4 +1,4 @@
-using Azure.Messaging.ServiceBus;
+using Microsoft.Azure.Functions.Worker;
 using Backend;
 
 namespace Backend.Tests;
@@ -6,9 +6,9 @@ namespace Backend.Tests;
 public class RaceDiscoveryMessageTests
 {
     [Fact]
-    public void BuildDiscoveryServiceBusMessage_WritesJsonMessage()
+    public void BuildDiscoveryQueueMessage_WritesJsonMessage()
     {
-        var message = RaceDiscoveryService.BuildDiscoveryServiceBusMessage(new RaceDiscoveryMessage("duv", 3));
+        var message = RaceDiscoveryService.BuildDiscoveryQueueMessage(new RaceDiscoveryMessage("duv", 3));
 
         Assert.Equal("application/json", message.ContentType);
         Assert.Equal("discovery:duv:3", message.MessageId);
@@ -17,9 +17,9 @@ public class RaceDiscoveryMessageTests
     }
 
     [Fact]
-    public void BuildDiscoveryServiceBusMessage_WritesMetadataProperties()
+    public void BuildDiscoveryQueueMessage_WritesMetadataProperties()
     {
-        var message = RaceDiscoveryService.BuildDiscoveryServiceBusMessage(
+        var message = RaceDiscoveryService.BuildDiscoveryQueueMessage(
             new RaceDiscoveryMessage("itra", 2, Country: "AF", CountryIndex: 0, CountryPage: 2, CountryPageCount: 3, RacesOnPage: 50));
 
         Assert.Equal("AF", message.ApplicationProperties["country"]);
@@ -32,11 +32,11 @@ public class RaceDiscoveryMessageTests
     }
 
     [Fact]
-    public void BuildDiscoveryServiceBusMessage_UsesStableIdAcrossRetriesForSamePage()
+    public void BuildDiscoveryQueueMessage_UsesStableIdAcrossRetriesForSamePage()
     {
-        var first = RaceDiscoveryService.BuildDiscoveryServiceBusMessage(
+        var first = RaceDiscoveryService.BuildDiscoveryQueueMessage(
             new RaceDiscoveryMessage("itra", 7, Country: "US", CountryIndex: 226, CountryPage: 3, CountryPageCount: 4, RacesOnPage: 40));
-        var second = RaceDiscoveryService.BuildDiscoveryServiceBusMessage(
+        var second = RaceDiscoveryService.BuildDiscoveryQueueMessage(
             new RaceDiscoveryMessage("itra", 7, Country: "US", CountryIndex: 226, CountryPage: 3, CountryPageCount: 4, RacesOnPage: 40));
 
         Assert.Equal("discovery:itra:7", first.MessageId);
@@ -44,10 +44,10 @@ public class RaceDiscoveryMessageTests
     }
 
     [Fact]
-    public void BuildDiscoveryServiceBusMessage_UsesDifferentIdForDifferentPages()
+    public void BuildDiscoveryQueueMessage_UsesDifferentIdForDifferentPages()
     {
-        var first = RaceDiscoveryService.BuildDiscoveryServiceBusMessage(new RaceDiscoveryMessage("itra", 7));
-        var second = RaceDiscoveryService.BuildDiscoveryServiceBusMessage(new RaceDiscoveryMessage("itra", 8));
+        var first = RaceDiscoveryService.BuildDiscoveryQueueMessage(new RaceDiscoveryMessage("itra", 7));
+        var second = RaceDiscoveryService.BuildDiscoveryQueueMessage(new RaceDiscoveryMessage("itra", 8));
 
         Assert.NotEqual(first.MessageId, second.MessageId);
     }
@@ -55,8 +55,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_DefaultsMissingPageToFirstPage()
     {
-        var received = ServiceBusModelFactory.ServiceBusReceivedMessage(
-            body: BinaryData.FromString("""{"agent":"tracedetrail"}"""));
+        var received = new QueueMessage(BinaryData.FromString("""{"agent":"tracedetrail"}"""));
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 
@@ -69,8 +68,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_AcceptsCamelCasePage()
     {
-        var received = ServiceBusModelFactory.ServiceBusReceivedMessage(
-            body: BinaryData.FromString("""{"agent":"duv","page":4}"""));
+        var received = new QueueMessage(BinaryData.FromString("""{"agent":"duv","page":4}"""));
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 
@@ -83,8 +81,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_AcceptsItraMetadata()
     {
-        var received = ServiceBusModelFactory.ServiceBusReceivedMessage(
-            body: BinaryData.FromString("""{"agent":"itra","page":7,"country":"US","countryIndex":226,"countryPage":3,"countryPageCount":4,"racesOnPage":40}"""));
+        var received = new QueueMessage(BinaryData.FromString("""{"agent":"itra","page":7,"country":"US","countryIndex":226,"countryPage":3,"countryPageCount":4,"racesOnPage":40}"""));
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 

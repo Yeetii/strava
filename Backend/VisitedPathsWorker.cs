@@ -1,5 +1,3 @@
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Geo;
@@ -16,11 +14,10 @@ public class VisitedPathsWorker(
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<VisitedPath> _visitedPathsCollection,
     ShardFeatureClient _highwaysShardFeatureClient,
-    ServiceBusClient serviceBusClient,
-    ServiceBusAdministrationClient serviceBusAdministrationClient,
+    QueueClient queueClient,
     UserSyncStatusService _userSyncStatusService)
 {
-    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+    private readonly QueueClient _queueClient = queueClient;
 
     // 50m ≈ 0.00045° – use a slightly larger threshold for a rough but fast check
     private const double ProximityThresholdDegrees = 0.0005;
@@ -48,9 +45,9 @@ public class VisitedPathsWorker(
 
     [Function(nameof(VisitedPathsWorker))]
     public async Task Run(
-        [ServiceBusTrigger(Shared.Constants.ServiceBusConfig.CalculateVisitedPathsJobs, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)]
-        ServiceBusReceivedMessage[] jobs,
-        ServiceBusMessageActions actions,
+        [QueueTrigger(Shared.Constants.QueueConfig.CalculateVisitedPathsJobs, IsBatched = true, AutoCompleteMessages = false)]
+        QueueMessage[] jobs,
+        QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
 
@@ -67,11 +64,11 @@ public class VisitedPathsWorker(
             a => GeoSpatialFunctions.DecodePolyline(a.Polyline ?? a.SummaryPolyline).ToList());
 
         // Renew locks before the potentially slow shared data fetch
-        var realJobs = jobs.Where(ServiceBusMessageGuard.HasLockToken).ToList();
+        var realJobs = jobs.Where(QueueMessageGuard.HasLockToken).ToList();
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
-            catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+            catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
             {
                 _logger.LogWarning("Lock lost before renewal for message {MessageId}; it will be redelivered.", j.MessageId);
             }
@@ -84,7 +81,7 @@ public class VisitedPathsWorker(
         await Task.WhenAll(realJobs.Select(async j =>
         {
             try { await actions.RenewMessageLockAsync(j); }
-            catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+            catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
             {
                 _logger.LogWarning("Lock lost after fetch renewal for message {MessageId}; it will be redelivered.", j.MessageId);
             }
@@ -95,8 +92,8 @@ public class VisitedPathsWorker(
     }
 
     private async Task ProcessJob(
-        ServiceBusReceivedMessage job,
-        ServiceBusMessageActions actions,
+        QueueMessage job,
+        QueueMessageActions actions,
         Dictionary<string, ActivitySlim> activitiesById,
         Dictionary<string, List<Coordinate>> decodedActivities,
         PathGridIndex pathGridIndex,
@@ -114,7 +111,7 @@ public class VisitedPathsWorker(
                 {
                     await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
                 }
-                if (ServiceBusMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
+                if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
@@ -142,7 +139,7 @@ public class VisitedPathsWorker(
             {
                 await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-                if (ServiceBusMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
+                if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
@@ -207,10 +204,10 @@ public class VisitedPathsWorker(
                 }
             }
 
-            if (ServiceBusMessageGuard.HasLockToken(job))
+            if (QueueMessageGuard.HasLockToken(job))
             {
                 try { await actions.RenewMessageLockAsync(job); }
-                catch (Exception ex) when (ex is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
+                catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
                 {
                     _logger.LogWarning("Lock lost before writing paths for message {MessageId}; it will be redelivered.", job.MessageId);
                 }
@@ -218,7 +215,7 @@ public class VisitedPathsWorker(
             await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
             await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-            if (ServiceBusMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
+            if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
         }
         catch (Exception ex)
         {

@@ -1,10 +1,9 @@
-// Worker-side "envelope" for the Azure Functions Runtime Exit campaign (P1a).
-// Queue consumers use the Service Bus SDK processor, timers become Hangfire
-// recurring jobs, and Cosmos change-feed triggers become in-process
+// Worker-side "envelope" for the Azure Functions Runtime Exit campaign.
+// Queues are Hangfire jobs produced by QueueClient, timers are Hangfire
+// recurring jobs, and Cosmos change-feed triggers are in-process
 // ChangeFeedProcessors. Function bodies are invoked unchanged.
 
 using System.Reflection;
-using Azure.Messaging.ServiceBus;
 using Hangfire;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
@@ -24,7 +23,7 @@ public sealed class FunctionDescriptor
 
 public sealed class FunctionWorkerRegistry
 {
-    public List<FunctionDescriptor> ServiceBus { get; } = [];
+    public List<FunctionDescriptor> Queues { get; } = [];
     public List<FunctionDescriptor> Timers { get; } = [];
     public List<FunctionDescriptor> ChangeFeeds { get; } = [];
 
@@ -43,8 +42,8 @@ public sealed class FunctionWorkerRegistry
                     Method = method,
                 };
 
-                if (FunctionAttributeLookup.Get<ServiceBusTriggerAttribute>(method) is not null)
-                    registry.ServiceBus.Add(descriptor);
+                if (FunctionAttributeLookup.Get<QueueTriggerAttribute>(method) is not null)
+                    registry.Queues.Add(descriptor);
                 else if (FunctionAttributeLookup.Get<TimerTriggerAttribute>(method) is { } timer)
                     registry.Timers.Add(new FunctionDescriptor
                     {
@@ -137,40 +136,18 @@ public static class FunctionWorkerHostExtensions
     }
 
     /// <summary>
-    /// Registers every discovered Service Bus queue consumer and Cosmos change
-    /// feed processor as an <see cref="IHostedService"/>. Call
-    /// <see cref="AddFunctionTimers"/> as well to register the timer jobs.
+    /// Registers every discovered Cosmos change-feed processor as an
+    /// <see cref="IHostedService"/>. Queues are Hangfire jobs dispatched by
+    /// QueueJobDispatcher; call <see cref="AddFunctionTimers"/> as well to
+    /// register the timer jobs.
     /// </summary>
     public static IHostApplicationBuilder AddFunctionWorkers(
         this IHostApplicationBuilder builder,
         FunctionWorkerRegistry registry,
         Func<FunctionDescriptor, IServiceProvider, CancellationToken, Task> invoker,
-        bool enableQueues = true,
-        bool enableChangeFeeds = true,
-        Func<string, bool>? includeQueue = null)
+        bool enableChangeFeeds = true)
     {
         builder.Services.AddSingleton(registry);
-
-        if (enableQueues)
-        foreach (var descriptor in registry.ServiceBus)
-        {
-            var trigger = FunctionAttributeLookup.Get<ServiceBusTriggerAttribute>(descriptor.Method)!;
-            if (includeQueue is not null && !includeQueue(trigger.QueueName))
-                continue;
-            var options = new ServiceBusQueueConsumer.Options
-            {
-                QueueName = trigger.QueueName,
-                FunctionName = descriptor.Name,
-                BatchSize = trigger.IsBatched ? 20 : 1,
-            };
-            builder.Services.AddSingleton<IHostedService>(sp =>
-                new ServiceBusQueueConsumer(
-                    sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>(),
-                    options,
-                    sp,
-                    registry,
-                    sp.GetRequiredService<ILogger<ServiceBusQueueConsumer>>()));
-        }
 
         if (enableChangeFeeds)
         {

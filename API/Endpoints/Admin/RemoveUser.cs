@@ -32,7 +32,7 @@ public class RemoveUser
         [HttpResult]
         public required HttpResponseData Response { get; set; }
 
-        [ServiceBusOutput(ServiceBusConfig.AccountDeleteJobs, Connection = "ServiceBusConnection")]
+        [QueueOutput(QueueConfig.AccountDeleteJobs)]
         public AccountDeleteJob? AccountDeleteJob { get; set; }
     }
 }

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -18,10 +17,10 @@ public record RefetchUserActivitiesResponse(string UserId, bool Queued);
 
 public class RefetchUserActivities(
     CollectionClient<UserDocument> usersCollection,
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     IConfiguration configuration)
 {
-    private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.ActivitiesFetchJobs);
+    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.ActivitiesFetchJobs);
 
     [OpenApiOperation(tags: ["Admin"], Summary = "Queue a full Strava activities refetch for a user.")]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
@@ -47,7 +46,7 @@ public class RefetchUserActivities(
         }
 
         var fetchJob = new ActivitiesFetchJob { UserId = userId, Page = 1 };
-        await _sender.SendMessageAsync(new ServiceBusMessage(JsonSerializer.Serialize(fetchJob)), cancellationToken);
+        await _sender.SendMessageAsync(new QueueMessage(JsonSerializer.Serialize(fetchJob)), cancellationToken);
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new RefetchUserActivitiesResponse(userId, Queued: true), cancellationToken);

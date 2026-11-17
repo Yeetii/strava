@@ -1,4 +1,3 @@
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
@@ -8,11 +7,11 @@ using Shared.Services;
 namespace Backend;
 
 public class OsmFeaturesChangeTrigger(
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     AdminBoundariesCollectionClient adminBoundaries,
     ILogger<OsmFeaturesChangeTrigger> logger)
 {
-    private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.EnrichAdminBoundaryJobs);
+    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.EnrichAdminBoundaryJobs);
 
     /// <summary>
     /// Service Bus message application property set when enrichment is triggered by new feature data
@@ -33,7 +32,7 @@ public class OsmFeaturesChangeTrigger(
         // Admin boundaries: enqueue for enrichment when their metrics version is stale.
         var adminBoundaryJobs = changedDocuments
             .Where(ShouldEnrich)
-            .Select(d => new ServiceBusMessage(d.Id))
+            .Select(d => new QueueMessage(d.Id))
             .ToList();
 
         if (adminBoundaryJobs.Count > 0)
@@ -68,7 +67,7 @@ public class OsmFeaturesChangeTrigger(
         var forceJobs = containingBoundaries
             .Select(b =>
             {
-                var msg = new ServiceBusMessage(b.Id);
+                var msg = new QueueMessage(b.Id);
                 msg.ApplicationProperties[ForceEnrichProperty] = true;
                 return msg;
             })

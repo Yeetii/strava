@@ -15,11 +15,11 @@ namespace Backend
     {
         [HttpResult]
         public required IActionResult Response { get; set;}
-        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.ActivityFetchJobs, Connection = "ServiceBusConnection")]
+        [QueueOutput(Shared.Constants.QueueConfig.ActivityFetchJobs)]
         public ActivityFetchJob? ActivityFetchJob { get; set; }
-        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.ActivityDeleteJobs, Connection = "ServiceBusConnection")]
+        [QueueOutput(Shared.Constants.QueueConfig.ActivityDeleteJobs)]
         public ActivityDeleteJob? ActivityDeleteJob { get; set; }
-        [ServiceBusOutput(Shared.Constants.ServiceBusConfig.AccountDeleteJobs, Connection = "ServiceBusConnection")]
+        [QueueOutput(Shared.Constants.QueueConfig.AccountDeleteJobs)]
         public AccountDeleteJob? AccountDeleteJob { get; set; }
     }
     public class StravaWebhook(ILogger<StravaWebhook> _logger, IConfiguration _configuration)

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -12,15 +11,15 @@ using Shared.Services;
 namespace API.Endpoints.Admin;
 
 public class QueueUnprocessedActivityJobs(
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     UserAuthenticationService userAuthService,
     CollectionClient<Shared.Models.Activity> activityCollection)
 {
     private static readonly Dictionary<string, string> JobTypeToQueue = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["summits"] = ServiceBusConfig.CalculateSummitsJobs,
-        ["visitedPaths"] = ServiceBusConfig.CalculateVisitedPathsJobs,
-        ["visitedAreas"] = ServiceBusConfig.CalculateVisitedAreasJobs,
+        ["summits"] = QueueConfig.CalculateSummitsJobs,
+        ["visitedPaths"] = QueueConfig.CalculateVisitedPathsJobs,
+        ["visitedAreas"] = QueueConfig.CalculateVisitedAreasJobs,
     };
 
     [OpenApiOperation(tags: ["Admin"])]
@@ -66,9 +65,9 @@ public class QueueUnprocessedActivityJobs(
         var query = BuildQuery(effectiveUserId, jobType, startDate, endDate);
         var activityIds = (await activityCollection.ExecuteQueryAsync<string>(query)).ToList();
 
-        var sender = serviceBusClient.CreateSender(queueName);
+        var sender = queueClient.CreateSender(queueName);
         foreach (var activityId in activityIds)
-            await sender.SendMessageAsync(new ServiceBusMessage(activityId));
+            await sender.SendMessageAsync(new QueueMessage(activityId));
 
         response.StatusCode = HttpStatusCode.OK;
         await response.WriteAsJsonAsync(activityIds.Count);

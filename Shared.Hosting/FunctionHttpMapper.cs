@@ -6,7 +6,6 @@ using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Azure.Messaging.ServiceBus;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -267,12 +266,12 @@ public static class FunctionHttpMapper
                 }
             }
 
-            var serviceBus = property.GetCustomAttribute<ServiceBusOutputAttribute>();
-            if (serviceBus is not null && services.GetService<ServiceBusClient>() is { } sbClient)
+            var serviceBus = property.GetCustomAttribute<QueueOutputAttribute>();
+            if (serviceBus is not null && services.GetService<QueueClient>() is { } sbClient)
             {
                 var sender = sbClient.CreateSender(serviceBus.QueueName);
                 await sender.SendMessageAsync(
-                    new ServiceBusMessage(JsonSerializer.Serialize(value, FunctionsJson.Options)), ct);
+                    new QueueMessage(JsonSerializer.Serialize(value, FunctionsJson.Options)), ct);
             }
 
             var cosmos = property.GetCustomAttribute<CosmosDBOutputAttribute>();
@@ -323,7 +322,7 @@ public static class FunctionHttpMapper
 
     private static bool HasOutputBindings(Type type) => type.GetProperties().Any(p =>
         p.GetCustomAttribute<HttpResultAttribute>() is not null ||
-        p.GetCustomAttribute<ServiceBusOutputAttribute>() is not null ||
+        p.GetCustomAttribute<QueueOutputAttribute>() is not null ||
         p.GetCustomAttribute<CosmosDBOutputAttribute>() is not null);
 
     private static async Task WriteActionResultAsync(IActionResult actionResult, HttpContext context)

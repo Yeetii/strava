@@ -1,8 +1,8 @@
 namespace Shared.Constants
 {
-    public static class ServiceBusConfig
+    public static class QueueConfig
     {
-        public static readonly string[] AllQueues = [.. typeof(ServiceBusConfig)
+        public static readonly string[] AllQueues = [.. typeof(QueueConfig)
             .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
             .Where(field => field is { IsLiteral: true, FieldType: not null } && field.FieldType == typeof(string))
             .Select(field => (string)field.GetRawConstantValue()!)

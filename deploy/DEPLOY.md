@@ -61,7 +61,6 @@ Replace every `REPLACE` value:
 | `AzureWebJobsStorage` | Azure Storage connection string |
 | `BlobStorageConnection` | Azure Blob Storage connection string |
 | `CosmosDBConnection` | Cosmos DB connection string |
-| `ServiceBusConnection` | Service Bus connection string |
 | `AzureSignalRConnectionString` | SignalR connection string |
 | `StravaClientSecret` | From the Strava API app settings |
 | `stravaVerifyToken` | The webhook verify token set in Strava |

@@ -1,5 +1,4 @@
 using System.Net;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -14,11 +13,11 @@ namespace API.Endpoints.Admin;
 
 public class ReEnrichAdminBoundaries(
     CosmosClient cosmosClient,
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     IConfiguration configuration,
     ILogger<ReEnrichAdminBoundaries> logger)
 {
-    private readonly ServiceBusSender _sender = serviceBusClient.CreateSender(ServiceBusConfig.EnrichAdminBoundaryJobs);
+    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.EnrichAdminBoundaryJobs);
 
     [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
@@ -53,7 +52,7 @@ public class ReEnrichAdminBoundaries(
         const int batchSize = 100;
         for (int i = 0; i < ids.Count; i += batchSize)
         {
-            var messages = ids.Skip(i).Take(batchSize).Select(id => new ServiceBusMessage(id)).ToList();
+            var messages = ids.Skip(i).Take(batchSize).Select(id => new QueueMessage(id)).ToList();
             await _sender.SendMessagesAsync(messages);
         }
 

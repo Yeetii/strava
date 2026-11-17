@@ -1,5 +1,5 @@
 using System.Net;
-using Azure.Messaging.ServiceBus.Administration;
+using Hangfire;
 using Azure.Monitor.Query;
 using Azure.Monitor.Query.Models;
 using Microsoft.Azure.Cosmos;
@@ -14,18 +14,18 @@ using Shared.Services;
 
 namespace API.Endpoints.Admin;
 
-public record ServiceBusQueueStatus(
+public record QueueStatus(
     string QueueName,
-    long ActiveMessageCount,
-    long ScheduledMessageCount,
-    long DeadLetterMessageCount);
+    long EnqueuedCount,
+    long ScheduledCount,
+    long FailedCount);
 
 public record CosmosContainerStatus(
     string ContainerName,
     long DocumentCount);
 
 public record AdminStatus(
-    IReadOnlyList<ServiceBusQueueStatus> ServiceBusQueues,
+    IReadOnlyList<QueueStatus> Queues,
     IReadOnlyList<CosmosContainerStatus> CosmosContainers,
     int? ProvisionedThroughput,
     double? LiveRuPerSecond,
@@ -39,7 +39,6 @@ internal sealed record ActivityWindowCountsProjection(
     int ProcessedNewActivitiesLast24Hours);
 
 public class GetAdminStatus(
-    ServiceBusAdministrationClient serviceBusAdminClient,
     CosmosClient cosmosClient,
     MetricsQueryClient metricsQueryClient,
     BlobOrganizerStore organizerStore,
@@ -59,14 +58,13 @@ public class GetAdminStatus(
             return req.CreateResponse(HttpStatusCode.Unauthorized);
         }
 
-        var queueTasks = ServiceBusConfig.AllQueues.Select(FetchQueueStatusAsync);
+        var queueStatus = FetchQueueStatus();
         var containerTasks = DatabaseConfig.AllContainers.Select(FetchContainerStatusAsync);
         var throughputTask = FetchDatabaseThroughputAsync();
         var liveRuTask = FetchLiveRuPerSecondAsync();
         var activityWindowCountsTask = FetchActivityWindowCountsAsync();
         var raceCountsTask = organizerStore.GetCountsAsync();
 
-        var queueStatuses = await Task.WhenAll(queueTasks);
         var containerStatuses = await Task.WhenAll(containerTasks);
         var provisionedThroughput = await throughputTask;
         var liveRuPerSecond = await liveRuTask;
@@ -74,7 +72,7 @@ public class GetAdminStatus(
         var raceCounts = await raceCountsTask;
 
         var status = new AdminStatus(
-            queueStatuses,
+            [queueStatus],
             containerStatuses,
             provisionedThroughput,
             liveRuPerSecond,
@@ -99,21 +97,23 @@ public class GetAdminStatus(
             && providedKeys.FirstOrDefault() == adminKey;
     }
 
-    private async Task<ServiceBusQueueStatus> FetchQueueStatusAsync(string queueName)
+    private QueueStatus FetchQueueStatus()
     {
         try
         {
-            var props = await serviceBusAdminClient.GetQueueRuntimePropertiesAsync(queueName);
-            return new ServiceBusQueueStatus(
-                queueName,
-                props.Value.ActiveMessageCount,
-                props.Value.ScheduledMessageCount,
-                props.Value.DeadLetterMessageCount);
+            var monitoring = JobStorage.Current?.GetMonitoringApi();
+            if (monitoring is null)
+                return new QueueStatus("hangfire", -1, -1, -1);
+            return new QueueStatus(
+                "hangfire",
+                monitoring.EnqueuedCount("default"),
+                monitoring.ScheduledCount(),
+                monitoring.FailedCount());
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to fetch Service Bus runtime properties for queue {QueueName}", queueName);
-            return new ServiceBusQueueStatus(queueName, -1, -1, -1);
+            logger.LogWarning(ex, "Failed to fetch Hangfire queue status");
+            return new QueueStatus("hangfire", -1, -1, -1);
         }
     }
 

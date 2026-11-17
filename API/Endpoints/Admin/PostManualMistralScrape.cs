@@ -2,7 +2,6 @@ using System.Linq;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Azure.Messaging.ServiceBus;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -16,7 +15,7 @@ using Shared.Services;
 namespace API.Endpoints.Admin;
 
 public class PostManualMistralScrape(
-    ServiceBusClient serviceBusClient,
+    QueueClient queueClient,
     IConfiguration configuration,
     ILogger<PostManualMistralScrape> logger)
 {
@@ -62,12 +61,12 @@ public class PostManualMistralScrape(
 
         var organizerKey = BlobOrganizerStore.DeriveOrganizerKey(parsedUrl);
 
-        var requestMessage = new ServiceBusMessage(JsonSerializer.Serialize(new ManualMistralScrapeQueueMessage(parsedUrl.AbsoluteUri, body.Name), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))
+        var requestMessage = new QueueMessage(JsonSerializer.Serialize(new ManualMistralScrapeQueueMessage(parsedUrl.AbsoluteUri, body.Name), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))
         {
             ContentType = "application/json"
         };
 
-        var sender = serviceBusClient.CreateSender(ServiceBusConfig.MistralScrapeJobs);
+        var sender = queueClient.CreateSender(QueueConfig.MistralScrapeJobs);
         await sender.SendMessageAsync(requestMessage, cancellationToken);
         logger.LogInformation("Enqueued manual mistral scrape job for {OrganizerKey}", organizerKey);
 

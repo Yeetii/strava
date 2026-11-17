@@ -1,5 +1,3 @@
-using Azure.Messaging.ServiceBus;
-using Azure.Messaging.ServiceBus.Administration;
 using Backend.Scrapers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -21,13 +19,12 @@ namespace Backend;
 public class ScrapeRaceWorker(
     IHttpClientFactory httpClientFactory,
     BlobOrganizerStore organizerClient,
-    ServiceBusClient serviceBusClient,
-    ServiceBusAdministrationClient serviceBusAdministrationClient,
+    QueueClient queueClient,
     ILogger<ScrapeRaceWorker> logger)
 {
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly BlobOrganizerStore _organizerClient = organizerClient;
-    private readonly ServiceBusClient _serviceBusClient = serviceBusClient;
+    private readonly QueueClient _queueClient = queueClient;
     private readonly ILogger<ScrapeRaceWorker> _logger = logger;
 
     private readonly IReadOnlyList<(string Key, IRaceScraper Scraper)> _scrapers = [
@@ -42,8 +39,8 @@ public class ScrapeRaceWorker(
 
     [Function(nameof(ScrapeRaceWorker))]
     public async Task Run(
-        [ServiceBusTrigger(ServiceBusConfig.ScrapeRace, Connection = "ServiceBusConnection", IsBatched = true, AutoCompleteMessages = false)] ServiceBusReceivedMessage[] messages,
-        ServiceBusMessageActions actions,
+        [QueueTrigger(QueueConfig.ScrapeRace, IsBatched = true, AutoCompleteMessages = false)] QueueMessage[] messages,
+        QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
 
@@ -93,7 +90,7 @@ public class ScrapeRaceWorker(
         return response;
     }
 
-    private async Task ProcessSingleAsync(ServiceBusReceivedMessage message, ServiceBusMessageActions actions, CancellationToken cancellationToken)
+    private async Task ProcessSingleAsync(QueueMessage message, QueueMessageActions actions, CancellationToken cancellationToken)
     {
         var request = DeserializeMessage(message);
         var organizerKey = request.OrganizerKey.Trim();
@@ -279,9 +276,9 @@ public class ScrapeRaceWorker(
 
     // ── Settlement helpers ───────────────────────────────────────────────
 
-    private async Task TryCompleteAsync(ServiceBusMessageActions actions, ServiceBusReceivedMessage message, CancellationToken ct)
+    private async Task TryCompleteAsync(QueueMessageActions actions, QueueMessage message, CancellationToken ct)
     {
-        if (!ServiceBusMessageGuard.HasLockToken(message))
+        if (!QueueMessageGuard.HasLockToken(message))
         {
             _logger.LogDebug("Skipping message completion for {MessageId}: no real peek-lock token", message.MessageId);
             return;
@@ -291,7 +288,7 @@ public class ScrapeRaceWorker(
         catch (Exception ex) { _logger.LogDebug(ex, "Could not complete message {MessageId}", message.MessageId); }
     }
 
-    internal static ScrapeRaceMessage DeserializeMessage(ServiceBusReceivedMessage message)
+    internal static ScrapeRaceMessage DeserializeMessage(QueueMessage message)
     {
         var body = message.Body.ToString().Trim();
         if (string.IsNullOrWhiteSpace(body))
