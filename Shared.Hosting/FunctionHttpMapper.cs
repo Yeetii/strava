@@ -234,22 +234,10 @@ public static class FunctionHttpMapper
         if (httpResponse is not null)
             await WriteHttpResponseAsync(httpResponse, request, context);
 
-        // Retain the Functions behaviour where a CORS middleware injected the
-        // origin header only when the endpoint had not already set it. The
-        // response may already have started (body written above); modifying
-        // headers then would throw and abort the transfer, so stay best-effort.
-        if (!context.Response.HasStarted
-            && !context.Response.Headers.ContainsKey("Access-Control-Allow-Origin")
-            && request.Headers.TryGetValues("Origin", out var origins))
-        {
-            var origin = origins.FirstOrDefault();
-            if (!string.IsNullOrWhiteSpace(origin))
-            {
-                context.Response.Headers["Access-Control-Allow-Origin"] = origin;
-                context.Response.Headers["Access-Control-Allow-Credentials"] = "true";
-                context.Response.Headers["Vary"] = "Origin";
-            }
-        }
+        // CORS is owned solely by the host's UseCors() middleware. The mapper
+        // must not reflect an arbitrary Origin back with credentials here: that
+        // would bypass the configured allowed-origin policy on body-less
+        // responses, where HttpContext.Response.HasStarted is still false.
     }
 
     private static async Task<HttpResponseData?> ProcessBindingsAsync(
