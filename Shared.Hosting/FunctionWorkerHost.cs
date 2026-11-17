@@ -81,11 +81,42 @@ public sealed class TimerJobDispatcher(
     }
 }
 
+/// <summary>
+/// Registers each discovered timer as a Hangfire recurring job once the host
+/// starts, using the DI-based manager rather than the static API.
+/// </summary>
+public sealed class RecurringJobRegistrationHostedService(
+    IRecurringJobManager recurringJobs,
+    FunctionWorkerRegistry registry,
+    ILogger<RecurringJobRegistrationHostedService> logger) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        foreach (var timer in registry.Timers)
+        {
+            var cron = FunctionAttributeLookup.Get<TimerTriggerAttribute>(timer.Method)!.Schedule;
+            recurringJobs.AddOrUpdate<ITimerJobDispatcher>(
+                timer.Name,
+                dispatcher => dispatcher.RunAsync(timer.Name),
+                cron,
+                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+        }
+
+        logger.LogInformation("Registered {Count} Hangfire recurring jobs", registry.Timers.Count);
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
 public static class FunctionWorkerHostExtensions
 {
     /// <summary>
     /// Registers Hangfire recurring jobs for every [TimerTrigger] function in
-    /// the assembly. Cron strings carry over verbatim.
+    /// the assembly. Cron strings carry over verbatim. Registration happens in
+    /// a hosted service via the DI-based IRecurringJobManager: the static
+    /// RecurringJob API needs JobStorage.Current, which a Generic Host never
+    /// initializes.
     /// </summary>
     public static IHostApplicationBuilder AddFunctionTimers(
         this IHostApplicationBuilder builder,
@@ -96,16 +127,11 @@ public static class FunctionWorkerHostExtensions
         builder.Services.AddSingleton<ITimerJobDispatcher>(sp =>
             new TimerJobDispatcher(sp, registry, invoker,
                 sp.GetRequiredService<ILogger<TimerJobDispatcher>>()));
-
-        foreach (var timer in registry.Timers)
-        {
-            var cron = FunctionAttributeLookup.Get<TimerTriggerAttribute>(timer.Method)!.Schedule;
-            RecurringJob.AddOrUpdate<ITimerJobDispatcher>(
-                timer.Name,
-                dispatcher => dispatcher.RunAsync(timer.Name),
-                cron,
-                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
-        }
+        builder.Services.AddSingleton<IHostedService>(sp =>
+            new RecurringJobRegistrationHostedService(
+                sp.GetRequiredService<IRecurringJobManager>(),
+                registry,
+                sp.GetRequiredService<ILogger<RecurringJobRegistrationHostedService>>()));
 
         return builder;
     }

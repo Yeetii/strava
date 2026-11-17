@@ -71,10 +71,8 @@ hostBuilder.AddFunctionWorkers(
 
 // Timers run only in the schedule role; queue consumers and feeds only in the
 // heavy role. P1a keeps both roles available so they can be taken over
-// independently per the plan's handshake.
-if (isSchedule)
-    hostBuilder.Services.AddSingleton<IHostedService>(sp =>
-        new TimerRegistrationHostedService(registry));
+// independently per the plan's handshake. Recurring-job registration is done
+// by RecurringJobRegistrationHostedService (registered by AddFunctionTimers).
 
 var host = hostBuilder.Build();
 
@@ -92,13 +90,3 @@ if (isHeavy)
 }
 
 host.Run();
-
-/// <summary>
-/// No-op marker hosted service so the schedule role still starts when only
-/// Hangfire recurring jobs are registered.
-/// </summary>
-public sealed class TimerRegistrationHostedService(FunctionWorkerRegistry registry) : IHostedService
-{
-    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-}

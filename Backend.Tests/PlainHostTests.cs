@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Reflection;
 using Azure.Messaging.ServiceBus;
 using Microsoft.AspNetCore.Builder;
@@ -89,6 +90,31 @@ public class PlainHostTests
             Assert.True(duplicates.Count == 0,
                 $"Duplicate route/verb pairs in {assembly.GetName().Name}: {string.Join(", ", duplicates)}");
         }
+    }
+
+    [Fact]
+    public async Task AddFunctionTimers_RegistersRecurringJobsViaInjectedManager()
+    {
+        var registry = FunctionWorkerRegistry.Discover(typeof(BackendServices).Assembly);
+        var manager = new Moq.Mock<Hangfire.IRecurringJobManager>();
+
+        var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton<Hangfire.IRecurringJobManager>(manager.Object);
+        builder.AddFunctionTimers(registry, (_, _, _) => Task.CompletedTask);
+
+        using var host = builder.Build();
+        var registration = host.Services
+            .GetRequiredService<IEnumerable<Microsoft.Extensions.Hosting.IHostedService>>()
+            .OfType<RecurringJobRegistrationHostedService>()
+            .Single();
+
+        await registration.StartAsync(CancellationToken.None);
+
+        manager.Verify(m => m.AddOrUpdate(
+            Moq.It.IsAny<string>(),
+            Moq.It.IsAny<Hangfire.Common.Job>(),
+            Moq.It.IsAny<string>(),
+            Moq.It.IsAny<Hangfire.RecurringJobOptions>()), Moq.Times.Exactly(12));
     }
 
     [Fact]
