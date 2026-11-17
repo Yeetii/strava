@@ -15,9 +15,9 @@ S4. Verification: `dotnet test strava.sln` passes (the known pre-existing `RaceS
 ## Tasks
 
 T1. S1-S2 — Map exact DI overlap, API-only registrations, and cross-assembly route collisions (route: delegated read-only explorer `ses_e167bfe90ffeSLJhjMu3neyRiw`; status: done). Trigger: mapping two DI graphs and two trigger inventories exceeded the inline evidence budget. Result: no route/verb collisions; 3 Backend-only services needed; API Cosmos settings must be kept.
-T2. S2 — Rewrite `api` host to reference Backend, register the 3 Backend-only services, and map both assemblies (route: inline; status: done, commit: work unit 1).
-T3. S3 — Update compose, env docs, scripts, and docs to remove `backend-api` (route: inline; status: done, commit: work unit 2).
-T4. S4 — Cross-assembly route/verb test in `PlainHostTests`, full suite, role gate, compose validation (route: inline; status: done, commit: work unit 1). Live webhook verification is the next P1b action, deferred because it needs server access.
+T2. S2 — Rewrite `api` host to reference Backend, register the 3 Backend-only services, and map both assemblies (route: inline; status: done, commit: e7e79cf).
+T3. S3 — Update compose, env docs, scripts, and docs to remove `backend-api` (route: inline; status: done, commit: this commit).
+T4. S4 — Cross-assembly route/verb test in `PlainHostTests`, full suite, role gate, compose validation (route: inline; status: done, commit: e7e79cf). Live webhook verification is the next P1b action, deferred because it needs server access.
 
 ## Log
 

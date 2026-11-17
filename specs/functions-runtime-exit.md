@@ -38,7 +38,7 @@ where each phase is independently deployable and rollbackable:
 
 | Concern | Replacement |
 |---------|-------------|
-| HTTP host (API: 59 endpoints, backend-api: 14) | **ASP.NET Core (Kestrel)** — route-identical minimal APIs |
+| HTTP host (API endpoints + 14 Backend functions) | **ASP.NET Core (Kestrel)** — single merged `api` host, route-identical minimal APIs |
 | Timer triggers (12 weekly crons) | **Hangfire recurring jobs** on Redis (cron strings carry over verbatim) |
 | Service Bus queues (12) | **Hangfire jobs** on Redis (durable, retried, dashboard) |
 | Service Bus runtime semantics | Per-queue Hangfire servers (see [Semantics mapping](#semantics-mapping)) |
@@ -85,8 +85,7 @@ Licensing note: Hangfire core is LGPL (fine for personal/self-hosted);
               Tailscale Funnel (decided 2026-11-16)
                         │
         ┌───────────────┴───────────────┐
-        │  api           (ASP.NET Core, Kestrel)  ← replaces Functions API
-        │  backend-api  (ASP.NET Core, Kestrel)  ← replaces Functions Backend HTTP
+        │  api           (ASP.NET Core, Kestrel)  ← API + Backend HTTP functions
         │  worker-schedule (Generic Host: Hangfire server, recurring jobs)
         │  worker-heavy    (Generic Host: Hangfire servers + Cosmos
         │                   ChangeFeedProcessors)        ← replaces Functions triggers
@@ -148,8 +147,8 @@ containers with the Azure-side triggers (`Shared/MIGRATION_PLAN_SELF_HOSTED.md:6
 
 - `api`: 59 endpoint classes under `API/Endpoints/` — route-identical
   conversion to minimal APIs.
-- `backend-api`: 14 functions (webhook, token refresh, admin, backfill —
-  `deploy/docker-compose.yml:77-90`), including the **Strava webhook** whose
+- Backend HTTP: 14 functions (webhook, token refresh, admin, backfill) now
+  hosted in the merged `api` container, including the **Strava webhook** whose
   public URL must not change semantics.
 - SignalR negotiate: `ConnectSignalR` (`API/Endpoints/ConnectSignalR.cs:14-15`,
   hub `peakshunters`, user from `{headers.session}`).
@@ -297,9 +296,9 @@ containers: the Azure triggers resume from their own leases.
 
 ### P1b — HTTP becomes ASP.NET Core; production traffic enters the home server
 
-1. Convert `api` (59 endpoints) and `backend-api` (14) to ASP.NET Core minimal
-   APIs — route-identical (`Route = "x"` → `MapGet/MapPost("x", …)`); DI from
-   `API/Program.cs:22-191` transfers nearly verbatim.
+1. Convert `api` (59 endpoints) and the 14 Backend HTTP functions to ASP.NET
+   Core minimal APIs in one merged host — route-identical; the Backend-only
+   services are registered in `API/Program.cs`.
 2. `ConnectSignalR` → standard negotiate endpoint via
    `AddSignalR().AddAzureSignalR()` (Azure SignalR stays; Trailscope's flow
    unchanged if the response shape is kept).
