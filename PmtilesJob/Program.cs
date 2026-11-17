@@ -55,7 +55,14 @@ var builder = Host.CreateDefaultBuilder(args)
         if (command.Command == PmtilesCommandKind.ScheduleRaceTiles)
         {
             QueueTransport.AddHangfireStorage(services, configuration);
-            services.AddHangfireServer(options => options.WorkerCount = 1);
+            // This host only has the pmtiles build service registered. Keep it on
+            // its own queue so it never activates backend QueueJobDispatcher jobs
+            // (which need the backend FunctionWorkerRegistry) from the shared store.
+            services.AddHangfireServer(options =>
+            {
+                options.WorkerCount = 1;
+                options.Queues = ["pmtiles"];
+            });
             services.AddSingleton<IRaceTilesSchedulerJob, RaceTilesSchedulerJob>();
             services.AddSingleton<IHostedService, RaceTilesRecurringJobRegistrationService>();
         }

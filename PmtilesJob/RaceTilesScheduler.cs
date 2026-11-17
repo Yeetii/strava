@@ -58,7 +58,7 @@ public sealed class RaceTilesRecurringJobRegistrationService(
             "race-pmtiles-weekly",
             job => job.RunAsync(),
             cron,
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+            new RecurringJobOptions { QueueName = "pmtiles", TimeZone = TimeZoneInfo.Utc });
         logger.LogInformation("Registered weekly race PMTiles build with cron {Cron}.", cron);
         return Task.CompletedTask;
     }

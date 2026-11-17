@@ -25,6 +25,8 @@ public static class FunctionInvoker
         {
             if (p.ParameterType == typeof(QueueMessage[]))
                 return messages ?? [];
+            if (p.ParameterType == typeof(QueueMessage))
+                return messages is { Length: > 0 } ? messages[0] : new QueueMessage();
             if (p.ParameterType == typeof(QueueMessageActions))
                 return actions ?? new QueueMessageActions();
             if (p.ParameterType == typeof(CancellationToken))
