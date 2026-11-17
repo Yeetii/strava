@@ -35,7 +35,7 @@ var builder = Host.CreateDefaultBuilder(args)
             or PmtilesCommandKind.ScheduleRaceTiles)
         {
             services.AddOrganizerStore(configuration);
-            services.AddSharedRedisGeocodingCache(configuration);
+            services.AddSharedGeocodingCache(configuration);
             services.AddHttpClient<ILocationGeocodingService, NominatimLocationGeocodingService>(
                 client =>
                 {

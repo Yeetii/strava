@@ -1,128 +1,126 @@
 # Self-hosted backend deployment
 
-This directory contains the Phase 1/2 implementation of
-[`Shared/MIGRATION_PLAN_SELF_HOSTED.md`](../Shared/MIGRATION_PLAN_SELF_HOSTED.md):
-the existing backend now runs in Docker on a self-hosted server while the Azure
-Function Apps remain deployed and unchanged. The stack is internal-only: no
-ports are published and it is reachable only from the home network, over an
-SSH tunnel, or through a Tailscale tailnet (which is also how GitHub Actions
-deploys reach it).
+This directory contains the self-hosted implementation of the migration. The
+canonical strategy is the OpenChamber plan `1794838390741-self-hosted-migration-plan.md`;
+the in-repo summary is [`Shared/MIGRATION_PLAN_SELF_HOSTED.md`](../Shared/MIGRATION_PLAN_SELF_HOSTED.md).
+The Functions/Service Bus exit is specified in detail in
+[`specs/functions-runtime-exit.md`](../specs/functions-runtime-exit.md).
+Step-by-step operator instructions are in [DEPLOY.md](DEPLOY.md).
 
 ## What this phase does and does not do
 
 **Does**
 
-- Runs the existing `API` and `Backend` projects in the official .NET 10 Azure
-  Functions isolated-worker container image. No backend code is forked.
-- Splits the Backend into separate API, scheduled, and heavy-worker containers
-  using function-level selection, so heavy queue processing cannot starve HTTP
-  traffic.
-- Deploys them with Docker Compose as an internal-only stack: no ports are
-  published, everything stays on a private Docker network.
-- Runs a dedicated `pmtiles` container with tippecanoe compiled in. It builds
-  the weekly race-tile archive from organizer data on a shared host directory;
-  the API serves the result at `/tiles/trails.pmtiles`. No Azure config needed.
-- Provides a GitHub Actions deployment workflow and repeatable host
-  provisioning (bootstrap script and Ansible playbook).
+- Runs `API` and `Backend` as **plain .NET 10 hosts** — ASP.NET Core (Kestrel)
+  for HTTP, Generic Hosts for workers. The Azure Functions runtime and
+  `host.json` are gone; there is no forked backend codebase.
+- Serves all API and Backend HTTP endpoints from a single `api` container;
+  worker roles are split by `WORKER_ROLE` (`schedule`, `heavy`), not by
+  per-function whitelists.
+- Runs 12 queues and 12 weekly crons as **Hangfire jobs on Redis**, plus 3
+  Cosmos change feeds in-process via the SDK `ChangeFeedProcessor`. Service Bus
+  is no longer used.
+- Uses **durable Redis** (AOF + `noeviction`) as Hangfire storage.
+- Builds race tiles in a dedicated `pmtiles` container from organizer data on a
+  shared host directory; the API serves `/tiles/trails.pmtiles`. No Azure config
+  is needed for that container.
+- Exposes the API publicly through **Tailscale Funnel** over a `*.ts.net` URL —
+  no port-forwarding, no DNS record, no Caddy/TLS stack we maintain.
+- Provides a GitHub Actions deploy workflow and repeatable host provisioning
+  (bootstrap script and Ansible playbook), plus a role-coverage CI gate.
 
 **Does not do yet**
 
-- Cosmos DB is **not** moved. It remains the source of truth.
-- Azure Service Bus is **not** moved. Workers still consume the existing queues.
-- PostgreSQL is **not** deployed. That is deliberately deferred to Phase 5.
-- Redis is **not** deployed. It is deferred until the Phase 4 caching work
-  actually needs it.
-- There are no automated host backups yet (the backup script was removed for
-  now). Cosmos DB and Azure Storage still have their own platform backups.
+- Cosmos DB, Blob Storage and Azure SignalR remain on Azure.
+- PostgreSQL is not deployed — that is Phase 5 of the migration plan.
+- Redis is Hangfire storage and the shared geocoding cache; **general read caching
+  is not wired yet** (only geocoding uses `RedisGeocodingCache`, in both `Backend`
+  and `PmtilesJob`).
+- There is **no automated host backup job in this repo** (`backups/` is
+  gitignored for a future one). Cosmos DB and Azure Storage keep their platform
+  backups. Adding a host backup job belongs with the Postgres work.
 
 ## Architecture
 
 ```
-          Home network / Tailscale tailnet
-                     |
-              +------v-------+
-              | Docker network|
-              |   (backend)   |
-              +--+---------+--+
-                 |         |
-        +--------v----------------+
-        |           api          |
-        | (API + Backend HTTP:   |
-        |  endpoints, webhook,   |
-        |  token refresh, admin) |
-        +------------------------+
-
-  worker-schedule   timer jobs - profile "schedules" (off by default)
-  worker-heavy      Service Bus + Cosmos change feed - profile "workers"
-                    (off by default)
-  pmtiles           weekly race-tile build; shares the host race-data directory with api
-                     |
-                     v
-      Azure Service Bus + Cosmos DB + Blob Storage
-      (still the production backing services)
+     internet
+        │
+  Tailscale Funnel (TLS terminates on our node)
+        │  https://<machine>.<tailnet>.ts.net
+        ▼
+  ┌──────────────────────── Docker network (backend) ────────────────────────┐
+  │  api          Kestrel: all API + Backend HTTP routes, SignalR negotiate, │
+  │               /tiles/trails.pmtiles   (publishes 127.0.0.1:8080:80)      │
+  │  redis        durable Hangfire storage (AOF, noeviction)                 │
+  │                                                                          │
+  │  worker-schedule  12 Hangfire recurring jobs   — profile "schedules"     │
+  │  worker-heavy     Hangfire queue servers + 3 change feeds — "workers"    │
+  │  pmtiles          weekly race-tile build (Hangfire scheduler)            │
+  └──────────────────────────────────────────────────────────────────────────┘
+        │ outbound only
+        ▼
+  Cosmos DB · Blob Storage · Azure SignalR
+  (production backing services; Service Bus and Functions are gone)
 ```
 
-The `worker-schedule` and `worker-heavy` containers are behind Compose profiles
-and are **off by default**. This lets the self-hosted API be verified without
-stealing Service Bus messages or double-running timer jobs from Azure.
+`worker-schedule` and `worker-heavy` are behind Compose profiles and **off by
+default**, so the API can be verified without double-running timers or
+stealing work from Azure.
 
 ## Migration switches
 
 | Switch | Scope | Effect |
 | --- | --- | --- |
-| `COMPOSE_PROFILES` | Compose | `workers` enables queue/change-feed workers; `schedules` enables timer jobs |
+| `COMPOSE_PROFILES` | Compose | `workers` enables queue/change-feed roles; `schedules` enables recurring jobs |
 | `WORKER_ROLE` | Container | Selects the plain-host role: `api`, `schedule` or `heavy` |
-| `REDIS_CONNECTION_STRING` | Container | Hangfire storage (durable Redis: AOF + `noeviction`) |
+| `REDIS_CONNECTION_STRING` | Container | Durable Hangfire storage (AOF + `noeviction`) |
+| `OrganizerStore__Provider` | Container | `FileSystem` (default here) or `Blob` |
+| `RACE_DATA_DIR` | Compose | Host race-data directory, default `/opt/data/strava/races`, mounted at `/data/races` |
 
-Trigger discovery is automatic: a queue message becomes a Hangfire job executed
-by the `heavy` role, a Cosmos trigger becomes an in-process change-feed
-processor, and a timer becomes a Hangfire recurring job in the `schedule` role.
-No per-function whitelist exists any more.
+There is no per-function whitelist. Queues, feeds and timers are discovered by
+the plain hosts (`Shared.Hosting`) and assigned to a role by `WORKER_ROLE`.
 
 ## Container / role split
 
 | Container | Project | Role | Work |
 | --- | --- | --- | --- |
-| `api` | `API` + `Backend` | `api` | All API endpoints plus Backend HTTP functions (webhook, token refresh, admin, backfill) on Kestrel |
+| `api` | `API` + `Backend` | `api` | All API endpoints plus Backend HTTP routes (webhook, token refresh, admin, backfill) on Kestrel |
 | `worker-schedule` | `Backend` | `schedule` | 12 Hangfire recurring jobs |
-| `worker-heavy` | `Backend` | `heavy` | 12 queue consumers + 3 Cosmos change-feed processors |
+| `worker-heavy` | `Backend` | `heavy` | 12 Hangfire queue consumers + 3 Cosmos change-feed processors |
 | `redis` | — | — | Durable Hangfire storage |
 | `pmtiles` | `PmtilesJob` | — | Weekly race-tile build (Hangfire scheduler) |
-| `api` (also) | — | — | Serves `/tiles/trails.pmtiles` from the shared host directory |
 
-`scripts/verify-role-coverage.sh` fails CI if the trigger inventory no longer
-matches the plan (12 queues / 3 feeds / 12 crons) or if legacy function-list
-env vars reappear.
+`deploy/scripts/verify-role-coverage.sh` fails CI if the trigger inventory no
+longer matches (12 queues / 3 feeds / 12 crons) or if legacy function-list env
+vars reappear.
 
 ### Race tiles
 
 The `pmtiles` image has tippecanoe compiled in and needs **no Azure connection
-strings**: organizer JSON and route GPX are read from the host directory
-`RACE_DATA_DIR` (`/opt/data/strava/races`, mounted at `/data/races`), and the built archive is written to
-`/data/races/tiles/trails.pmtiles`. The `api` container mounts the same directory
-(writable, for admin organizer updates) and serves the archive publicly with
-HTTP range support. `worker-schedule` and `worker-heavy` mount it too and also
-use the FileSystem store, so discoveries, scrapes and the weekly build all see
-the same data.
+strings**: organizer JSON and route GPX come from `RACE_DATA_DIR`
+(`/opt/data/strava/races`, mounted at `/data/races`), and the archive is written
+to `/data/races/tiles/trails.pmtiles`. The `api`, `worker-schedule` and
+`worker-heavy` containers mount the same directory and use the FileSystem store,
+so discoveries, scrapes and the weekly build see identical data. The API serves
+the archive with HTTP range support.
 
 ```bash
-# force a one-shot build (the container's default is the weekly scheduler)
+# one-shot build (the container's default is the weekly scheduler)
 docker compose run --rm pmtiles build-race-tiles-from-organizers
 ```
 
-One-time rollout seeds the host directory from Blob; see the seeding steps in [DEPLOY.md](DEPLOY.md).
-Tune the container with `PMTILES_MEMORY_LIMIT` and `PMTILES_CPUS` in `.env`.
+One-time rollout seeds the host directory from Blob; see DEPLOY.md. Tune with
+`PMTILES_MEMORY_LIMIT` and `PMTILES_CPUS` in `.env`.
 
 ## First-time setup
 
 ### 1. Network access to Azure
 
-The stack is internal-only: no DNS records, domains, or open inbound ports are
-needed. The server must be able to reach the existing Cosmos DB account, Service Bus
-namespace, Storage account, and SignalR service, plus Strava, Mistral, and
-Overpass. If those Azure resources use IP firewalls or private endpoints, allow
-the server's egress IP. `CosmosConnectionMode=Gateway` is the default because it
-tolerates container networking better than Direct mode.
+The stack connects outbound only. The server must reach Cosmos DB, Blob,
+Tables and Azure SignalR, plus Strava, Mistral and Overpass. If those resources
+use IP firewalls or private endpoints, allow the server's egress IP.
+`CosmosConnectionMode=Gateway` is the default because it tolerates container
+networking better than Direct mode.
 
 ### 2. Provision the server
 
@@ -136,39 +134,28 @@ cd /opt/repos/strava
 sudo ./deploy/scripts/bootstrap-server.sh
 ```
 
-The bootstrap copies the deployment files from `deploy/` (Docker Compose and
-scripts) to `/opt/stacks/strava` and generates `.env` from the example. The
-repository stays in `/opt/repos/strava`;
-`/opt/stacks/strava` is the stack's runtime directory that GitHub Actions
-keeps in sync on every deploy.
+The bootstrap copies `deploy/` to `/opt/stacks/strava` and generates `.env` from
+`.env.example`. The repository stays in `/opt/repos/strava`;
+`/opt/stacks/strava` is the runtime directory GitHub Actions keeps in sync.
 
-Ansible users can do the same with:
-
-```bash
-cd deploy/ansible
-ansible-galaxy collection install -r requirements.yml
-cp inventory.example.ini inventory.ini   # edit it
-ansible-playbook -i inventory.ini playbook.yml
-```
-
-The Ansible playbook uploads `deploy/.env`, so create it on the controller first.
+Ansible users can install the base packages and firewall rules with
+`deploy/ansible/playbook.yml` (see `deploy/ansible/inventory.example.ini`); it
+uploads `deploy/.env`, so create that on the controller first.
 
 ### 3. Fill in `.env`
 
 Edit `/opt/stacks/strava/.env` (or `deploy/.env` before Ansible) and replace all
 `REPLACE` values:
 
-- `IMAGE_NAMESPACE`: lowercase GitHub owner that publishes the GHCR packages.
-- `CosmosDBConnection`, `AzureWebJobsStorage`,
-  `BlobStorageConnection`, `AzureSignalRConnectionString`.
+- `IMAGE_NAMESPACE`: lowercase GitHub owner publishing the GHCR packages.
+- `CosmosDBConnection`, `BlobStorageConnection`, `AzureSignalRConnectionString`.
 - `StravaClientSecret`, `stravaVerifyToken`, Mistral settings.
-- `AdminApiKey`: generated by the bootstrap script; change it if desired.
+- `AdminApiKey`: generated by `init-env.sh` during bootstrap; change it if desired.
 
-`CosmosAccountResourceId` can stay empty. Live RU/s reporting then falls back to
-“unavailable” because the host has no Azure identity. Set it only if you also
-provide Azure credentials to the containers.
-
-Keep `COMPOSE_PROFILES=` empty for the first deployment.
+`CosmosAccountResourceId` can stay empty — live RU reporting then falls back to
+"unavailable" because the host has no Azure identity. `REDIS_CONNECTION_STRING`
+defaults to `redis:6379,abortConnect=false` and only needs changing for an
+external Redis. Keep `COMPOSE_PROFILES=` empty for the first deployment.
 
 ### 4. Allow the server to pull private images
 
@@ -179,32 +166,31 @@ personal access token:
 docker login ghcr.io -u <github-user>
 ```
 
-Alternatively make the two packages public in GitHub package settings.
-
 ### 5. Start the stack
 
 ```bash
 cd /opt/stacks/strava
 docker compose up -d --wait
 docker compose ps
-```
-
-At this point:
-
-- `api` serves all HTTP functions on the internal Docker network, reachable
-  from the home network or through an SSH tunnel.
-- No workers are consuming Azure Service Bus queues or running timers.
-
-Run the smoke test:
-
-```bash
 ./scripts/smoke-test.sh
 ```
 
+At this point `api` serves all HTTP routes on the internal network; no workers
+are running timers or consuming queues.
+
+### 6. Expose the API publicly
+
+Tailscale Funnel forwards 443 on the node to the API's loopback port. Tailnet
+preparation (MagicDNS, HTTPS certificates, the `funnel` node attribute) is in
+[`docs/tailscale-funnel-runbook.md`](../docs/tailscale-funnel-runbook.md).
+The public URL becomes `https://<machine>.<tailnet>.ts.net`; remember to update
+the Strava webhook callback and any MCP/Trailscope API base URLs when cutting
+clients over.
+
 ### Local build (optional)
 
-The production compose file only pulls images. To build and run the containers
-locally while still using the Azure backing services:
+The production compose file only pulls images. To build locally while still
+using the Azure backing services:
 
 ```bash
 cd deploy
@@ -216,137 +202,112 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml \
 
 ## GitHub Actions automatic deploy
 
-`.github/workflows/selfhosted-deploy.yml` verifies every Backend function is
-assigned to a container, builds the `api`, `backend` and `pmtiles` images,
+`.github/workflows/selfhosted-deploy.yml` runs `verify-role-coverage.sh`, builds
+the `api`, `backend` and `pmtiles` images from the plain-host Dockerfiles,
 pushes them to GHCR tagged with the commit SHA and `latest`, connects the runner
 to the tailnet as an ephemeral `tag:ci` node, syncs `deploy/` to the server over
-Tailscale SSH
-(without touching `.env`), then pulls and restarts the stack.
+Tailscale SSH (excluding `.env`, `backups/` and the Ansible inventory), then
+pulls and restarts the stack.
 
-Tailscale SSH authenticates the deploy connections, so no SSH keys are stored
-in GitHub. The server must be enrolled as a tagged node with Tailscale SSH
-enabled, and the tailnet policy must allow `tag:ci → tag:server` — see
-[DEPLOY.md](DEPLOY.md) for the full Tailscale setup.
+Tailscale SSH authenticates the deploy connections — no SSH keys are stored in
+GitHub. The server must be enrolled as a tagged node with Tailscale SSH enabled,
+and the tailnet policy must allow `tag:ci → tag:server`.
 
 Configure a GitHub Environment named `self-hosted` with these secrets:
 
 | Secret | Meaning |
 | --- | --- |
 | `SELFHOSTED_HOST` | Server's Tailscale IP (100.x.y.z) or MagicDNS name |
-| `SELFHOSTED_USER` | SSH user with access to Docker; use the same user passed as `DEPLOY_USER` during bootstrap, and list it in the tailnet `ssh` rule `users` |
+| `SELFHOSTED_USER` | SSH user with access to Docker; list it in the tailnet `ssh` rule `users` |
 | `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client ID (writable `auth_keys` scope, tag `tag:ci`) |
 | `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
 
-The deployment script (`/opt/stacks/strava/scripts/deploy.sh`) pulls the new
-image tag, writes it to `.env`, waits for health checks, and automatically rolls
-back to the previous tag if startup fails.
-
-Manual rollback:
+The deployment script (`/opt/stacks/strava/scripts/deploy.sh`) writes the new
+image tag to `.env`, waits for health checks, and rolls back to the previous tag
+if startup fails.
 
 ```bash
+# manual rollback / redeploy of an existing tag
 /opt/stacks/strava/scripts/deploy.sh <previous-commit-sha>
 ```
 
-Manual deploy of an existing tag:
-
-```bash
-cd /opt/stacks/strava
-./scripts/deploy.sh <tag>
-```
-
-The official Functions runtime image is currently `linux/amd64` only, so the
-workflow builds amd64 images and the Compose services are pinned to
-`linux/amd64`. On an ARM server Docker will run them through emulation.
+The workflow builds `linux/amd64` images for consistency with the server
+architecture. On an ARM host Docker runs them through emulation.
 
 ## Rollout order
 
-### Step 1 - verify the self-hosted API in parallel
+### Step 1 — verify the self-hosted API in parallel
 
-Leave `COMPOSE_PROFILES=` empty. Test the self-hosted API from the home
-network or through an SSH tunnel. Cosmos and Service Bus are shared
-with Azure, and no queues are consumed by the new stack.
+Leave `COMPOSE_PROFILES=` empty. Test the self-hosted API from the home network
+or through an SSH tunnel. The Azure API Function App keeps serving external
+traffic (including the Strava webhook) until clients are pointed at the Funnel
+URL.
 
-The Azure Function Apps keep serving all external traffic (including the
-Strava webhook) until you deliberately move clients over.
+### Step 2 — move the workers
 
-### Step 2 - move the heavy workers
+There are no competing consumers now: Service Bus is gone and Hangfire storage
+is on the home Redis, which Azure Functions cannot reach. To take over work:
 
-First decide how you want to split Service Bus traffic:
-
-- **Competing consumers (recommended for validation):** leave the Azure Backend
-  app running and set `COMPOSE_PROFILES=workers`. Both the Azure functions and
-  `worker-heavy` consume from the same queues; Service Bus delivers each message
-  to only one of them. This validates throughput without a hard cutover.
-- **Self-hosted only:** disable the corresponding worker functions in the Azure
-  Backend app (or stop the app), then set `COMPOSE_PROFILES=workers`.
+1. Disable the matching worker functions in the Azure Backend app (or stop the
+   app) so nothing produces duplicate side effects.
+2. Set `COMPOSE_PROFILES=workers` and `docker compose up -d --wait`.
 
 ```bash
 # edit /opt/stacks/strava/.env
 COMPOSE_PROFILES=workers
-
-cd /opt/stacks/strava
-docker compose up -d --wait
+cd /opt/stacks/strava && docker compose up -d --wait
 ```
 
-The Cosmos change-feed triggers (`QueueActivityJobs`,
-`OsmFeaturesChangeTrigger`, `NewSummitedPeak`) use the same lease containers as
-Azure. They coordinate through leases, so leave both running only if you are
-comfortable with lease hand-off during container restarts.
+The 3 Cosmos change feeds still share lease containers with Azure. Leave both
+sides running only while you accept lease hand-off on restarts; otherwise
+disable the Azure-side triggers before taking 100% of a feed. See the
+change-feed cutover recipe in `specs/functions-runtime-exit.md`.
 
-### Step 3 - move the scheduled jobs
+### Step 3 — move the scheduled jobs
 
-Timer functions are not competing consumers: if both Azure and the self-hosted
-worker run, each schedule fires twice. Disable the matching timer functions in
-Azure **before** enabling the profile:
+Timers are not competing consumers: if both Azure and the self-hosted worker
+run, each cron fires twice. Disable the matching timer functions in Azure
+**before** enabling the profile:
 
 ```bash
 COMPOSE_PROFILES=workers,schedules
 ```
 
-### Step 4 - later phases
+### Step 4 — later phases
 
-- Phase 4: add Redis and wire caching and queue/backpressure changes into
-  `Shared`.
-- Phase 5: add Postgres only when read offloading is ready to be implemented.
-- Phase 6+: dual-write and final Cosmos cutover.
+- Phase 4: wire the remaining Redis caching (Backend geocoding cache → Redis,
+  cache-aside on hot reads, precomputed read models).
+- Phase 5: add Postgres when read offloading is implemented, together with a
+  host backup job and a tested restore.
+- Phase 6+: dual-write and the final Cosmos cutover.
 
 ## Configuration notes
 
-- Connection strings and secrets are read from `/opt/stacks/strava/.env` via
-  Compose `env_file`. They are never baked into images.
-- `WORKER_ROLE` selects which plain-host role each container runs
-  loads. The `api` container intentionally loads all API functions.
-- `AzureFunctionsWebHost__hostid` is unique per container so the Functions host
-  does not collide on timer/listener locks when sharing the Azure storage
-  account with the Azure Function Apps.
-- The stack is internal-only. Use an SSH tunnel if you need host-level
-  diagnostics or the Functions administration API (`/admin/*`).
-- `AuthorizationLevel.Function` endpoints still require a Functions key. By
-  default the key store lives in the configured `AzureWebJobsStorage` account
-  under the self-hosted host ID. Retrieve or manage keys through the Functions
-  admin API over an SSH tunnel, or switch `AzureWebJobsSecretStorageType` to
-  `files` and persist the key directory if you prefer local key storage.
+- Connection strings and secrets come from `/opt/stacks/strava/.env` via Compose
+  `env_file`; they are never baked into images.
+- `WORKER_ROLE` selects which plain-host role a container runs. The `api`
+  container serves both API and Backend HTTP routes.
+- `REDIS_CONNECTION_STRING` points at durable Hangfire storage. Do not switch it
+  to a cache-style eviction policy — queued job state must never be evicted.
+- The stack is internal except for the Funnel front door. Use an SSH tunnel for
+  host-level diagnostics.
 
 ## Monitoring
 
-- Host and container metrics are covered by Beszel (deployed separately on
-  the server).
+- Host and container metrics: Beszel (deployed separately on the server).
 - Logs: `docker compose logs -f --tail=200`, with json-file rotation at
-  20 MB x 5 per container.
-
-Azure-side metrics (Cosmos RU usage, Function executions) are not collected.
-Use the Azure portal or Azure Monitor while the migration is in the parallel
-phase.
+  20 MB × 5 per container.
+- Cosmos RU usage: Azure portal / Azure Monitor until the migration baseline is
+  captured. Hangfire queue depth and retry/failure counts are the replacement
+  for the old Service Bus metrics.
 
 ## Security checklist
 
 - SSH key authentication only; disable password login in `sshd_config`.
-- No ports need to be reachable from outside the home network: GitHub Actions
-  deploys go through the Tailscale tailnet from an ephemeral `tag:ci` node,
-  authenticated by Tailscale SSH rather than SSH keys.
-- No container publishes host ports; everything stays on the internal Docker
-  network.
-- `/admin/*` is reachable only from the internal network (use an SSH tunnel).
+- GitHub Actions deploys go through the Tailscale tailnet from an ephemeral
+  `tag:ci` node, authenticated by Tailscale SSH rather than SSH keys.
+- Only `127.0.0.1:8080` is published to the host; the public path is Tailscale
+  Funnel. No other container publishes host ports.
 - Keep `.env` at mode 600 and out of git.
 - Protect the `self-hosted` GitHub Environment with required reviewers if you
   want manual approval before production deploys.

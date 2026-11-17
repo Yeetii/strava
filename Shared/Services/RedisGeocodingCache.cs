@@ -53,7 +53,7 @@ public sealed class RedisGeocodingCache(
         }
 
         var nowUtc = _timeProvider.GetUtcNow();
-        if (TableGeocodingCache.IsExpired(cached.CachedAtUtc, nowUtc, _timeToLive))
+        if (GeocodingCacheExpiry.IsExpired(cached.CachedAtUtc, nowUtc, _timeToLive))
         {
             _logger.LogInformation(
                 "Geocoding shared cache entry expired; refreshing from Nominatim for location '{Location}' country '{CountryCode}'",

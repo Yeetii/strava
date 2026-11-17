@@ -4,7 +4,6 @@
   "MistralStudioApiUrl": "https://api.mistral.ai/v1/conversations",
   "OverpassMaxConcurrency": "1",
   "GeocodingCache": {
-    "TableName": "GeocodingCache",
     "TimeToLiveDays": 90
   }
 }

@@ -100,61 +100,28 @@ The Nominatim service then becomes:
 
 ---
 
-## Storage Recommendation
+## Storage
 
-Use Azure Blob Storage or Azure Table Storage as the shared cache store.
+The shared cache lives in Redis (`RedisGeocodingCache`), the same durable Redis
+instance used for Hangfire. `Backend` and `PmtilesJob` share one registration and
+one implementation through `IGeocodingCache` / `AddSharedGeocodingCache`.
 
-### Option A: Blob-backed cache
+Layout:
 
-Suggested layout:
-
-```
-Container: geocoding-cache
-
-by-key/{sha256(location|country)}.json
-```
-
-Blob payload:
-
-```json
-{
-  "location": "Sater, Dalarna",
-  "countryCode": "SE",
-  "hasCoordinates": true,
-  "latitude": 60.35,
-  "longitude": 15.75,
-  "cachedAtUtc": "2026-07-09T12:34:56.0000000Z"
-}
-```
+- key: `geocache:` + normalized `location|country` (Unicode-normalized, whitespace-collapsed, lowercase)
+- value: compact JSON `{ Latitude, Longitude, CachedAtUtc }`
+- TTL: `GeocodingCache:TimeToLiveDays`, default 90 days
 
 Pros:
 
-- already uses blob storage elsewhere in the repo
-- easy to inspect manually
-- trivial DI wiring in both `Backend` and `PmtilesJob`
+- one key-value round trip with a built-in TTL; no separate cleanup job
+- Redis is already deployed with AOF persistence and `noeviction`
+- negative results (no coordinates) are cached too, so bad queries stop hitting Nominatim
 
 Cons:
 
-- one blob read per cache lookup unless a small local memory cache is kept on top
-
-### Option B: Table-backed cache
-
-Suggested key:
-
-- partition key: first 2-3 chars of hash or country code
-- row key: `sha256(location|country)`
-
-Pros:
-
-- better fit for key-value lookups at scale
-- lower per-entry overhead than many blobs
-
-Cons:
-
-- slightly more moving parts than blobs
-- less aligned with current organizer storage patterns
-
-Recommendation: start with blob-backed cache unless lookup volume grows enough to justify Table Storage.
+- an entry lives only as long as Redis does; losing the cache costs extra geocoding, never data
+- StackExchange.Redis async commands do not accept a `CancellationToken`, so the caller's token cannot be forwarded
 
 ---
 
@@ -260,7 +227,7 @@ This is needed to verify that the shared cache is actually removing pressure fro
 
 ## Rollout Plan
 
-1. Add `IGeocodingCache` and blob-backed implementation
+1. Add `IGeocodingCache` and the Redis-backed implementation
 2. Wire it into `NominatimLocationGeocodingService`
 3. Keep existing in-memory cache as first-level cache
 4. Add hit/miss logging

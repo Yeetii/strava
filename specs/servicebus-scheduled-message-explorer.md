@@ -1,5 +1,9 @@
 # Service Bus Scheduled Message Explorer - Product Spec
 
+> **Historical spec.** Azure Service Bus has since been retired and all queues
+> run through Hangfire on Redis (`odd/tasks/remove-service-bus.md`). The storage
+> options below, including Azure Table Storage, were never implemented.
+
 ## Problem
 
 Azure Service Bus does not provide a broker API to enumerate scheduled messages with their scheduled enqueue timestamps. Runtime properties expose only counts.
