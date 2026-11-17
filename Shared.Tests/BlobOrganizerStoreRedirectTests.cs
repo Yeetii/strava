@@ -170,16 +170,16 @@ public class BlobOrganizerStoreRedirectTests
 
         SeedOrganizer(blobs, "stable.example", "https://stable.example/", "2026-04-01T00:00:00Z");
 
-        var firstPass = new List<BlobOrganizerStore.OrganizerDocumentStreamItem>();
+        var firstPass = new List<OrganizerDocumentStreamItem>();
         await foreach (var item in store.StreamAllWithSourceAsync())
             firstPass.Add(item);
 
-        var secondPass = new List<BlobOrganizerStore.OrganizerDocumentStreamItem>();
+        var secondPass = new List<OrganizerDocumentStreamItem>();
         await foreach (var item in store.StreamAllWithSourceAsync())
             secondPass.Add(item);
 
-        Assert.Equal(BlobOrganizerStore.OrganizerDocumentSource.Blob, Assert.Single(firstPass).Source);
-        Assert.Equal(BlobOrganizerStore.OrganizerDocumentSource.Cache, Assert.Single(secondPass).Source);
+        Assert.Equal(OrganizerDocumentSource.Blob, Assert.Single(firstPass).Source);
+        Assert.Equal(OrganizerDocumentSource.Cache, Assert.Single(secondPass).Source);
     }
 
     [Fact]
