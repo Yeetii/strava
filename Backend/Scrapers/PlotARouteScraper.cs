@@ -16,12 +16,22 @@ internal sealed partial class PlotARouteScraper(ILogger logger)
     [GeneratedRegex(@"(?:https?://(?:www\.)?plotaroute\.com)?/route/(?<id>\d+)(?:\b|/|\?)", RegexOptions.IgnoreCase)]
     private static partial Regex PlotARouteRouteRegex();
 
+    private int _cloudflareChallengeLogged;
+
+    // PlotARoute route IDs are positive integers. Zero is a common placeholder in
+    // organizer HTML (e.g. JS templates) and must never be fetched.
+    private static bool IsValidRouteId(string routeId) => long.TryParse(routeId, out var id) && id > 0;
+
+    private static bool IsCloudflareChallenge(HttpResponseMessage response) =>
+        response.Headers.TryGetValues("cf-mitigated", out var values) &&
+        values.Any(value => value.Contains("challenge", StringComparison.OrdinalIgnoreCase));
+
     public static IReadOnlyList<string> ExtractRouteIds(string html)
     {
         return [.. PlotARouteRouteRegex()
             .Matches(html)
             .Select(match => match.Groups["id"].Value)
-            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Where(IsValidRouteId)
             .Distinct(StringComparer.OrdinalIgnoreCase)];
     }
 
@@ -33,7 +43,7 @@ internal sealed partial class PlotARouteScraper(ILogger logger)
             return false;
 
         routeId = match.Groups["id"].Value;
-        return routeId.Length > 0;
+        return IsValidRouteId(routeId);
     }
 
     public async Task<ScrapedRoute?> ScrapeRouteAsync(
@@ -42,6 +52,9 @@ internal sealed partial class PlotARouteScraper(ILogger logger)
         HttpClient httpClient,
         CancellationToken cancellationToken)
     {
+        if (!IsValidRouteId(routeId))
+            return null;
+
         var url = new Uri($"https://www.plotaroute.com/get_route.asp?RouteID={routeId}");
         PlotARouteRouteJson? data;
 
@@ -52,6 +65,18 @@ internal sealed partial class PlotARouteScraper(ILogger logger)
                 request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Peakshunters/1.0)");
 
             using var response = await httpClient.SendAsync(request, cancellationToken);
+
+            // PlotARoute sits behind a Cloudflare managed JavaScript challenge that
+            // a plain HttpClient cannot solve. The whole domain returns 403 to
+            // automated clients, so treat it as an unavailable source rather than
+            // logging a warning per route. Log once at debug level and degrade.
+            if (IsCloudflareChallenge(response))
+            {
+                if (Interlocked.Exchange(ref _cloudflareChallengeLogged, 1) == 0)
+                    logger.LogDebug("PlotARoute: blocked by Cloudflare challenge; skipping PlotARoute routes");
+                return null;
+            }
+
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             data = await JsonSerializer.DeserializeAsync<PlotARouteRouteJson>(stream, cancellationToken: cancellationToken);

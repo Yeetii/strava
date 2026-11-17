@@ -268,6 +268,38 @@ public class BfsScraperTests
     }
 
     [Fact]
+    public async Task PlotARouteZeroPlaceholder_DoesNotFetchRoute()
+    {
+        // Some organizer pages contain a JS/template placeholder link to /route/0.
+        // It must be ignored rather than fetched from get_route.asp.
+        var racePage = """
+            <html><body>
+              <a href="https://www.plotaroute.com/route/0">placeholder</a>
+              <a href="map.gpx">Download GPX</a>
+            </body></html>
+            """;
+
+        var handler = new FuncHandler(uri =>
+        {
+            if (uri.Host == "www.plotaroute.com" && uri.AbsolutePath == "/get_route.asp" && uri.Query.Contains("RouteID=0"))
+                throw new InvalidOperationException("RouteID=0 placeholder must not be fetched");
+
+            if (uri.Host == "race.com")
+                return HtmlResponse(racePage);
+
+            throw new InvalidOperationException($"Unexpected request for {uri}");
+        });
+
+        var scraper = new BfsScraper(Mock.Of<ILogger>());
+        var result = await scraper.ScrapeAsync(
+            [new Uri("https://race.com/page")],
+            new HttpClient(handler),
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+    }
+
+    [Fact]
     public async Task GarminConnectActivityLink_FallsBackToCourseMetadata_WhenExportReturnsHtml()
     {
         const string activityId = "13247673776";
