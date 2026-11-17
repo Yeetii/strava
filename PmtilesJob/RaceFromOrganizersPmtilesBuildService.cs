@@ -1,7 +1,6 @@
 using System.Diagnostics;
-using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Models;
 using BAMCIS.GeoJSON;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
@@ -12,18 +11,16 @@ using System.Text.Json;
 namespace PmtilesJob;
 
 /// <summary>
-/// Builds race PMTiles directly from organizer blob documents, running
-/// assembly inline using <see cref="RaceAssembler"/>.
+/// Builds race PMTiles directly from organizer documents, running
+/// assembly inline using <see cref="RaceAssembler"/> and publishing to local disk.
 /// </summary>
 public class RaceFromOrganizersPmtilesBuildService
 {
-    private const string ProductionBlobName = "production/trails.pmtiles";
-    private const string StagingPrefix = "staging";
     private const int MaxPendingTransparencyWrites = 16;
     private static readonly bool UseAnsiColors = !Console.IsOutputRedirected && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NO_COLOR"));
 
-    private readonly BlobOrganizerStore _organizerStore;
-    private readonly BlobServiceClient _blobServiceClient;
+    private readonly IOrganizerStore _organizerStore;
+    private readonly string _outputPath;
     private readonly PmtilesUtilityService _pmtilesUtilityService;
     private readonly ILocationGeocodingService _geocodingService;
     private readonly ILogger<RaceFromOrganizersPmtilesBuildService> _logger;
@@ -32,18 +29,24 @@ public class RaceFromOrganizersPmtilesBuildService
         WriteIndented = true,
     };
     public RaceFromOrganizersPmtilesBuildService(
-        BlobOrganizerStore organizerStore,
-        BlobServiceClient blobServiceClient,
+        IOrganizerStore organizerStore,
         PmtilesUtilityService pmtilesUtilityService,
         ILocationGeocodingService geocodingService,
-        ILogger<RaceFromOrganizersPmtilesBuildService> logger)
+        ILogger<RaceFromOrganizersPmtilesBuildService> logger,
+        IConfiguration configuration,
+        string? outputPath = null)
     {
         _organizerStore = organizerStore;
-        _blobServiceClient = blobServiceClient;
+        _outputPath = ResolveOutputPath(configuration, outputPath);
         _pmtilesUtilityService = pmtilesUtilityService;
         _geocodingService = geocodingService;
         _logger = logger;
     }
+
+    internal static string ResolveOutputPath(IConfiguration configuration, string? outputPath)
+        => !string.IsNullOrWhiteSpace(outputPath)
+            ? outputPath
+            : configuration[AppConfig.RaceTilesOutputPath] ?? AppConfig.DefaultRaceTilesOutputPath;
 
     public async Task BuildAsync(bool writeTransparency, CancellationToken cancellationToken)
     {
@@ -63,9 +66,8 @@ public class RaceFromOrganizersPmtilesBuildService
                 layerName: "trails",
                 cancellationToken);
 
-            _logger.LogInformation("Uploading PMTiles to blob storage...");
-            var container = await GetContainerAsync(cancellationToken);
-            await ValidateAndPublishPmtilesAsync(container, runId, pmtilesPath, cancellationToken);
+            _logger.LogInformation("Writing validated PMTiles to the local output path...");
+            await ValidateAndPublishPmtilesAsync(runId, pmtilesPath, cancellationToken);
             buildStopwatch.Stop();
 
             var organizerReadMetrics = _organizerStore.GetLastOrganizerReadMetricsSnapshot();
@@ -74,7 +76,7 @@ public class RaceFromOrganizersPmtilesBuildService
                 "Build stage summary {RunId}: organizers {OrganizerCount} | blob bytes {BlobBytes} | cache hits {CacheHits} | geocode requests {GeocodeRequests} | geocode misses {GeocodeMisses} | assemble {AssembleElapsed} | transparency wait {TransparencyWaitElapsed} | project {ProjectionElapsed} | serialize {SerializationElapsed} | geojson size {GeoJsonBytes} | tippecanoe {TippecanoeElapsed} | pmtiles size {PmtilesBytes} | total {TotalElapsed}",
                 runId,
                 assemblyMetrics.OrganizerCount,
-                BlobOrganizerStore.FormatByteCountForLogging(organizerReadMetrics.DownloadedBytes),
+                OrganizerStoreFormatting.FormatByteCountForLogging(organizerReadMetrics.DownloadedBytes),
                 organizerReadMetrics.CacheHits,
                 assemblyMetrics.GeocodingMetrics.TotalRequests,
                 assemblyMetrics.GeocodingMetrics.MissedRequests,
@@ -82,9 +84,9 @@ public class RaceFromOrganizersPmtilesBuildService
                 assemblyMetrics.TransparencyWaitElapsed,
                 assemblyMetrics.FeatureProjectionElapsed,
                 assemblyMetrics.SerializationElapsed,
-                BlobOrganizerStore.FormatByteCountForLogging(assemblyMetrics.GeoJsonBytes),
+                OrganizerStoreFormatting.FormatByteCountForLogging(assemblyMetrics.GeoJsonBytes),
                 pmtilesMetrics.Elapsed,
-                BlobOrganizerStore.FormatByteCountForLogging(pmtilesMetrics.OutputBytes),
+                OrganizerStoreFormatting.FormatByteCountForLogging(pmtilesMetrics.OutputBytes),
                 buildStopwatch.Elapsed);
             _logger.LogInformation("Race-from-organizers tile build completed successfully {RunId}. Wrote {FeatureCount} PMTiles features.", runId, pmtilesFeatureCount);
         }
@@ -116,7 +118,7 @@ public class RaceFromOrganizersPmtilesBuildService
     {
         var totalStopwatch = Stopwatch.StartNew();
         var intervalStopwatch = Stopwatch.StartNew();
-        var pendingTransparencyWrites = new List<Task<BlobOrganizerStore.TransparencyWriteStats>>(MaxPendingTransparencyWrites);
+        var pendingTransparencyWrites = new List<Task<TransparencyWriteStats>>(MaxPendingTransparencyWrites);
         var tempPath = CreateRunTempPath(runId);
         var geoJsonPath = Path.Combine(tempPath, "features-from-organizers.geojson");
         await using var fileStream = File.Create(geoJsonPath);
@@ -155,7 +157,7 @@ public class RaceFromOrganizersPmtilesBuildService
             totalAssembly += assemblyStopwatch.Elapsed;
             intervalAssembly += assemblyStopwatch.Elapsed;
 
-            if (writeTransparency && item.Source == BlobOrganizerStore.OrganizerDocumentSource.Blob)
+            if (writeTransparency && item.Source != OrganizerDocumentSource.Cache)
             {
                 pendingTransparencyWrites.Add(_organizerStore.WriteAssembledRacesAsync(doc.Id, assembled, cancellationToken));
                 totalTransparencyQueued++;
@@ -397,7 +399,7 @@ public class RaceFromOrganizersPmtilesBuildService
         => UseAnsiColors ? $"\u001b[{ansiCode}m{value}\u001b[0m" : value;
 
     private static void ApplyTransparencyWriteStats(
-        BlobOrganizerStore.TransparencyWriteStats stats,
+        TransparencyWriteStats stats,
         ref int totalTransparencyCompleted,
         ref int totalRaceUploads,
         ref int totalRaceDeletes,
@@ -417,47 +419,47 @@ public class RaceFromOrganizersPmtilesBuildService
         intervalRaceUnchanged += stats.RaceUnchanged;
     }
 
-    private static async Task<BlobOrganizerStore.TransparencyWriteStats> WaitForOneTransparencyWriteAsync(
-        List<Task<BlobOrganizerStore.TransparencyWriteStats>> pendingTransparencyWrites)
+    private static async Task<TransparencyWriteStats> WaitForOneTransparencyWriteAsync(
+        List<Task<TransparencyWriteStats>> pendingTransparencyWrites)
     {
         var completed = await Task.WhenAny(pendingTransparencyWrites);
         pendingTransparencyWrites.Remove(completed);
         return await completed;
     }
 
-    private async Task ValidateAndPublishPmtilesAsync(BlobContainerClient container, string runId, string pmtilesPath, CancellationToken cancellationToken)
+    private async Task ValidateAndPublishPmtilesAsync(string runId, string pmtilesPath, CancellationToken cancellationToken)
+    {
+        await ValidateAndWritePmtilesAsync(pmtilesPath, _outputPath, _logger, cancellationToken);
+        _logger.LogInformation("Wrote PMTiles to {OutputPath} for run {RunId}.", _outputPath, runId);
+    }
+
+    /// <summary>
+    /// Validates the built file and atomically publishes it to the configured local output path.
+    /// Kept static and internal so the publish contract can be exercised without a full build.
+    /// Cache headers are owned by the public tile-serving endpoint, not by this write.
+    /// </summary>
+    internal static async Task ValidateAndWritePmtilesAsync(
+        string pmtilesPath,
+        string outputPath,
+        ILogger logger,
+        CancellationToken cancellationToken)
     {
         if (!PmtilesUtilityService.IsValidPmtilesFile(pmtilesPath))
             throw new InvalidOperationException("Built PMTiles file did not pass validation.");
 
-        var pmtilesHttpHeaders = new BlobHttpHeaders { CacheControl = "no-cache", ContentType = "application/octet-stream" };
+        var parentDirectory = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrEmpty(parentDirectory))
+            Directory.CreateDirectory(parentDirectory);
 
-        var stagingBlob = container.GetBlobClient($"{StagingPrefix}/{runId}/trails-from-organizers.pmtiles");
-        await stagingBlob.UploadAsync(pmtilesPath, new BlobUploadOptions { HttpHeaders = pmtilesHttpHeaders }, cancellationToken);
-
-        var productionBlob = container.GetBlobClient(ProductionBlobName);
-        await productionBlob.StartCopyFromUriAsync(stagingBlob.Uri, cancellationToken: cancellationToken);
-
-        BlobProperties productionProperties;
-        do
+        var temporaryPath = outputPath + ".tmp";
+        await using (var source = File.OpenRead(pmtilesPath))
+        await using (var destination = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
         {
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
-            productionProperties = await productionBlob.GetPropertiesAsync(cancellationToken: cancellationToken);
+            await source.CopyToAsync(destination, cancellationToken);
         }
-        while (productionProperties.CopyStatus == CopyStatus.Pending);
 
-        if (productionProperties.CopyStatus != CopyStatus.Success)
-            throw new InvalidOperationException($"PMTiles publish failed with status {productionProperties.CopyStatus}.");
-
-        await stagingBlob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
-        _logger.LogInformation("Published PMTiles to {ProductionPath} for run {RunId}.", ProductionBlobName, runId);
-    }
-
-    private async Task<BlobContainerClient> GetContainerAsync(CancellationToken cancellationToken)
-    {
-        var container = _blobServiceClient.GetBlobContainerClient(BlobContainerNames.RaceTiles);
-        await container.CreateIfNotExistsAsync(PublicAccessType.Blob, cancellationToken: cancellationToken);
-        return container;
+        File.Move(temporaryPath, outputPath, overwrite: true);
+        logger.LogTrace("Atomically published validated PMTiles to {OutputPath}.", outputPath);
     }
 
     private void DeleteRunTempPath(string runId)

@@ -1,5 +1,9 @@
 using System.Text;
+using Hangfire;
+using Hangfire.Common;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PmtilesJob;
 
 namespace PmtilesJob.Tests;
@@ -390,5 +394,150 @@ public class PmtilesUtilityServiceTests
         {
             File.Delete(temporaryFile);
         }
+    }
+
+    [Fact]
+    public void Parse_ReturnsScheduleRaceTiles_WhenSubcommandIsProvided()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(["schedule-race-tiles"], configuration);
+
+        Assert.Equal(PmtilesCommandKind.ScheduleRaceTiles, command.Command);
+    }
+
+    [Fact]
+    public void Parse_AllowsOutputOverrideForRaceBuild()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var spaced = PmtilesCommandLine.Parse(
+            ["build-race-tiles-from-organizers", "--output", "/custom/trails.pmtiles"],
+            configuration);
+        var equals = PmtilesCommandLine.Parse(
+            ["build-race-tiles-from-organizers", "--output=/custom/trails.pmtiles"],
+            configuration);
+
+        Assert.Equal("/custom/trails.pmtiles", spaced.OutputPath);
+        Assert.Equal("/custom/trails.pmtiles", equals.OutputPath);
+    }
+
+    [Fact]
+    public void Parse_UsesConfiguredRaceTilesOutputPath_WhenNoOverride()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["RaceTiles:OutputPath"] = "/configured/trails.pmtiles",
+            })
+            .Build();
+
+        var command = PmtilesCommandLine.Parse(["build-race-tiles-from-organizers"], configuration);
+
+        Assert.Equal("/configured/trails.pmtiles", command.OutputPath);
+    }
+
+    [Fact]
+    public void Parse_DefaultRaceBuild_HasNoExplicitOutputAndTransparencyOff()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse([], configuration);
+
+        Assert.Equal(PmtilesCommandKind.BuildRaceTilesFromOrganizers, command.Command);
+        Assert.Null(command.OutputPath);
+        Assert.False(command.WriteTransparency);
+    }
+
+    [Fact]
+    public void ResolveOutputPath_PrefersCliOverrideThenConfigThenDefault()
+    {
+        var configured = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["RaceTiles:OutputPath"] = "/configured/trails.pmtiles",
+            })
+            .Build();
+        var empty = new ConfigurationBuilder().Build();
+
+        Assert.Equal("/cli/trails.pmtiles", RaceFromOrganizersPmtilesBuildService.ResolveOutputPath(configured, "/cli/trails.pmtiles"));
+        Assert.Equal("/configured/trails.pmtiles", RaceFromOrganizersPmtilesBuildService.ResolveOutputPath(configured, null));
+        Assert.Equal("/data/races/tiles/trails.pmtiles", RaceFromOrganizersPmtilesBuildService.ResolveOutputPath(empty, null));
+    }
+
+    [Fact]
+    public async Task ValidateAndWritePmtilesAsync_WritesExactBytesAndCleansTemp()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pmtiles-write-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var sourcePath = Path.Combine(root, "source.pmtiles");
+            var bytes = Encoding.UTF8.GetBytes("PMTiles").Concat(new byte[1024]).ToArray();
+            bytes[^1] = 42;
+            File.WriteAllBytes(sourcePath, bytes);
+            var outputPath = Path.Combine(root, "nested", "tiles", "trails.pmtiles");
+
+            await RaceFromOrganizersPmtilesBuildService.ValidateAndWritePmtilesAsync(
+                sourcePath, outputPath, NullLogger.Instance, CancellationToken.None);
+
+            Assert.True(File.Exists(outputPath));
+            Assert.Equal(bytes, File.ReadAllBytes(outputPath));
+            Assert.False(File.Exists(outputPath + ".tmp"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateAndWritePmtilesAsync_RejectsInvalidHeaderWithoutWritingOutput()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pmtiles-write-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var sourcePath = Path.Combine(root, "source.pmtiles");
+            File.WriteAllBytes(sourcePath, Encoding.UTF8.GetBytes("NOTPMT").Concat(new byte[1024]).ToArray());
+            var outputPath = Path.Combine(root, "nested", "trails.pmtiles");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                RaceFromOrganizersPmtilesBuildService.ValidateAndWritePmtilesAsync(
+                    sourcePath, outputPath, NullLogger.Instance, CancellationToken.None));
+
+            Assert.False(File.Exists(outputPath));
+            Assert.False(File.Exists(outputPath + ".tmp"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RecurringRegistration_UsesConfiguredCron()
+    {
+        var recurringJobs = new Mock<IRecurringJobManager>();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["RaceTiles:WeeklyCron"] = "0 3 * * 2",
+            })
+            .Build();
+        var service = new RaceTilesRecurringJobRegistrationService(
+            recurringJobs.Object,
+            configuration,
+            NullLogger<RaceTilesRecurringJobRegistrationService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+
+        recurringJobs.Verify(jobs => jobs.AddOrUpdate(
+            "race-pmtiles-weekly",
+            It.IsAny<Job>(),
+            "0 3 * * 2",
+            It.IsAny<RecurringJobOptions>()), Times.Once);
     }
 }

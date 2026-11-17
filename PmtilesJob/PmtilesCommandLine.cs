@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Shared.Constants;
 
 namespace PmtilesJob;
 
@@ -9,6 +10,7 @@ public enum PmtilesCommandKind
     FilterOutdoor,
     FilterAdminBoundaries,
     ExportOrganizersToBlob,
+    ScheduleRaceTiles,
 }
 
 public sealed record PmtilesCommandOptions(
@@ -66,7 +68,13 @@ public static class PmtilesCommandLine
             return new PmtilesCommandOptions(
                 PmtilesCommandKind.BuildRaceTilesFromOrganizers,
                 WriteTransparency: writeTransparency,
+                OutputPath: GetOptionValue(args, "--output") ?? configuration[AppConfig.RaceTilesOutputPath],
                 OrganizerId: GetOptionValue(args, "--organizer-id") ?? configuration["OrganizerId"]);
+        }
+
+        if (args.Length > 0 && string.Equals(args[0], "schedule-race-tiles", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PmtilesCommandOptions(PmtilesCommandKind.ScheduleRaceTiles);
         }
 
         if (args.Length > 0 && string.Equals(args[0], "export-organizers-to-blob", StringComparison.OrdinalIgnoreCase))
