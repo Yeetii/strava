@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/visitedPaths/12/{{tileX}}/{{tileY}}
+  url: {{baseUrl}}/visitedPaths/{{z}}/{{x}}/{{y}}
   body: none
   auth: none
 }
@@ -15,6 +15,7 @@ headers {
 }
 
 vars:pre-request {
-  tileX: 2184
-  tileY: 1240
+  z: 12
+  x: 2184
+  y: 1240
 }
