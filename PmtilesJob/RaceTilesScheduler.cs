@@ -4,24 +4,18 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
+using Shared.Hosting;
 
 namespace PmtilesJob;
 
 /// <summary>
-/// Hangfire job target for the scheduled race PMTiles build.
-/// </summary>
-public interface IRaceTilesSchedulerJob
-{
-    Task RunAsync();
-}
-
-/// <summary>
-/// Runs one race build per scheduled invocation, resolving the build service through
-/// a scope created for that invocation.
+/// pmtiles-host implementation of the shared Hangfire job contract. Runs one
+/// race build per invocation, resolving the build service through a new scope.
+/// The job type itself lives in Shared.Hosting so the API dashboard can enqueue it.
 /// </summary>
 public sealed class RaceTilesSchedulerJob(
     IServiceProvider services,
-    ILogger<RaceTilesSchedulerJob> logger) : IRaceTilesSchedulerJob
+    ILogger<RaceTilesSchedulerJob> logger) : IRaceTilesBuildJob
 {
     public async Task RunAsync()
     {
@@ -54,12 +48,19 @@ public sealed class RaceTilesRecurringJobRegistrationService(
     public Task StartAsync(CancellationToken cancellationToken)
     {
         var cron = configuration[AppConfig.RaceTilesWeeklyCron] ?? AppConfig.DefaultRaceTilesWeeklyCron;
-        recurringJobs.AddOrUpdate<IRaceTilesSchedulerJob>(
+        recurringJobs.AddOrUpdate<IRaceTilesBuildJob>(
             "race-pmtiles-weekly",
             job => job.RunAsync(),
             cron,
-            new RecurringJobOptions { QueueName = "pmtiles", TimeZone = TimeZoneInfo.Utc });
-        logger.LogInformation("Registered weekly race PMTiles build with cron {Cron}.", cron);
+            new RecurringJobOptions
+            {
+                TimeZone = TimeZoneInfo.Utc,
+                QueueName = AppConfig.RaceTilesQueueName,
+            });
+        logger.LogInformation(
+            "Registered weekly race PMTiles build with cron {Cron} on queue {Queue}.",
+            cron,
+            AppConfig.RaceTilesQueueName);
         return Task.CompletedTask;
     }
 

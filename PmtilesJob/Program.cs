@@ -61,9 +61,9 @@ var builder = Host.CreateDefaultBuilder(args)
             services.AddHangfireServer(options =>
             {
                 options.WorkerCount = 1;
-                options.Queues = ["pmtiles"];
+                options.Queues = [Shared.Constants.AppConfig.RaceTilesQueueName];
             });
-            services.AddSingleton<IRaceTilesSchedulerJob, RaceTilesSchedulerJob>();
+            services.AddSingleton<IRaceTilesBuildJob, RaceTilesSchedulerJob>();
             services.AddSingleton<IHostedService, RaceTilesRecurringJobRegistrationService>();
         }
 

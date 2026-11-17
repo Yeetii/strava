@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PmtilesJob;
+using Shared.Constants;
 
 namespace PmtilesJob.Tests;
 
@@ -536,8 +537,9 @@ public class PmtilesUtilityServiceTests
 
         recurringJobs.Verify(jobs => jobs.AddOrUpdate(
             "race-pmtiles-weekly",
-            It.IsAny<Job>(),
+            It.Is<Job>(job => job.Type == typeof(Shared.Hosting.IRaceTilesBuildJob)),
             "0 3 * * 2",
-            It.IsAny<RecurringJobOptions>()), Times.Once);
+            It.Is<RecurringJobOptions>(options =>
+                options.QueueName == AppConfig.RaceTilesQueueName)), Times.Once);
     }
 }

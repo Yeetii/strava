@@ -25,6 +25,10 @@ public static class AppConfig
     public const string RaceTilesWeeklyCron = "RaceTiles:WeeklyCron";
     public const string DefaultRaceTilesOutputPath = "/data/races/tiles/trails.pmtiles";
     public const string DefaultRaceTilesWeeklyCron = "0 5 * * 1";
+
+    // Dedicated Hangfire queue: only the pmtiles worker serves it, so the
+    // API dashboard can enqueue the job but Backend workers cannot pick it up.
+    public const string RaceTilesQueueName = "pmtiles";
 }
 
 public static class OrganizerStoreProviders
