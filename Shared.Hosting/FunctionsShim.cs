@@ -287,6 +287,24 @@ namespace Microsoft.Azure.Functions.Worker
                 System.Web.HttpUtility.ParseQueryString(uri.Query);
         }
 
+        /// <summary>
+        /// Emulates Azure Functions' IQueryCollection indexer: a missing key yields
+        /// an empty value instead of throwing KeyNotFoundException. The real
+        /// HttpRequestData.Query is an IQueryCollection whose indexer returns
+        /// StringValues.Empty for absent keys; a plain Dictionary throws, which
+        /// broke every optional query parameter in self-hosted mode.
+        /// </summary>
+        public sealed class QueryCollection : Dictionary<string, string?>
+        {
+            public QueryCollection() : base(StringComparer.OrdinalIgnoreCase) { }
+
+            public new string? this[string key]
+            {
+                get => TryGetValue(key, out var value) ? value : null;
+                set => base[key] = value;
+            }
+        }
+
         public class HttpRequestData
         {
             protected HttpRequestData(FunctionContext functionContext)
@@ -298,7 +316,7 @@ namespace Microsoft.Azure.Functions.Worker
                 Method = "GET";
                 Cookies = Array.Empty<IHttpCookie>();
                 Body = new MemoryStream();
-                Query = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                Query = new QueryCollection();
             }
 
             public HttpRequestData(HttpContext httpContext) : this(new FunctionContext())
@@ -325,7 +343,7 @@ namespace Microsoft.Azure.Functions.Worker
             public virtual string Method { get; }
             public virtual IReadOnlyCollection<IHttpCookie> Cookies { get; }
             public virtual Stream Body { get; }
-            public Dictionary<string, string?> Query { get; set; }
+            public QueryCollection Query { get; set; }
 
             public virtual HttpResponseData CreateResponse() => new(FunctionContext);
 
