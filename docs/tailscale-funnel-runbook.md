@@ -130,6 +130,28 @@ P1b cutover, perform the consumer-side changes listed in the plan:
 No DNS cutover: `peakshunters.erikmagnusson.com/api` stays on the Azure Function
 App until P3.
 
+## Hangfire dashboard (tailnet only)
+
+The dashboard is mapped at `/hangfire` on the public `api` container. Two guards
+keep it private: requests carrying `Tailscale-Funnel-Request` (Tailscale strips
+spoofed copies) are rejected, and every other request needs HTTP Basic auth —
+any username, `AdminApiKey` as the password. It fails closed when `AdminApiKey`
+is not configured, and the storage connection string is never displayed.
+
+Expose it only through the existing tailnet-only listener on 8443:
+
+```bash
+sudo tailscale serve --bg --https=8443 --set-path=/hangfire http://127.0.0.1:8080/hangfire
+tailscale funnel status
+```
+
+The 8443 entry must read `(tailnet only)` — never `(Funnel on)`. The bare
+`/hangfire` on the public Funnel's 443 route returns `401`.
+
+Open `https://<machine>.<tailnet>.ts.net:8443/hangfire`; the browser prompts for
+Basic credentials. If the dashboard is unreachable, confirm `AdminApiKey` is set
+in `.env` and that the `api` container was recreated after the change.
+
 ## Rollback
 
 ```bash

@@ -1,4 +1,6 @@
 using API;
+using API.Utils;
+using Hangfire;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -211,6 +213,35 @@ FunctionsJson.Options = app.Services.GetRequiredService<IOptions<JsonSerializerO
 
 app.UseCors();
 app.MapOpenApi();
+
+// Hangfire dashboard is tailnet-only: Funnel traffic carries a strip-proof
+// header and is rejected outright; everything else needs the admin key via
+// HTTP Basic auth. Fail closed when AdminApiKey is not configured.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments(
+            HangfireDashboardGuard.DashboardPath, StringComparison.OrdinalIgnoreCase))
+    {
+        if (HangfireDashboardGuard.IsFunnelRequest(context) ||
+            !HangfireDashboardGuard.IsAuthorized(context, configuration["AdminApiKey"]))
+        {
+            context.Response.Headers.WWWAuthenticate = "Basic realm=\"Hangfire\"";
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+    }
+
+    await next(context);
+});
+// Authorization = [] disables Hangfire's local-only default; the middleware
+// above is the sole gate for this route and must stay in place.
+app.UseHangfireDashboard(HangfireDashboardGuard.DashboardPath, new DashboardOptions
+{
+    Authorization = [],
+    DisplayStorageConnectionString = false,
+    DashboardTitle = "Peakshunters Jobs",
+});
+
 app.MapFunctions(typeof(Program).Assembly);
 
 app.MapGet("/health", () => Results.Ok("ok"));
