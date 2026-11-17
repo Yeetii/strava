@@ -6,6 +6,26 @@ public static class AppConfig
     public const string TileJoinBinaryPath = "TileJoinBinaryPath";
     public const string BlobShardZoom = "BlobShardZoom";
     public const string BlobShardBufferMeters = "BlobShardBufferMeters";
+
+    // Organizer store selection. Blob keeps the existing behaviour; FileSystem
+    // is the self-hosted store. Opt in explicitly with OrganizerStore:Provider.
+    public const string OrganizerStoreProvider = "OrganizerStore:Provider";
+    public const string RaceDataDir = "OrganizerStore:RaceDataDir";
+
+    // Shared Redis (Hangfire transport and the race-build geocoding cache).
+    public const string RedisConnectionString = "RedisConnectionString";
+
+    // Race tile output and weekly build schedule.
+    public const string RaceTilesOutputPath = "RaceTiles:OutputPath";
+    public const string RaceTilesWeeklyCron = "RaceTiles:WeeklyCron";
+    public const string DefaultRaceTilesOutputPath = "/data/races/tiles/trails.pmtiles";
+    public const string DefaultRaceTilesWeeklyCron = "0 5 * * 1";
+}
+
+public static class OrganizerStoreProviders
+{
+    public const string Blob = "Blob";
+    public const string FileSystem = "FileSystem";
 }
 
 public static class BlobContainerNames

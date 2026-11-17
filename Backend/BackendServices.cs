@@ -92,15 +92,7 @@ public static class BackendServices
             .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer)
             .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
 
-        services.AddSingleton(serviceProvider =>
-        {
-            var connStr = configuration.GetValue<string>("BlobStorageConnection")
-                ?? throw new Exception("BlobStorageConnection is not configured");
-            var containerClient = new BlobContainerClient(connStr, BlobContainerNames.RaceOrganizers);
-            containerClient.CreateIfNotExists();
-            return new BlobOrganizerStore(containerClient,
-                serviceProvider.GetRequiredService<ILoggerFactory>());
-        });
+        services.AddOrganizerStore(configuration);
         services.AddSingleton(serviceProvider =>
         {
             var connStr = configuration.GetValue<string>("BlobStorageConnection")

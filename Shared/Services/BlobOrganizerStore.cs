@@ -14,7 +14,7 @@ namespace Shared.Services;
 /// Each organizer is stored as a single JSON blob at <c>{organizerKey}/organizer.json</c>.
 /// Concurrent modifications use ETag-based optimistic concurrency with a short retry loop.
 /// </summary>
-public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory loggerFactory, string? localCacheRoot = null)
+public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory loggerFactory, string? localCacheRoot = null) : IOrganizerStore
 {
     private const string BlobSuffix = "/organizer.json";
     private const string RedirectSuffix = "/redirect.txt";
@@ -29,23 +29,6 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
 
     private readonly ILogger _logger = loggerFactory.CreateLogger<BlobOrganizerStore>();
     private readonly string? _localCacheRoot = localCacheRoot ?? ResolveLocalCacheRoot();
-
-    public enum OrganizerDocumentSource
-    {
-        Cache,
-        Blob,
-    }
-
-    public readonly record struct TransparencyWriteStats(int OrganizerWrites, int RaceUploads, int RaceDeletes, int RaceUnchanged);
-
-    public sealed record OrganizerDocumentStreamItem(RaceOrganizerDocument Document, OrganizerDocumentSource Source);
-
-    public readonly record struct OrganizerReadMetricsSnapshot(
-        int StreamedDocuments,
-        int CacheHits,
-        long CachedBytes,
-        int BlobDownloads,
-        long DownloadedBytes);
 
     private readonly record struct OrganizerReadResult(BinaryData Content, OrganizerDocumentSource Source, int ByteCount);
     private sealed record StreamReadResult<TDocument>(TDocument Document, OrganizerReadResult ReadResult) where TDocument : class;
@@ -926,7 +909,7 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         var cacheHitRate = streamedDocuments == 0
             ? 0
             : (double)cacheHits / streamedDocuments * 100;
-        var summary = $"Organizer reads: {AccentCount(streamedDocuments)} docs | cache hits {AccentCache(cacheHits)} ({AccentBytes(FormatByteCount(cachedBytes))}, {cacheHitRate:F1}% hit rate) | blob reads {AccentBlob(blobDownloads)} ({AccentBytes(FormatByteCount(downloadedBytes))})";
+        var summary = $"Organizer reads: {AccentCount(streamedDocuments)} docs | cache hits {AccentCache(cacheHits)} ({AccentBytes(OrganizerStoreFormatting.FormatByteCountForLogging(cachedBytes))}, {cacheHitRate:F1}% hit rate) | blob reads {AccentBlob(blobDownloads)} ({AccentBytes(OrganizerStoreFormatting.FormatByteCountForLogging(downloadedBytes))})";
         _logger.LogInformation("{ReadSummary}", summary);
     }
 
@@ -934,7 +917,7 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
         => _lastOrganizerReadMetrics;
 
     public static string FormatByteCountForLogging(long byteCount)
-        => FormatByteCount(byteCount);
+        => OrganizerStoreFormatting.FormatByteCountForLogging(byteCount);
 
     private async Task<string?> GetRedirectTargetAsync(string organizerKey, CancellationToken cancellationToken)
     {
@@ -1188,21 +1171,6 @@ public class BlobOrganizerStore(BlobContainerClient container, ILoggerFactory lo
 
     private static int GetByteCount(BinaryData content)
         => content.ToMemory().Length;
-
-    private static string FormatByteCount(long byteCount)
-    {
-        string[] suffixes = ["B", "KB", "MB", "GB"];
-        double value = byteCount;
-        var suffixIndex = 0;
-        while (value >= 1024 && suffixIndex < suffixes.Length - 1)
-        {
-            value /= 1024;
-            suffixIndex++;
-        }
-
-        var format = suffixIndex == 0 ? "0" : "0.##";
-        return string.Format(System.Globalization.CultureInfo.InvariantCulture, $"{{0:{format}}} {{1}}", value, suffixes[suffixIndex]);
-    }
 
     private static string AccentCount(int value) => Colorize(value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture), "1;36");
 

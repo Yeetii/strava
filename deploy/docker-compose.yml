@@ -56,12 +56,21 @@ services:
     environment:
       <<: *plain-env
       WORKER_ROLE: api
+      # All non-queue organizer wiring uses the shared local store, so admin
+      # writes and the weekly build see the same data.
+      OrganizerStore__Provider: FileSystem
+      OrganizerStore__RaceDataDir: /data/races
     expose:
       - "80"
     # Tailscale Funnel on the host forwards to a loopback port. Only publish
     # on 127.0.0.1 so the API stays off the public interface and LAN.
     ports:
       - "127.0.0.1:8080:80"
+    # Shared race data (writable): admin endpoints may write organizer.json
+    # when the FileSystem store is selected; the public tile endpoint reads
+    # /data/races/tiles/trails.pmtiles read-only.
+    volumes:
+      - race-data:/data/races
     healthcheck: *http-healthcheck
     mem_limit: ${API_MEMORY_LIMIT:-1g}
     cpus: "${API_CPUS:-1.0}"
@@ -83,6 +92,10 @@ services:
       WORKER_ROLE: schedule
       ApiUrl: http://api/api/
       BackendApiUrl: http://api/api/
+      OrganizerStore__Provider: FileSystem
+      OrganizerStore__RaceDataDir: /data/races
+    volumes:
+      - race-data:/data/races
     healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_SCHEDULE_MEMORY_LIMIT:-1g}
     cpus: "${WORKER_SCHEDULE_CPUS:-1.0}"
@@ -107,6 +120,10 @@ services:
       WORKER_ROLE: heavy
       ApiUrl: http://api/api/
       BackendApiUrl: http://api/api/
+      OrganizerStore__Provider: FileSystem
+      OrganizerStore__RaceDataDir: /data/races
+    volumes:
+      - race-data:/data/races
     healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_HEAVY_MEMORY_LIMIT:-2g}
     cpus: "${WORKER_HEAVY_CPUS:-2.0}"
@@ -114,6 +131,39 @@ services:
       api:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Race PMTiles builder. Own image (tippecanoe compiled in) with its own
+  # Hangfire worker for the weekly build; a one-shot run is:
+  #   docker compose run --rm pmtiles build-race-tiles-from-organizers
+  # No Azure connection strings are needed: organizers and tile output live on
+  # the shared race-data volume. REDIS_CONNECTION_STRING (in *plain-env) is
+  # only Hangfire storage.
+  # ---------------------------------------------------------------------------
+  pmtiles:
+    <<: *app-service
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-pmtiles:${IMAGE_TAG:-latest}
+    # The image has no CMD; explicitly start the weekly Hangfire scheduler.
+    # `docker compose run --rm pmtiles build-race-tiles-from-organizers`
+    # overrides this for a one-shot build.
+    command: schedule-race-tiles
+    environment:
+      <<: *plain-env
+      OrganizerStore__Provider: FileSystem
+      OrganizerStore__RaceDataDir: /data/races
+      RaceTiles__OutputPath: /data/races/tiles/trails.pmtiles
+      RaceTiles__WeeklyCron: "0 5 * * 1"
+      WriteTransparency: "false"
+    volumes:
+      - race-data:/data/races
+    healthcheck: *worker-healthcheck
+    mem_limit: ${PMTILES_MEMORY_LIMIT:-2g}
+    cpus: "${PMTILES_CPUS:-2.0}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
@@ -145,3 +195,6 @@ networks:
 
 volumes:
   redis-data:
+  # Organizer JSON, route GPX, optional transparency and the built PMTiles.
+  # Shared by api (serves tiles / writes organizer.json) and pmtiles (builds).
+  race-data:

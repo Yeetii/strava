@@ -10,8 +10,12 @@ namespace CosmosBulkDelete
 {
     class Program
     {
-        static async Task Main(string[] args)
+        static async Task<int> Main(string[] args)
         {
+            if (args.Length > 0 && string.Equals(args[0], ExportOrganizersToDisk.CommandName, StringComparison.OrdinalIgnoreCase))
+            {
+                return await ExportOrganizersToDisk.RunAsync(args[1..]);
+            }
 
             if (args.Length < 2)
             {
@@ -21,7 +25,7 @@ namespace CosmosBulkDelete
                 Console.WriteLine("Composite partition key example: dotnet run races 'WHERE NOT CONTAINS(c.id, \".\")' \"x,y\"");
                 Console.WriteLine("Nested composite key example: dotnet run races 'WHERE NOT CONTAINS(c.id, \".\")' '/x/y,/a/b'");
                 Console.WriteLine("When your filter contains quotes, use single quotes around the full query or escape inner quotes.");
-                return;
+                return 0;
             }
 
             string containerId = args[0];
@@ -55,7 +59,7 @@ namespace CosmosBulkDelete
             if (!File.Exists(settingsPath))
             {
                 Console.WriteLine("Could not find ../API/local.settings.json or ../Backend/local.settings.json");
-                return;
+                return 0;
             }
 
             var json = JsonDocument.Parse(File.ReadAllText(settingsPath));
@@ -93,7 +97,7 @@ namespace CosmosBulkDelete
             if (endpoint == null || key == null)
             {
                 Console.WriteLine("Could not parse Cosmos endpoint/key from connection string");
-                return;
+                return 0;
             }
 
             CosmosClient client = new CosmosClient(endpoint, key);
@@ -106,7 +110,7 @@ namespace CosmosBulkDelete
             catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 Console.WriteLine($"Container '{containerId}' was not found in database '{databaseId}'.");
-                return;
+                return 0;
             }
 
             Console.WriteLine($"Running query: {query}");
@@ -190,7 +194,7 @@ namespace CosmosBulkDelete
                 Console.WriteLine($"Cosmos query failed: {ex.Message}");
                 Console.WriteLine($"Query: {query}");
                 Console.WriteLine($"Filter arg: {filter}");
-                return;
+                return 0;
             }
 
             Console.WriteLine($"Found {docsToPatch.Count} documents in container '{containerId}' matching query: {query}");
@@ -204,7 +208,7 @@ namespace CosmosBulkDelete
             if (!string.Equals(confirm, "y", StringComparison.OrdinalIgnoreCase) && !string.Equals(confirm, "yes", StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine("Aborted by user.");
-                return;
+                return 0;
             }
 
             int patched = 0;
@@ -223,6 +227,7 @@ namespace CosmosBulkDelete
             }
 
             Console.WriteLine($"Deleted {patched} documents.");
+            return 0;
         }
 
         private static bool HasUnbalancedQuotes(string text)

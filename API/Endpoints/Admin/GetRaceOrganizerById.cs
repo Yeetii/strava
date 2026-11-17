@@ -38,7 +38,7 @@ public record AdminRaceOrganizerDetail(
     IReadOnlyDictionary<string, AdminRaceScraperEntry> Scrapers);
 
 public class GetRaceOrganizerById(
-    BlobOrganizerStore organizerStore,
+    IOrganizerStore organizerStore,
     IConfiguration configuration)
 {
     [OpenApiOperation(tags: ["Admin"], Summary = "Inspect one race organizer working document.")]

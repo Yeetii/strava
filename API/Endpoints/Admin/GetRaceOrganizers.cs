@@ -20,7 +20,7 @@ public record AdminRaceOrganizerListItem(
     int ScraperRouteCount);
 
 public class GetRaceOrganizers(
-    BlobOrganizerStore organizerStore,
+    IOrganizerStore organizerStore,
     IConfiguration configuration)
 {
     [OpenApiOperation(tags: ["Admin"], Summary = "List race organizers with discovery and scraper status.")]

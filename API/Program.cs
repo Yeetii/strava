@@ -1,4 +1,5 @@
 using API;
+using API.Endpoints.Tiles;
 using API.Utils;
 using Backend;
 using Shared.Geo.SummitsCalculator;
@@ -72,15 +73,19 @@ new CollectionClientBuilder(builder.Services)
     .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
     .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer);
 
-builder.Services.AddSingleton(serviceProvider =>
+// Organizer store is selected by OrganizerStore:Provider (Blob by default,
+// FileSystem for the self-hosted stack). Keep container creation for the Blob
+// provider so existing deployments behave exactly as before.
+if (!string.Equals(
+        configuration[AppConfig.OrganizerStoreProvider],
+        OrganizerStoreProviders.FileSystem,
+        StringComparison.OrdinalIgnoreCase))
 {
     var blobConnection = configuration.GetValue<string>("BlobStorageConnection")
         ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
-    var containerClient = new BlobContainerClient(blobConnection, BlobContainerNames.RaceOrganizers);
-    containerClient.CreateIfNotExists();
-    var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-    return new BlobOrganizerStore(containerClient, loggerFactory);
-});
+    new BlobContainerClient(blobConnection, BlobContainerNames.RaceOrganizers).CreateIfNotExists();
+}
+builder.Services.AddOrganizerStore(configuration);
 builder.Services.AddSingleton(serviceProvider =>
 {
     var blobConnection = configuration.GetValue<string>("BlobStorageConnection")
@@ -245,6 +250,10 @@ app.UseHangfireDashboard(HangfireDashboardGuard.DashboardPath, new DashboardOpti
 
 app.MapFunctions(typeof(Program).Assembly);
 app.MapFunctions(typeof(StravaWebhook).Assembly);
+
+// Public race tiles, served from the shared race-data volume with HTTP range
+// support. No auth: this replaces the old public Blob URL.
+app.MapGetTrailsPmtiles(configuration);
 
 app.MapGet("/health", () => Results.Ok("ok"));
 

@@ -16,7 +16,7 @@ namespace API.Endpoints.Admin;
 /// the key "manual-gpx" — no BFS crawl needed.
 /// </summary>
 public class PostManualGpx(
-    BlobOrganizerStore organizerClient,
+    IOrganizerStore organizerClient,
     IConfiguration configuration,
     ILogger<PostManualGpx> logger)
 {
@@ -101,7 +101,7 @@ public class PostManualGpx(
         if (routes.Count == 0)
             return await BadRequest(req, $"No GPX files could be parsed ({failedCount} failed)", cancellationToken);
 
-        var organizerKey = BlobOrganizerStore.DeriveOrganizerKey(parsedUrl);
+        var organizerKey = OrganizerUrlRules.DeriveOrganizerKey(parsedUrl);
 
         // Ensure the organizer document exists with a discovery entry.
         var discovery = new SourceDiscovery

@@ -16,7 +16,7 @@ namespace Backend;
 public class ScrapeRaceMistralWorker
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly BlobOrganizerStore _organizerClient;
+    private readonly IOrganizerStore _organizerClient;
     private readonly QueueClient _queueClient;
     private readonly ILogger<ScrapeRaceMistralWorker> _logger;
     private readonly string _agentId;
@@ -26,7 +26,7 @@ public class ScrapeRaceMistralWorker
 
     public ScrapeRaceMistralWorker(
         IHttpClientFactory httpClientFactory,
-        BlobOrganizerStore organizerClient,
+        IOrganizerStore organizerClient,
         QueueClient queueClient,
         IConfiguration configuration,
         ILogger<ScrapeRaceMistralWorker> logger)
@@ -73,7 +73,7 @@ public class ScrapeRaceMistralWorker
             return;
         }
 
-        var organizerKey = BlobOrganizerStore.DeriveOrganizerKey(url);
+        var organizerKey = OrganizerUrlRules.DeriveOrganizerKey(url);
         var discovery = new SourceDiscovery
         {
             DiscoveredAtUtc = DateTime.UtcNow.ToString("o"),

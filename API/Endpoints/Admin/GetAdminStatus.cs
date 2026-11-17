@@ -41,7 +41,7 @@ internal sealed record ActivityWindowCountsProjection(
 public class GetAdminStatus(
     CosmosClient cosmosClient,
     MetricsQueryClient metricsQueryClient,
-    BlobOrganizerStore organizerStore,
+    IOrganizerStore organizerStore,
     IConfiguration configuration,
     ILogger<GetAdminStatus> logger)
 {

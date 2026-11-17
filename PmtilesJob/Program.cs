@@ -3,8 +3,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Azure.Storage.Blobs;
+using Hangfire;
 using Microsoft.Azure.Cosmos;
 using PmtilesJob;
+using Shared.Hosting;
 using Shared.Services;
 using System.Net.Http.Headers;
 
@@ -30,11 +32,38 @@ var builder = Host.CreateDefaultBuilder(args)
         services.AddSingleton<PmtilesUtilityService>();
 
         if (command.Command is PmtilesCommandKind.BuildRaceTilesFromOrganizers
-            or PmtilesCommandKind.BuildAdminAreas
+            or PmtilesCommandKind.ScheduleRaceTiles)
+        {
+            services.AddOrganizerStore(configuration);
+            services.AddSharedRedisGeocodingCache(configuration);
+            services.AddHttpClient<ILocationGeocodingService, NominatimLocationGeocodingService>(
+                client =>
+                {
+                    client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
+                    client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
+                    client.Timeout = TimeSpan.FromSeconds(10);
+                });
+            services.AddSingleton(serviceProvider => new RaceFromOrganizersPmtilesBuildService(
+                serviceProvider.GetRequiredService<IOrganizerStore>(),
+                serviceProvider.GetRequiredService<PmtilesUtilityService>(),
+                serviceProvider.GetRequiredService<ILocationGeocodingService>(),
+                serviceProvider.GetRequiredService<ILogger<RaceFromOrganizersPmtilesBuildService>>(),
+                configuration,
+                command.OutputPath));
+        }
+
+        if (command.Command == PmtilesCommandKind.ScheduleRaceTiles)
+        {
+            QueueTransport.AddHangfireStorage(services, configuration);
+            services.AddHangfireServer(options => options.WorkerCount = 1);
+            services.AddSingleton<IRaceTilesSchedulerJob, RaceTilesSchedulerJob>();
+            services.AddSingleton<IHostedService, RaceTilesRecurringJobRegistrationService>();
+        }
+
+        if (command.Command is PmtilesCommandKind.BuildAdminAreas
             or PmtilesCommandKind.ExportOrganizersToBlob)
         {
-            if (command.Command is PmtilesCommandKind.BuildRaceTilesFromOrganizers
-                or PmtilesCommandKind.ExportOrganizersToBlob)
+            if (command.Command == PmtilesCommandKind.ExportOrganizersToBlob)
             {
                 var blobConnection = configuration.GetConnectionString("BlobStorageConnection")
                     ?? configuration["BlobStorageConnection"]
@@ -48,28 +77,11 @@ var builder = Host.CreateDefaultBuilder(args)
                 services.AddSingleton(new BlobServiceClient(blobConnection));
             }
 
-            if (command.Command == PmtilesCommandKind.BuildRaceTilesFromOrganizers)
-            {
-                services.AddSharedGeocodingCache(configuration);
-                services.AddHttpClient<ILocationGeocodingService, NominatimLocationGeocodingService>(
-                    client =>
-                    {
-                        client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
-                        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
-                        client.Timeout = TimeSpan.FromSeconds(10);
-                    });
-                services.AddSingleton<RaceFromOrganizersPmtilesBuildService>();
-            }
+            var cosmosConnection = configuration.GetConnectionString("CosmosDBConnection")
+                ?? configuration["CosmosDBConnection"]
+                ?? throw new InvalidOperationException("CosmosDBConnection is not configured.");
 
-            if (command.Command is PmtilesCommandKind.BuildAdminAreas
-                or PmtilesCommandKind.ExportOrganizersToBlob)
-            {
-                var cosmosConnection = configuration.GetConnectionString("CosmosDBConnection")
-                    ?? configuration["CosmosDBConnection"]
-                    ?? throw new InvalidOperationException("CosmosDBConnection is not configured.");
-
-                services.AddSingleton(new CosmosClient(cosmosConnection));
-            }
+            services.AddSingleton(new CosmosClient(cosmosConnection));
 
             if (command.Command == PmtilesCommandKind.BuildAdminAreas)
             {
@@ -136,6 +148,14 @@ try
         {
             var job = scope.ServiceProvider.GetRequiredService<ExportOrganizersToBlobService>();
             await job.ExportAsync(cancellationToken);
+            return 0;
+        }
+
+        case PmtilesCommandKind.ScheduleRaceTiles:
+        {
+            // The hosted service registers the recurring job and the Hangfire server
+            // executes it. Keep the generic host alive until shutdown is requested.
+            await host.WaitForShutdownAsync();
             return 0;
         }
 

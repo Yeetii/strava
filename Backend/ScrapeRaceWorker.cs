@@ -18,12 +18,12 @@ namespace Backend;
 /// </summary>
 public class ScrapeRaceWorker(
     IHttpClientFactory httpClientFactory,
-    BlobOrganizerStore organizerClient,
+    IOrganizerStore organizerClient,
     QueueClient queueClient,
     ILogger<ScrapeRaceWorker> logger)
 {
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
-    private readonly BlobOrganizerStore _organizerClient = organizerClient;
+    private readonly IOrganizerStore _organizerClient = organizerClient;
     private readonly QueueClient _queueClient = queueClient;
     private readonly ILogger<ScrapeRaceWorker> _logger = logger;
 
