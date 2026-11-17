@@ -1,3 +1,4 @@
+using System.Reflection;
 using Hangfire;
 using Hangfire.Common;
 using Hangfire.States;
@@ -56,5 +57,23 @@ public class QueueTransportTests
         jobs.Verify(j => j.Create(
             It.IsAny<Job>(),
             It.IsAny<IState>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task QueueSender_DispatcherJobIsNamedAfterItsQueue()
+    {
+        var jobs = new Mock<IBackgroundJobClient>();
+        Job? created = null;
+        jobs.Setup(j => j.Create(It.IsAny<Job>(), It.IsAny<IState>()))
+            .Callback<Job, IState>((job, _) => created = job)
+            .Returns("job-id");
+        var sender = new QueueClient(jobs.Object).CreateSender(QueueConfig.AccountDeleteJobs);
+
+        await sender.SendMessageAsync(new QueueMessage("account-1"));
+
+        Assert.NotNull(created);
+        var displayName = created!.Method.GetCustomAttribute<JobDisplayNameAttribute>();
+        Assert.NotNull(displayName);
+        Assert.Equal(QueueConfig.AccountDeleteJobs, displayName!.Format(null!, created));
     }
 }

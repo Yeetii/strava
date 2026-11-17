@@ -45,6 +45,7 @@ public sealed class QueueJobDispatcher(
     IServiceProvider services)
 {
     [AutomaticRetry(Attempts = 5, DelaysInSeconds = [60, 300, 900, 1800, 3600])]
+    [JobDisplayName("{0}")]
     public async Task Execute(string queueName, QueueMessageEnvelope envelope)
     {
         var descriptor = registry.Queues.FirstOrDefault(d =>
