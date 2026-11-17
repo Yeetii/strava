@@ -177,6 +177,7 @@ public sealed class ChangeFeedWorker(
         var descriptor = registry.ChangeFeeds.First(x => x.Name == options.FunctionName);
         var container = client.GetContainer(options.DatabaseName, options.ContainerName);
         var leaseContainerName = $"{options.ContainerName}-leases";
+        await EnsureLeaseContainerAsync(client.GetDatabase(options.DatabaseName), options.ContainerName, ct);
         var leaseContainer = client.GetContainer(options.DatabaseName, leaseContainerName);
         var instanceName = $"{Environment.MachineName}-{Guid.NewGuid():N}";
 
@@ -208,6 +209,20 @@ public sealed class ChangeFeedWorker(
         {
             await processor.StopAsync();
         }
+    }
+
+    /// <summary>
+    /// The Functions runtime created lease containers for CosmosDBTrigger
+    /// (CreateLeaseContainerIfNotExists = true). The plain host uses fresh
+    /// "{container}-leases" containers, so provision them before starting the
+    /// processor or Cosmos answers the lease lookup with 404 and StopHost kills
+    /// the whole worker.
+    /// </summary>
+    internal static async Task EnsureLeaseContainerAsync(
+        Database database, string containerName, CancellationToken ct)
+    {
+        await database.CreateContainerIfNotExistsAsync(
+            $"{containerName}-leases", "/id", cancellationToken: ct);
     }
 
     private static IReadOnlyList<object> CastChanges(IReadOnlyCollection<object> changes, Type target)
