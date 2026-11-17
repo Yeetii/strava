@@ -20,7 +20,7 @@ deploys reach it).
 - Deploys them with Docker Compose as an internal-only stack: no ports are
   published, everything stays on a private Docker network.
 - Runs a dedicated `pmtiles` container with tippecanoe compiled in. It builds
-  the weekly race-tile archive from organizer data on a shared local volume;
+  the weekly race-tile archive from organizer data on a shared host directory;
   the API serves the result at `/tiles/trails.pmtiles`. No Azure config needed.
 - Provides a GitHub Actions deployment workflow and repeatable host
   provisioning (bootstrap script and Ansible playbook).
@@ -55,7 +55,7 @@ deploys reach it).
   worker-schedule   timer jobs - profile "schedules" (off by default)
   worker-heavy      Service Bus + Cosmos change feed - profile "workers"
                     (off by default)
-  pmtiles           weekly race-tile build; shares the race-data volume with api
+  pmtiles           weekly race-tile build; shares the host race-data directory with api
                      |
                      v
       Azure Service Bus + Cosmos DB + Blob Storage
@@ -88,7 +88,7 @@ No per-function whitelist exists any more.
 | `worker-heavy` | `Backend` | `heavy` | 12 queue consumers + 3 Cosmos change-feed processors |
 | `redis` | — | — | Durable Hangfire storage |
 | `pmtiles` | `PmtilesJob` | — | Weekly race-tile build (Hangfire scheduler) |
-| `api` (also) | — | — | Serves `/tiles/trails.pmtiles` from the shared volume |
+| `api` (also) | — | — | Serves `/tiles/trails.pmtiles` from the shared host directory |
 
 `scripts/verify-role-coverage.sh` fails CI if the trigger inventory no longer
 matches the plan (12 queues / 3 feeds / 12 crons) or if legacy function-list
@@ -97,9 +97,9 @@ env vars reappear.
 ### Race tiles
 
 The `pmtiles` image has tippecanoe compiled in and needs **no Azure connection
-strings**: organizer JSON and route GPX are read from the named `race-data`
-volume at `/data/races`, and the built archive is written to
-`/data/races/tiles/trails.pmtiles`. The `api` container mounts the same volume
+strings**: organizer JSON and route GPX are read from the host directory
+`RACE_DATA_DIR` (`/opt/data/strava/races`, mounted at `/data/races`), and the built archive is written to
+`/data/races/tiles/trails.pmtiles`. The `api` container mounts the same directory
 (writable, for admin organizer updates) and serves the archive publicly with
 HTTP range support. `worker-schedule` and `worker-heavy` mount it too and also
 use the FileSystem store, so discoveries, scrapes and the weekly build all see
@@ -110,7 +110,7 @@ the same data.
 docker compose run --rm pmtiles build-race-tiles-from-organizers
 ```
 
-One-time rollout seeds the volume from Blob; see the seeding steps in [DEPLOY.md](DEPLOY.md).
+One-time rollout seeds the host directory from Blob; see the seeding steps in [DEPLOY.md](DEPLOY.md).
 Tune the container with `PMTILES_MEMORY_LIMIT` and `PMTILES_CPUS` in `.env`.
 
 ## First-time setup

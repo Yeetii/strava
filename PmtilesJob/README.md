@@ -13,7 +13,7 @@ Both modes call the same build service; only the trigger differs.
 | Scheduler | `dotnet run --project PmtilesJob/PmtilesJob.csproj -- schedule-race-tiles` | Production. Registers a weekly Hangfire recurring job on Redis and stays running. Compose starts the container with this command. |
 | One-shot | `dotnet run --project PmtilesJob/PmtilesJob.csproj -- build-race-tiles-from-organizers` | Manual rebuilds and verification. Builds once, then exits. |
 
-With Compose, the one-shot form runs against the shared race-data volume:
+With Compose, the one-shot form runs against the shared host directory `/opt/data/strava/races` (mounted at `/data/races`):
 
 ```bash
 docker compose run --rm pmtiles build-race-tiles-from-organizers
@@ -111,6 +111,6 @@ docker build -t pmtilesjob:latest -f PmtilesJob/Dockerfile .
 ```
 
 In the self-hosted stack, `deploy/docker-compose.yml` builds/pushes it as
-`peakshunters-pmtiles` and mounts the shared `race-data` volume. Start the
+`peakshunters-pmtiles` and mounts the host race-data directory at `/data/races`. Start the
 scheduler with `docker compose up -d pmtiles`, or run one build with the
 `docker compose run --rm pmtiles build-race-tiles-from-organizers` command above.

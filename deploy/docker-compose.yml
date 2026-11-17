@@ -70,7 +70,7 @@ services:
     # when the FileSystem store is selected; the public tile endpoint reads
     # /data/races/tiles/trails.pmtiles read-only.
     volumes:
-      - race-data:/data/races
+      - ${RACE_DATA_DIR:-/opt/data/strava/races}:/data/races
     healthcheck: *http-healthcheck
     mem_limit: ${API_MEMORY_LIMIT:-1g}
     cpus: "${API_CPUS:-1.0}"
@@ -95,7 +95,7 @@ services:
       OrganizerStore__Provider: FileSystem
       OrganizerStore__RaceDataDir: /data/races
     volumes:
-      - race-data:/data/races
+      - ${RACE_DATA_DIR:-/opt/data/strava/races}:/data/races
     healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_SCHEDULE_MEMORY_LIMIT:-1g}
     cpus: "${WORKER_SCHEDULE_CPUS:-1.0}"
@@ -123,7 +123,7 @@ services:
       OrganizerStore__Provider: FileSystem
       OrganizerStore__RaceDataDir: /data/races
     volumes:
-      - race-data:/data/races
+      - ${RACE_DATA_DIR:-/opt/data/strava/races}:/data/races
     healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_HEAVY_MEMORY_LIMIT:-2g}
     cpus: "${WORKER_HEAVY_CPUS:-2.0}"
@@ -138,8 +138,8 @@ services:
   # Hangfire worker for the weekly build; a one-shot run is:
   #   docker compose run --rm pmtiles build-race-tiles-from-organizers
   # No Azure connection strings are needed: organizers and tile output live on
-  # the shared race-data volume. REDIS_CONNECTION_STRING (in *plain-env) is
-  # only Hangfire storage.
+  # the host directory at /opt/data/strava/races (RACE_DATA_DIR). REDIS_CONNECTION_STRING
+  # (in *plain-env) is only Hangfire storage.
   # ---------------------------------------------------------------------------
   pmtiles:
     <<: *app-service
@@ -156,7 +156,7 @@ services:
       RaceTiles__WeeklyCron: "0 5 * * 1"
       WriteTransparency: "false"
     volumes:
-      - race-data:/data/races
+      - ${RACE_DATA_DIR:-/opt/data/strava/races}:/data/races
     healthcheck: *worker-healthcheck
     mem_limit: ${PMTILES_MEMORY_LIMIT:-2g}
     cpus: "${PMTILES_CPUS:-2.0}"
@@ -195,6 +195,5 @@ networks:
 
 volumes:
   redis-data:
-  # Organizer JSON, route GPX, optional transparency and the built PMTiles.
-  # Shared by api (serves tiles / writes organizer.json) and pmtiles (builds).
-  race-data:
+  # Race data is a host bind mount at RACE_DATA_DIR (default /opt/data/strava/races)
+  # so it is visible and backup-able from the host. Only Redis uses a named volume.

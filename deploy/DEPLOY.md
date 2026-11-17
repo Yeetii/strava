@@ -170,8 +170,9 @@ All containers should reach `healthy` or `running` within about 2 minutes.
 
 ### 7. Seed race data (one-off)
 
-The `pmtiles` container runs a weekly race-tile build from the named `race-data`
-volume shared with `api`. Populate that volume once from the existing Blob
+The `pmtiles` container runs a weekly race-tile build from the host directory
+`RACE_DATA_DIR` (`/opt/data/strava/races`, mounted at `/data/races`) shared with `api`.
+Create it on the server with `mkdir -p /opt/data/strava/races`, then populate it once from the existing Blob
 store, from a machine that has the Blob connection string configured:
 
 ```bash
@@ -305,7 +306,7 @@ immediately (for example after seeding or a data fix):
 docker compose run --rm pmtiles build-race-tiles-from-organizers
 ```
 
-It reads and writes the shared `race-data` volume; `api` then serves the new
+It reads and writes the shared host directory at `/opt/data/strava/races`; `api` then serves the new
 archive at `/tiles/trails.pmtiles`. Add `--write-transparency` to also write
 assembled race JSON to the volume.
 
