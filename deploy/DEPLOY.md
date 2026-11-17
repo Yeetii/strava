@@ -323,4 +323,3 @@ ssh -L 7071:127.0.0.1:80 <user>@<server-ip>
 curl http://localhost:7071/admin/host/keys
 ```
 
-Replace `api` with `backend-api` in the tunnel target to reach that container.

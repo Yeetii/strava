@@ -70,29 +70,6 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # Backend HTTP functions: Strava webhook, token refresh, admin and backfill
-  # endpoints. Same image as the workers; the role selects the HTTP host.
-  # ---------------------------------------------------------------------------
-  backend-api:
-    <<: *app-service
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-backend:${IMAGE_TAG:-latest}
-    environment:
-      <<: *plain-env
-      WORKER_ROLE: api
-      ApiUrl: http://api/api/
-      BackendApiUrl: http://backend-api/api/
-    expose:
-      - "80"
-    healthcheck: *http-healthcheck
-    mem_limit: ${BACKEND_API_MEMORY_LIMIT:-1g}
-    cpus: "${BACKEND_API_CPUS:-1.0}"
-    depends_on:
-      api:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  # ---------------------------------------------------------------------------
   # Scheduled jobs (the 12 weekly crons) as Hangfire recurring jobs on Redis.
   # Enable with COMPOSE_PROFILES=schedules after disabling the matching Azure
   # timer functions.
@@ -105,14 +82,12 @@ services:
       <<: *plain-env
       WORKER_ROLE: schedule
       ApiUrl: http://api/api/
-      BackendApiUrl: http://backend-api/api/
+      BackendApiUrl: http://api/api/
     healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_SCHEDULE_MEMORY_LIMIT:-1g}
     cpus: "${WORKER_SCHEDULE_CPUS:-1.0}"
     depends_on:
       api:
-        condition: service_healthy
-      backend-api:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -131,14 +106,12 @@ services:
       <<: *plain-env
       WORKER_ROLE: heavy
       ApiUrl: http://api/api/
-      BackendApiUrl: http://backend-api/api/
+      BackendApiUrl: http://api/api/
     healthcheck: *worker-healthcheck
     mem_limit: ${WORKER_HEAVY_MEMORY_LIMIT:-2g}
     cpus: "${WORKER_HEAVY_CPUS:-2.0}"
     depends_on:
       api:
-        condition: service_healthy
-      backend-api:
         condition: service_healthy
       redis:
         condition: service_healthy

@@ -21,12 +21,14 @@ if command -v az >/dev/null 2>&1; then
         for queue in calculateSummitsJobs calculateVisitedPathsJobs calculateVisitedAreasJobs \
                      activitiesfetchjobs activityFetchJobs activityprocessed activityDeleteJobs \
                      scrapeRace raceDiscoveryJobs mistralScrape enrichAdminBoundaryJobs accountDeleteJobs; do
-            count="$(az servicebus queue show \
+            read -r total active deadletter <<<"$(az servicebus queue show \
                 --resource-group "${AZURE_RESOURCE_GROUP:-}" \
                 --namespace-name "${SERVICE_BUS_NAMESPACE}" \
                 --name "${queue}" \
-                --query count -o tsv 2>/dev/null || echo "n/a")"
-            printf '%-32s %s\n' "${queue}" "${count}"
+                --query '{total:messageCount, active:countDetails.activeMessageCount, dlq:countDetails.deadLetterMessageCount}' \
+                -o tsv 2>/dev/null || printf 'n/a\tn/a\tn/a')"
+            printf '%-32s total=%-6s active=%-6s deadletter=%s\n' \
+                "${queue}" "${total:-n/a}" "${active:-n/a}" "${deadletter:-n/a}"
         done
     fi
 

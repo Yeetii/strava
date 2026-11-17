@@ -12,16 +12,6 @@ services:
     environment:
       WORKER_ROLE: api
 
-  backend-api:
-    image: peakshunters-backend:local
-    build:
-      context: ..
-      dockerfile: deploy/docker/plain-host.Dockerfile
-      args:
-        PROJECT: Backend
-    environment:
-      WORKER_ROLE: api
-
   worker-schedule:
     image: peakshunters-backend:local
     build:

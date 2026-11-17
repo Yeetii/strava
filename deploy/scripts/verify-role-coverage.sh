@@ -32,7 +32,7 @@ fi
 
 # 2. Every application container declares exactly one valid role.
 valid_roles='api|schedule|heavy'
-for container in api backend-api worker-schedule worker-heavy; do
+for container in api worker-schedule worker-heavy; do
     count="$(awk -v c="${container}:" '
         $0 ~ "^  "c { inblock=1; next }
         inblock && /^  [A-Za-z]/ { inblock=0 }
@@ -80,8 +80,9 @@ while IFS='|' read -r constant queue; do
     fi
 done < <(sed -nE 's/^[[:space:]]*public const string ([A-Za-z]+) = "([^"]+)";.*/\1|\2/p' "${SB_CONFIG}")
 
-# No duplicate function names within a project (API and Backend are separate
-# hosts, so the same name may legitimately appear in both).
+# No duplicate function names within a project. Cross-assembly HTTP route and
+# verb collisions are checked by PlainHostTests in C#, which can see the actual
+# [HttpTrigger] metadata (a shared name may be a timer/feed in one project).
 for project_dir in "${BACKEND_DIR}" "${API_DIR}"; do
     duplicates="$(grep -rhoE '\[Function\("([^"]+)"\)\]|\[Function\(nameof\(([A-Za-z0-9_]+)\)\)\]' \
         "${project_dir}" --include='*.cs' \

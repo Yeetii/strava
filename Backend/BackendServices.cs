@@ -19,8 +19,9 @@ using Shared.Hosting;
 namespace Backend;
 
 /// <summary>
-/// The Backend DI graph, shared by the backend-api, worker-schedule and
-/// worker-heavy hosts. Transfers verbatim from the old Functions Program.cs.
+/// The Backend DI graph used by the worker-schedule and worker-heavy hosts.
+/// The merged `api` host registers the few Backend-only services its HTTP
+/// functions need directly; see API/Program.cs.
 /// </summary>
 public static class BackendServices
 {

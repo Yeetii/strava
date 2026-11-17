@@ -22,10 +22,11 @@ instructions.
 
 ### What is done
 
-- **Docker Compose stack** with `api`, `backend-api`, `worker-schedule`
-  (profile: `schedules`), `worker-heavy` (profile: `workers`) and a durable
-  `redis` container. The `API` and `Backend` projects now run as plain .NET 10
-  ASP.NET Core / Generic Hosts — the Functions runtime has been removed.
+- **Docker Compose stack** with `api` (all API and Backend HTTP functions),
+  `worker-schedule` (profile: `schedules`), `worker-heavy` (profile: `workers`)
+  and a durable `redis` container. The `API` and `Backend` projects now run as
+  plain .NET 10 ASP.NET Core / Generic Hosts — the Functions runtime has been
+  removed.
 - **Internal-only deployment.** No public ports, no TLS, no reverse proxy.
   The server lives on the home network and connects outbound to Azure. The Azure
   API Function App stays up and handles all external traffic during this phase.

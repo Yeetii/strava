@@ -1,5 +1,7 @@
 using API;
 using API.Utils;
+using Backend;
+using Shared.Geo.SummitsCalculator;
 using Hangfire;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -187,6 +189,12 @@ builder.Services.AddScoped(serviceProvider =>
 builder.Services.AddScoped<UserSyncService>();
 builder.Services.AddScoped<UserSyncStatusService>();
 
+// Services needed only by the Backend HTTP functions now hosted here. Their
+// other dependencies are already registered above.
+builder.Services.AddSingleton<AdminBoundaryMetricsEnricher>();
+builder.Services.AddSingleton<ISummitsCalculator, SummitsCalculatorWithBoundingBoxFilter>();
+builder.Services.AddSingleton<RaceDiscoveryService>();
+
 // Azure SignalR stays; negotiate is produced by the same code path so the
 // response shape is unchanged. See SignalRNegotiate.
 builder.Services.AddSingleton<Func<string, SignalRConnectionInfo>>(_ =>
@@ -243,6 +251,7 @@ app.UseHangfireDashboard(HangfireDashboardGuard.DashboardPath, new DashboardOpti
 });
 
 app.MapFunctions(typeof(Program).Assembly);
+app.MapFunctions(typeof(StravaWebhook).Assembly);
 
 app.MapGet("/health", () => Results.Ok("ok"));
 

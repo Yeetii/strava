@@ -18,13 +18,6 @@ docker compose exec -T api \
     exit 1
 }
 
-echo "Checking backend-api container responds on port 80..."
-docker compose exec -T backend-api \
-    bash -c 'exec 3<>/dev/tcp/127.0.0.1/80' || {
-    echo "Backend-API health check failed" >&2
-    exit 1
-}
-
 echo "Checking worker containers respond on port 80..."
 for svc in worker-schedule worker-heavy; do
     if [ -n "$(docker compose ps -q "${svc}")" ]; then

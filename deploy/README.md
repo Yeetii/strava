@@ -42,11 +42,12 @@ deploys reach it).
               |   (backend)   |
               +--+---------+--+
                  |         |
-        +--------v--+ +----v-----------+
-        |    api    | |  backend-api   |
-        | (all API  | | (Backend HTTP: |
-        | functions)| |  webhook, etc.)|
-        +-----------+ +----------------+
+        +--------v----------------+
+        |           api          |
+        | (API + Backend HTTP:   |
+        |  endpoints, webhook,   |
+        |  token refresh, admin) |
+        +------------------------+
 
   worker-schedule   timer jobs - profile "schedules" (off by default)
   worker-heavy      Service Bus + Cosmos change feed - profile "workers"
@@ -79,8 +80,7 @@ No per-function whitelist exists any more.
 
 | Container | Project | Role | Work |
 | --- | --- | --- | --- |
-| `api` | `API` | `api` | All 59 endpoints (route prefix `/api`) on Kestrel |
-| `backend-api` | `Backend` | `api` | Backend HTTP functions (webhook, token refresh, admin, backfill) |
+| `api` | `API` + `Backend` | `api` | All API endpoints plus Backend HTTP functions (webhook, token refresh, admin, backfill) on Kestrel |
 | `worker-schedule` | `Backend` | `schedule` | 12 Hangfire recurring jobs |
 | `worker-heavy` | `Backend` | `heavy` | 12 queue consumers + 3 Cosmos change-feed processors |
 | `redis` | — | — | Durable Hangfire storage |
@@ -167,8 +167,8 @@ docker compose ps
 
 At this point:
 
-- `api` and `backend-api` serve on the internal Docker network, reachable from
-  the home network or through an SSH tunnel.
+- `api` serves all HTTP functions on the internal Docker network, reachable
+  from the home network or through an SSH tunnel.
 - No workers are consuming Azure Service Bus queues or running timers.
 
 Run the smoke test:
