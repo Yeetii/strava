@@ -235,8 +235,11 @@ public static class FunctionHttpMapper
             await WriteHttpResponseAsync(httpResponse, request, context);
 
         // Retain the Functions behaviour where a CORS middleware injected the
-        // origin header only when the endpoint had not already set it.
-        if (!context.Response.Headers.ContainsKey("Access-Control-Allow-Origin")
+        // origin header only when the endpoint had not already set it. The
+        // response may already have started (body written above); modifying
+        // headers then would throw and abort the transfer, so stay best-effort.
+        if (!context.Response.HasStarted
+            && !context.Response.Headers.ContainsKey("Access-Control-Allow-Origin")
             && request.Headers.TryGetValues("Origin", out var origins))
         {
             var origin = origins.FirstOrDefault();
@@ -258,6 +261,7 @@ public static class FunctionHttpMapper
         CancellationToken ct)
     {
         HttpResponseData? httpResponse = null;
+        var actionResultWritten = false;
         foreach (var property in bindings.GetType().GetProperties())
         {
             var value = property.GetValue(bindings);
@@ -269,7 +273,10 @@ public static class FunctionHttpMapper
                 if (value is HttpResponseData responseData)
                     httpResponse = responseData;
                 else if (value is IActionResult actionResult)
+                {
                     await WriteActionResultAsync(actionResult, context);
+                    actionResultWritten = true;
+                }
             }
 
             var serviceBus = property.GetCustomAttribute<ServiceBusOutputAttribute>();
@@ -286,6 +293,13 @@ public static class FunctionHttpMapper
         }
 
         await ProcessCosmosMethodOutputAsync(bindings, method, services, ct);
+        // An IActionResult [HttpResult] was written straight to HttpContext.
+        // Fabricating a fresh OK response here would rewrite StatusCode and
+        // headers on the already-started response — aborting the transfer
+        // once the body was written, or clobbering the real status (403 →
+        // 200) on body-less results — so return no response to write.
+        if (actionResultWritten)
+            return null;
         return httpResponse ?? request.CreateResponse(HttpStatusCode.OK);
     }
 
