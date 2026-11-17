@@ -24,7 +24,7 @@ public record AdminAssembledRaceListItem(
     IReadOnlyList<string> Sources);
 
 public class GetAssembledRaces(
-    BlobOrganizerStore organizerStore,
+    IOrganizerStore organizerStore,
     IConfiguration configuration)
 {
     [OpenApiOperation(tags: ["Admin"], Summary = "List assembled race features.")]

@@ -11,7 +11,7 @@ using Shared.Services;
 namespace API.Endpoints.Admin;
 
 public class GetOrganizerRedirectCandidates(
-    BlobOrganizerStore organizerStore,
+    IOrganizerStore organizerStore,
     IConfiguration configuration,
     IHttpClientFactory httpClientFactory,
     ILogger<GetOrganizerRedirectCandidates> logger)
@@ -113,7 +113,7 @@ public class GetOrganizerRedirectCandidates(
                     if (finalUri is null)
                         return;
 
-                    var finalOrganizerKey = BlobOrganizerStore.DeriveOrganizerKey(finalUri);
+                    var finalOrganizerKey = OrganizerUrlRules.DeriveOrganizerKey(finalUri);
                     if (string.Equals(finalOrganizerKey, target.OrganizerKey, StringComparison.OrdinalIgnoreCase))
                         return;
 

@@ -10,7 +10,7 @@ using Shared.Services;
 namespace API.Endpoints.Admin;
 
 public class GetOrganizerStats(
-    BlobOrganizerStore organizerStore,
+    IOrganizerStore organizerStore,
     IConfiguration configuration)
 {
     private static readonly string[] DiscoverySources =

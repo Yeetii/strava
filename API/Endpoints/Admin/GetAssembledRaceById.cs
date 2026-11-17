@@ -10,7 +10,7 @@ using Shared.Services;
 namespace API.Endpoints.Admin;
 
 public class GetAssembledRaceById(
-    BlobOrganizerStore organizerStore,
+    IOrganizerStore organizerStore,
     IConfiguration configuration)
 {
     [OpenApiOperation(tags: ["Admin"], Summary = "Inspect one assembled race feature.")]

@@ -59,7 +59,7 @@ public class PostManualMistralScrape(
             return badReq;
         }
 
-        var organizerKey = BlobOrganizerStore.DeriveOrganizerKey(parsedUrl);
+        var organizerKey = OrganizerUrlRules.DeriveOrganizerKey(parsedUrl);
 
         var requestMessage = new QueueMessage(JsonSerializer.Serialize(new ManualMistralScrapeQueueMessage(parsedUrl.AbsoluteUri, body.Name), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))
         {

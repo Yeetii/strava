@@ -10,7 +10,7 @@ using Shared.Services;
 namespace API.Endpoints.Admin;
 
 public class PostOrganizerRedirect(
-    BlobOrganizerStore organizerStore,
+    IOrganizerStore organizerStore,
     IConfiguration configuration,
     ILogger<PostOrganizerRedirect> logger)
 {
@@ -47,8 +47,8 @@ public class PostOrganizerRedirect(
         if (!TryParseHttpUrl(body.ToUrl, out var toUrl))
             return await BadRequest(req, "Invalid toUrl — must be an absolute http(s) URL", cancellationToken);
 
-        var sourceOrganizerKey = BlobOrganizerStore.DeriveOrganizerKey(fromUrl);
-        var targetOrganizerKey = BlobOrganizerStore.DeriveOrganizerKey(toUrl);
+        var sourceOrganizerKey = OrganizerUrlRules.DeriveOrganizerKey(fromUrl);
+        var targetOrganizerKey = OrganizerUrlRules.DeriveOrganizerKey(toUrl);
 
         try
         {
