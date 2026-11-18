@@ -37,7 +37,7 @@ What still drives cost: Cosmos DB RU pressure, excessive reads/writes, and the r
 | Guardrail | `deploy/scripts/verify-role-coverage.sh`: 12 queues / 3 feeds / 12 crons each map to one role; legacy function-list env vars rejected. |
 | Monitoring / backups | Beszel. **No automated host backup job in the repo** (`backups/` is gitignored) — adding one is part of adding Postgres. Cosmos/Storage have platform backups. |
 
-**Still on Azure:** Cosmos DB (`activities`, `users`, `userSyncItems`, `sessions`, `visitedPaths`, `visitedAreas`, `peaksGroups`, `summitedPeaks`, `osmFeatures`, `raceOrganizers`), Blob, Azure SignalR.
+**Still on Azure:** Cosmos DB (`activities`, `users`, `userSyncItems`, `sessions`, `visitedPaths`, `visitedAreas`, `peaksGroups`, `summitedPeaks`, `osmFeatures`, `raceOrganizers`), Azure SignalR.
 
 **Not done:** Postgres (no `Npgsql`/EF/PostgreSql reference anywhere), general Redis read caching beyond geocoding, and the operational proof listed below.
 
@@ -66,7 +66,7 @@ Still-open proof (do not claim done): worker soak against production traffic; P0
 
 **Phase 7 — final cutover.** Short controlled write freeze per entity: pause/queue writes → final sync → validate counts → switch reads then writes → resume. Keep Cosmos read-only through a validation period.
 
-**Phase 8 — decommission.** Order: **Tables → Blob → Cosmos**. Azure SignalR is explicitly out of scope (separate follow-up). The `PmtilesJob` Rust pilot is a parallel ADR-0001 track, not a phase of this plan.
+**Phase 8 — decommission.** Azure Blob Storage and Table Storage have been removed from source. Cosmos remains to be migrated to Postgres. Azure SignalR is explicitly out of scope (separate follow-up).
 
 ---
 

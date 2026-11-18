@@ -12,11 +12,6 @@ namespace CosmosBulkDelete
     {
         static async Task<int> Main(string[] args)
         {
-            if (args.Length > 0 && string.Equals(args[0], ExportOrganizersToDisk.CommandName, StringComparison.OrdinalIgnoreCase))
-            {
-                return await ExportOrganizersToDisk.RunAsync(args[1..]);
-            }
-
             if (args.Length < 2)
             {
                 Console.WriteLine("Usage: dotnet run <container> <query> [partitionKeyProperty]");

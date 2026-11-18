@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Identity;
 using Azure.Monitor.Query;
-using Azure.Storage.Blobs;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -73,18 +72,6 @@ new CollectionClientBuilder(builder.Services)
     .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
     .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer);
 
-// Organizer store is selected by OrganizerStore:Provider (Blob by default,
-// FileSystem for the self-hosted stack). Keep container creation for the Blob
-// provider so existing deployments behave exactly as before.
-if (!string.Equals(
-        configuration[AppConfig.OrganizerStoreProvider],
-        OrganizerStoreProviders.FileSystem,
-        StringComparison.OrdinalIgnoreCase))
-{
-    var blobConnection = configuration.GetValue<string>("BlobStorageConnection")
-        ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
-    new BlobContainerClient(blobConnection, BlobContainerNames.RaceOrganizers).CreateIfNotExists();
-}
 builder.Services.AddOrganizerStore(configuration);
 builder.Services.AddShardStore(configuration);
 builder.Services.AddSingleton(serviceProvider =>

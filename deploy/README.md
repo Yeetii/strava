@@ -31,7 +31,7 @@ Step-by-step operator instructions are in [DEPLOY.md](DEPLOY.md).
 
 **Does not do yet**
 
-- Cosmos DB, Blob Storage and Azure SignalR remain on Azure.
+- Cosmos DB and Azure SignalR remain on Azure.
 - PostgreSQL is not deployed — that is Phase 5 of the migration plan.
 - Redis is Hangfire storage and the shared geocoding cache; **general read caching
   is not wired yet** (only geocoding uses `RedisGeocodingCache`, in both `Backend`
@@ -59,7 +59,7 @@ Step-by-step operator instructions are in [DEPLOY.md](DEPLOY.md).
   └──────────────────────────────────────────────────────────────────────────┘
         │ outbound only
         ▼
-  Cosmos DB · Blob Storage · Azure SignalR
+  Cosmos DB · Azure SignalR
   (production backing services; Service Bus and Functions are gone)
 ```
 

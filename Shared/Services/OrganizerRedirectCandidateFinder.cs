@@ -45,7 +45,7 @@ public static class OrganizerRedirectCandidateFinder
                     continue;
                 }
 
-                var derivedOrganizerKey = BlobOrganizerStore.DeriveOrganizerKey(parsedUrl);
+                var derivedOrganizerKey = OrganizerUrlRules.DeriveOrganizerKey(parsedUrl);
                 if (IsSluggedOrganizerId(derivedOrganizerKey)
                     || string.Equals(derivedOrganizerKey, doc.Id, StringComparison.OrdinalIgnoreCase)
                     || !organizerIds.Contains(derivedOrganizerKey))

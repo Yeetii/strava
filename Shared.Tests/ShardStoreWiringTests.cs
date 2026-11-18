@@ -25,9 +25,9 @@ public sealed class ShardStoreWiringTests : IDisposable
     }
 
     [Fact]
-    public void AddShardStore_FileSystemProvider_ResolvesFilesystemStores_WithoutBlobConnection()
+    public void AddShardStore_FileSystemProvider_ResolvesFilesystemStores()
     {
-        using var provider = BuildProvider(useFileSystem: true);
+        using var provider = BuildProvider();
 
         Assert.IsType<FileSystemShardRepository>(provider.GetRequiredService<IShardRepository>());
         Assert.IsType<FileSystemShardIndexStore>(provider.GetRequiredService<IShardIndexStore>());
@@ -36,7 +36,7 @@ public sealed class ShardStoreWiringTests : IDisposable
     [Fact]
     public void AddShardStore_FileSystemProvider_ResolvesFullShardStack()
     {
-        using var provider = BuildProvider(useFileSystem: true, registerStack: true);
+        using var provider = BuildProvider(registerStack: true);
 
         Assert.NotNull(provider.GetRequiredService<ShardFeatureClient>());
         Assert.NotNull(provider.GetRequiredService<HighwayZoomIndexService>());
@@ -58,7 +58,7 @@ public sealed class ShardStoreWiringTests : IDisposable
     }
 
     [Fact]
-    public void AddShardStore_BlobProvider_WithoutConnection_Throws()
+    public void AddShardStore_BlobProvider_ThrowsNotSupported()
     {
         var services = CreateBaseServices();
         var configuration = new ConfigurationBuilder()
@@ -68,22 +68,17 @@ public sealed class ShardStoreWiringTests : IDisposable
             })
             .Build();
 
-        Assert.Throws<InvalidOperationException>(() => services.AddShardStore(configuration));
+        Assert.Throws<NotSupportedException>(() => services.AddShardStore(configuration));
     }
 
-    private ServiceProvider BuildProvider(bool useFileSystem, bool registerStack = false)
+    private ServiceProvider BuildProvider(bool registerStack = false)
     {
         var services = CreateBaseServices();
-        var values = new Dictionary<string, string?>();
-        if (useFileSystem)
+        var values = new Dictionary<string, string?>
         {
-            values[AppConfig.ShardStoreProvider] = ShardStoreProviders.FileSystem;
-            values[AppConfig.ShardStoreRootDir] = _root;
-        }
-        else
-        {
-            values[AppConfig.ShardStoreProvider] = ShardStoreProviders.Blob;
-        }
+            [AppConfig.ShardStoreProvider] = ShardStoreProviders.FileSystem,
+            [AppConfig.ShardStoreRootDir] = _root,
+        };
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         services.AddShardStore(configuration);

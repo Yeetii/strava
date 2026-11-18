@@ -86,7 +86,7 @@ public sealed class ShardIndexStoreTests : IDisposable
 
         var selection = await service.RebuildIndexAsync(7, 68, 38, CancellationToken.None);
 
-        var path = HighwayZoomIndexService.GetIndexBlobPath(7, 68, 38);
+        var path = HighwayZoomIndexService.GetIndexPath(7, 68, 38);
         Assert.True(store.Entries.ContainsKey(path));
         var index = JsonSerializer.Deserialize<HighwayTileShardIndex>(store.Entries[path], JsonOptions);
         Assert.NotNull(index);
@@ -101,7 +101,7 @@ public sealed class ShardIndexStoreTests : IDisposable
     {
         var store = new InMemoryShardIndexStore();
         var timestamp = new DateTimeOffset(2026, 11, 17, 12, 0, 0, TimeSpan.Zero);
-        store.SetLastModified(HighwayZoomIndexService.GetIndexBlobPath(7, 68, 38), timestamp);
+        store.SetLastModified(HighwayZoomIndexService.GetIndexPath(7, 68, 38), timestamp);
         var service = new HighwayZoomIndexService(
             store,
             new FakeShardRepository(null),

@@ -2,7 +2,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Azure.Storage.Blobs;
 using Hangfire;
 using Microsoft.Azure.Cosmos;
 using PmtilesJob;
@@ -67,38 +66,14 @@ var builder = Host.CreateDefaultBuilder(args)
             services.AddSingleton<IHostedService, RaceTilesRecurringJobRegistrationService>();
         }
 
-        if (command.Command is PmtilesCommandKind.BuildAdminAreas
-            or PmtilesCommandKind.ExportOrganizersToBlob)
+        if (command.Command is PmtilesCommandKind.BuildAdminAreas)
         {
-            if (command.Command == PmtilesCommandKind.ExportOrganizersToBlob)
-            {
-                var blobConnection = configuration.GetConnectionString("BlobStorageConnection")
-                    ?? configuration["BlobStorageConnection"]
-                    ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
-
-                var organizersContainerName = Shared.Constants.BlobContainerNames.RaceOrganizers;
-                var organizersContainerClient = new BlobContainerClient(blobConnection, organizersContainerName);
-                services.AddSingleton(sp =>
-                    new Shared.Services.BlobOrganizerStore(organizersContainerClient, sp.GetRequiredService<ILoggerFactory>()));
-
-                services.AddSingleton(new BlobServiceClient(blobConnection));
-            }
-
             var cosmosConnection = configuration.GetConnectionString("CosmosDBConnection")
                 ?? configuration["CosmosDBConnection"]
                 ?? throw new InvalidOperationException("CosmosDBConnection is not configured.");
 
             services.AddSingleton(new CosmosClient(cosmosConnection));
-
-            if (command.Command == PmtilesCommandKind.BuildAdminAreas)
-            {
-                services.AddSingleton<AdminAreaPmtilesBuildService>();
-            }
-
-            if (command.Command == PmtilesCommandKind.ExportOrganizersToBlob)
-            {
-                services.AddSingleton<ExportOrganizersToBlobService>();
-            }
+            services.AddSingleton<AdminAreaPmtilesBuildService>();
         }
     })
     .ConfigureLogging(logging =>
@@ -148,13 +123,6 @@ try
         {
             var job = scope.ServiceProvider.GetRequiredService<AdminAreaPmtilesBuildService>();
             await job.BuildAdminAreasAsync(command.OutputPath!, command.AdminLevels ?? AdminAreaPmtilesBuildService.DefaultAdminLevels, cancellationToken);
-            return 0;
-        }
-
-        case PmtilesCommandKind.ExportOrganizersToBlob:
-        {
-            var job = scope.ServiceProvider.GetRequiredService<ExportOrganizersToBlobService>();
-            await job.ExportAsync(cancellationToken);
             return 0;
         }
 
