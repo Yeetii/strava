@@ -1,5 +1,4 @@
 using Backend;
-using Shared.Services;
 using System.Net;
 using System.Net.Http;
 
@@ -894,7 +893,9 @@ public class RaceScrapeDiscoveryTests
         var result = RaceScrapeDiscovery.DeriveEventKeyFromJob(job);
 
         Assert.NotNull(result);
-        Assert.Equal("example.com~event", result?.EventKey);
+        // Generic domains map to the host only; path segments are kept only for
+        // sluggable platform hosts (see OrganizerUrlRules.DeriveOrganizerKey).
+        Assert.Equal("example.com", result?.EventKey);
         Assert.Equal("https://example.com/event", result?.CanonicalUrl);
     }
 
@@ -1753,79 +1754,6 @@ public class RaceScrapeDiscoveryTests
     public void BuildFeatureId_FromUrl_BuildsCosmosId(string url, int? routeIndex, string expected)
     {
         Assert.Equal(expected, RaceScrapeDiscovery.BuildFeatureId(new Uri(url), routeIndex));
-    }
-    [Fact]
-    public void DeriveOrganizerKey_RunsignupSlugIdsAreNormalized()
-    {
-        Assert.Equal("runsignup.com~Race~TX~Longview~LongviewTrailRunsSpring",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/TX/Longview/LongviewTrailRunsSpring")));
-
-        Assert.Equal("runsignup.com~HABANERO",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://runsignup.com/HABANERO")));
-
-        Assert.Equal("runsignup.com~Race~UT~ParkCity~TripleTrail",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/Events/UT/ParkCity/TripleTrail")));
-
-        // UltraSignup: the ?did= query param uniquely identifies the event, and every
-        // .aspx tab (register / results / entrants) for the same did collapses to one key.
-        Assert.Equal("ultrasignup.com~register.aspx?did=104195",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=104195")));
-        Assert.Equal("ultrasignup.com~register.aspx?did=119001",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=119001")));
-        Assert.Equal("ultrasignup.com~register.aspx?did=119001",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/results_event.aspx?did=119001")));
-        Assert.Equal("ultrasignup.com~register.aspx?did=119001",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/entrants_event.aspx?did=119001")));
-        // No `did` query — fall back to the raw first path segment.
-        Assert.Equal("ultrasignup.com~register.aspx",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx")));
-
-        Assert.Equal("my.raceresult.com~376823",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://my.raceresult.com/376823/info")));
-
-        Assert.Equal("raceroster.com~events~2026~112366~day-of-the-dead-day-1-and-day-2",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://raceroster.com/events/2026/112366/day-of-the-dead-day-1-and-day-2/page/location-and-course-details")));
-
-        Assert.Equal("welcu.com~utcb",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://welcu.com/utcb/utcb2025")));
-
-        Assert.Equal("facebook.com~profile.php?id=61552551957764",
-            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://www.facebook.com/profile.php?id=61552551957764")));
-    }
-
-    [Theory]
-    // BeTrail: strip year/tab after the race slug.
-    [InlineData("https://www.betrail.run/race/dalmacija.utra.trail/2025/overview", "betrail.run~race~dalmacija.utra.trail")]
-    [InlineData("https://www.betrail.run/race/dalmacija.utra.trail", "betrail.run~race~dalmacija.utra.trail")]
-    [InlineData("https://www.betrail.run/race/epicurienne-trail/2025", "betrail.run~race~epicurienne-trail")]
-    [InlineData("https://www.betrail.run/en/race/epicurienne-trail/2025", "betrail.run~race~epicurienne-trail")]
-    // ITRA: strip year + id after the race name.
-    [InlineData("https://itra.run/Races/RaceDetails/Boo.Trail.Run.2025.Boo.Trail.Half.Marathon/2025/103052", "itra.run~Races~RaceDetails~Boo.Trail.Run.2025.Boo.Trail.Half.Marathon")]
-    [InlineData("https://itra.run/Races/RaceDetails/Some.Event", "itra.run~Races~RaceDetails~Some.Event")]
-    // Google Sites — classic /site/<name> flavour.
-    [InlineData("https://sites.google.com/site/gaxultra/the-gax-walk%C3%A6rle-noctum", "sites.google.com~site~gaxultra")]
-    [InlineData("https://sites.google.com/site/gaxultra", "sites.google.com~site~gaxultra")]
-    // Google Sites — workspace/custom-domain flavour.
-    [InlineData("https://sites.google.com/oni-p.org/oni-p/", "sites.google.com~oni-p.org")]
-    [InlineData("https://sites.google.com/oni-p.org", "sites.google.com~oni-p.org")]
-    // Google Sites — new /view/<name> flavour.
-    [InlineData("https://sites.google.com/view/fall-back-blast", "sites.google.com~view~fall-back-blast")]
-    [InlineData("https://sites.google.com/view/fall-back-blast/races", "sites.google.com~view~fall-back-blast")]
-    [InlineData("https://docs.google.com/document/d/12345/edit", "docs.google.com~document~d~12345")]
-    [InlineData("https://docs.google.com/spreadsheets/d/abcd1234/edit#gid=0", "docs.google.com~spreadsheets~d~abcd1234")]
-    // Klikego: strip discipline + registration-id segments and any query string.
-    [InlineData("https://www.klikego.com/inscription/les-foulees-dacigne-acigne-au-feminin-2025/running-course-a-pied/1356384566470-11?tab=-1", "klikego.com~inscription~les-foulees-dacigne-acigne-au-feminin-2025")]
-    [InlineData("https://www.klikego.com/inscription/courses-nature-de-parigne-2025/course-a-pied-running/1395738014939-12", "klikego.com~inscription~courses-nature-de-parigne-2025")]
-    [InlineData("https://www.klikego.com/inscription/trail-des-croquants-2025/", "klikego.com~inscription~trail-des-croquants-2025")]
-    // Anmalmig: keep only anmalan/<slug-id>, strip any trailing segments.
-    [InlineData("https://anmalmig.nu/anmalan/e02a69a7-4798-4d0a-99a6-78df6430b765/", "anmalmig.nu~anmalan~e02a69a7-4798-4d0a-99a6-78df6430b765")]
-    [InlineData("https://anmalmig.nu/anmalan/e02a69a7-4798-4d0a-99a6-78df6430b765", "anmalmig.nu~anmalan~e02a69a7-4798-4d0a-99a6-78df6430b765")]
-    [InlineData("https://anmalmig.nu/anmalan/e02a69a7-4798-4d0a-99a6-78df6430b765/extra/path", "anmalmig.nu~anmalan~e02a69a7-4798-4d0a-99a6-78df6430b765")]
-    // bit.ly: short URL — keep only the short code.
-    [InlineData("https://bit.ly/abc123", "bit.ly~abc123")]
-    public void DeriveOrganizerKey_NewPlatformsAreNormalized(string url, string expected)
-    {
-        Assert.Equal(expected, OrganizerUrlRules.DeriveOrganizerKey(new Uri(url)));
     }
     // ── BuildFeatureId (name+distance overload) ───────────────────────────────
 

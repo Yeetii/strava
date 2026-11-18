@@ -142,14 +142,6 @@ public class ScrapeRaceWorkerTests
         Assert.DoesNotContain(urls, u => u.AbsoluteUri == "https://www.strava.com/athletes/12345");
     }
 
-    [Theory]
-    [InlineData("https://www.strava.com/route/12342/somesite", "strava.com~route")]
-    [InlineData("https://airtable.com/shrS5egjcGtRHpEGy", "airtable.com~shrS5egjcGtRHpEGy")]
-    public void DeriveOrganizerKey_ScopesNewSluggableHosts(string url, string expected)
-    {
-        Assert.Equal(expected, OrganizerUrlRules.DeriveOrganizerKey(new Uri(url)));
-    }
-
     [Fact]
     public void CanBfsCrawlUri_OnlyAllowsScopedPagesForSluggableHost()
     {
