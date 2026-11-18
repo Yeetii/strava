@@ -1,0 +1,38 @@
+# Azure Decommission — remove the last traces of Azure
+Branch: chore/azure-decommission
+Delivery strategy: ask-on-risk. Test runner: `dotnet test strava.sln` (+ `deploy/scripts/verify-role-coverage.sh`, `docker compose config`).
+
+## Specs
+
+S1. "Remove the last traces of azure in the final step of the migration to self hosted" — Authorized scope: Phase 8 (decommission) of the self-hosted migration. The Cosmos→Postgres cutover is functionally complete (cosmos-to-postgres-migration.md L16); what remains is dead Azure code, leftover SDK packages, and Azure deploy artifacts.
+
+S2. "Full decommission" — "Remove ALL live Azure code and config: dead Cosmos/Functions shims, every Azure SDK package + usings, the 2 Azure Function App deploy workflows, and Tools/AzureWorkbooks. Keep historical docs/ADRs as the migration record. Deletes the Azure rollback path." Acceptance: no `Microsoft.Azure.Cosmos`, `Azure.Identity`, or `Azure.Monitor.Query` package reference in any `.csproj`; no `using Microsoft.Azure.Cosmos` / `Azure.Identity` / `Azure.Monitor.Query` in source; no Cosmos SDK types (`CosmosClient`, `Container`, `PatchOperation`, `ChangeFeedProcessor`, `CosmosDB*Attribute`) in source; the two Azure Function App workflows and `Tools/AzureWorkbooks/` deleted. Historical specs/ADRs/runbooks that document the migration stay. The `Microsoft.Azure.Functions.Worker` / `Microsoft.Azure.WebJobs.Extensions.OpenApi.Core` namespaces stay: they are local compatibility types defined in `Shared.Hosting/FunctionsShim.cs` and `OpenApiShim.cs`, used by ~100 endpoint files, not Azure SDK packages.
+
+S3. Preserve `Tools/sync-openapi-source.mjs` (referenced by `package.json` `openapi:sync`) and keep `dotnet test strava.sln`, the role-coverage gate, and `docker compose config` green. Update operational docs that reference deleted commands; keep historical docs/ADRs as records.
+
+S4. Known live leftover to migrate: `Shared/Services/StravaTokenService.cs` is registered in `API/Program.cs:122` and injected into `GetStravaRouteGpx` / `GetStravaRoutes`, but still writes refreshed tokens through Cosmos `CollectionClient<Models.User>.PatchDocument` + `PatchOperation`. `CollectionClient<T>` is not registered in any host, so this is dead/broken wiring. Migrate it to `IUserRepository.Upsert(User)` (the user row already holds `access_token`, `token_expires_at`, `strava_scope`) and pin the behavior with a unit test.
+
+S5. Verification: full solution builds with 0 errors; `dotnet test strava.sln` green except the documented pre-existing `RaceScrapeDiscoveryTests.DeriveEventKeyFromJob_ChoosesBestAvailableSourceUrl` failure; role gate green; grep finds no Azure SDK package refs or Cosmos SDK types in source; `opencode.json`'s `azurewebsites.net` MCP URL left untouched (user tooling config, not app code).
+
+## Tasks
+
+T1 (S4, S5): Migrate StravaTokenService to IUserRepository.Upsert; add RED unit test then GREEN | route: inline | status: done | commit: pending (slice 1)
+T2 (S2, S5): Remove dead Cosmos shim code from Shared.Hosting (CosmosDB* attributes, FunctionHttpMapper Cosmos branches, QueueAndFeedHostedServices change-feed processor, FunctionWorkerHost CosmosDBTrigger handling) | route: inline | status: done | commit: pending (slice 1)
+T3 (S2, S5): Delete dead Cosmos-based Shared services (CollectionClient, CollectionClientBuilder, TiledCollectionClient, AdminBoundariesCollectionClient + their tests), drop Microsoft.Azure.Cosmos from Shared.csproj | route: inline | status: pending | commit: pending
+T4 (S2, S3, S5): Drop Microsoft.Azure.Cosmos from PmtilesJob.csproj; delete the Cosmos migration Tools (csproj, Program.cs, CosmosToPostgresMigrator.cs, AzureWorkbooks/) preserving sync-openapi-source.mjs; clear stale Cosmos usings in API/Backend/tests and update operational docs | route: inline | status: pending | commit: pending
+T5 (S2, S5): Remove Azure.Identity/Azure.Monitor.Query packages + usings (API, Backend); delete the two Azure Function App deploy workflows | route: inline | status: pending | commit: pending
+T6 (S3, S5): Final verification + update Shared/MIGRATION_PLAN_SELF_HOSTED.md Phase 8 to decommission-complete | route: inline | status: pending | commit: pending
+
+## Log
+
+L1 (2026-11-18): "Remove the last traces of azure in the final step of the migration to self hosted"
+
+L2 (2026-11-18): User selected scope "Full decommission" with the description: "Remove ALL live Azure code and config: dead Cosmos/Functions shims, every Azure SDK package + usings, the 2 Azure Function App deploy workflows, and Tools/AzureWorkbooks. Keep historical docs/ADRs as the migration record. Deletes the Azure rollback path." No extra note added to the scope page; the pre-question note stands: opencode.json's azurewebsites.net MCP URL stays (user tooling config, not app code).
+
+L3 (2026-11-18): Exploration map. Branch renamed sharp-zebra → chore/azure-decommission. Azure SDK package refs: Microsoft.Azure.Cosmos (Shared, PmtilesJob, Tools/CosmosBulkDelete), Azure.Identity (API, Backend), Azure.Monitor.Query (API). No Microsoft.Azure.Functions.Worker or Service Bus SDK package — those are local shims in Shared.Hosting. Dead Cosmos shim code confined to Shared.Hosting/{FunctionsShim,FunctionHttpMapper,QueueAndFeedHostedServices,FunctionWorkerHost}.cs. Cosmos-based Shared services (CollectionClient<T>, CollectionClientBuilder, TiledCollectionClient, AdminBoundariesCollectionClient) have no host DI registration. Found live leftover StravaTokenService still on Cosmos (S4). CosmosBulkDelete.csproj is not in strava.sln; sync-openapi-source.mjs is referenced by package.json. PmtilesJob has no Cosmos usage in .cs (stale package ref only). Two Azure Function App workflows kept for rollback: main_strava-tools-api.yml, main_strava-tools-backend.yml.
+
+L4 (2026-11-18): Risk assessment. T1 live-code change pinned by a new unit test → no high-risk item. Deletions are of unreachable code / disabled rollback artifacts, explicitly authorized, deterministic to verify and git-reversible → no high-risk item. Final verification (T6) covers build, full suite, role gate, compose config, and grep assertions.
+
+L5 (2026-11-18): T1 GREEN. RED: Shared.Tests/StravaTokenServiceTests.cs (3 tests) failed to compile with CS1503 — constructor still took CollectionClient<User>. GREEN: StravaTokenService now takes IUserRepository and calls Upsert(user) after refreshing access token/expiry/scope; 3/3 targeted tests pass. First run had a fixture bug (expires_at 4102444800 overflows int in TokenResponse, swallowed by catch → null); fixed to 1893456000.
+
+L6 (2026-11-18): T2 done. Removed CosmosDBTrigger/Output/Input attributes from FunctionsShim.cs; removed FunctionWorkerRegistry.ChangeFeeds and the AddFunctionWorkers change-feed block/enableChangeFeeds flag; deleted ChangeFeedWorker (and its test); renamed QueueAndFeedHostedServices.cs → FunctionInvoker.cs with only the live invoker; stripped all Cosmos input/output handling from FunctionHttpMapper (including QueryCosmosInputAsync, WriteCosmosOutputAsync, Enumerate and unused parameters). Full build 0 errors; full suite 676/676 green (PmtilesJob 32, Backend 374, Shared 270). No commit yet.

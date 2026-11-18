@@ -105,9 +105,7 @@ if (isHeavy)
 if (isSchedule)
     hostBuilder.AddFunctionTimers(registry, (descriptor, services, ct) =>
         FunctionInvoker.InvokeAsync(descriptor, services, ct));
-hostBuilder.AddFunctionWorkers(
-    registry,
-    (descriptor, services, ct) => FunctionInvoker.InvokeAsync(descriptor, services, ct));
+hostBuilder.AddFunctionWorkers(registry);
 
 // Timers run only in the schedule role. Queued jobs and the polling jobs that
 // replaced the Cosmos change feeds run on the heavy role's Hangfire server.
