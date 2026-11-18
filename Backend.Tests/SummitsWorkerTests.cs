@@ -65,7 +65,7 @@ public class SummitsWorkerTests
 
         var peaks = new Mock<IPeakRepository>();
         peaks
-            .Setup(r => r.FindWithinRadius(It.IsAny<Coordinate>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetByTiles(It.IsAny<IEnumerable<(int, int)>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([peak]);
 
         var calculator = new Mock<ISummitsCalculator>();
@@ -95,8 +95,8 @@ public class SummitsWorkerTests
             CancellationToken.None);
 
         peaks.Verify(
-            r => r.FindWithinRadius(It.IsAny<Coordinate>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce);
+            r => r.GetByTiles(It.IsAny<IEnumerable<(int, int)>>(), It.IsAny<CancellationToken>()),
+            Times.Once);
         summitLinks.Verify(r => r.RemoveByActivity(activityId, It.IsAny<CancellationToken>()), Times.Once);
         summitLinks.Verify(
             r => r.AddRange(
@@ -145,7 +145,7 @@ public class SummitsWorkerTests
 
         Assert.Equal(1, completed);
         peaks.Verify(
-            r => r.FindWithinRadius(It.IsAny<Coordinate>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            r => r.GetByTiles(It.IsAny<IEnumerable<(int, int)>>(), It.IsAny<CancellationToken>()),
             Times.Never);
         summitLinks.Verify(r => r.RemoveByActivity(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         summitLinks.Verify(r => r.AddRange(It.IsAny<IEnumerable<SummitLink>>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -191,7 +191,7 @@ public class SummitsWorkerTests
 
         var peaks = new Mock<IPeakRepository>();
         peaks
-            .Setup(r => r.FindWithinRadius(It.IsAny<Coordinate>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetByTiles(It.IsAny<IEnumerable<(int, int)>>(), It.IsAny<CancellationToken>()))
             .Callback(() => callOrder.Add("query"))
             .ReturnsAsync([peak]);
 

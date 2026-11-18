@@ -96,6 +96,16 @@ public sealed class ActivityRepository(NpgsqlDataSource dataSource) : IActivityR
         return activities;
     }
 
+    public async Task<IReadOnlyDictionary<string, int>> GetActivityCountsByUser(CancellationToken cancellationToken = default)
+    {
+        await using var command = dataSource.CreateCommand("SELECT user_id, COUNT(*) FROM activities GROUP BY user_id");
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        while (await reader.ReadAsync(cancellationToken))
+            counts[reader.GetString(0)] = (int)reader.GetInt64(1);
+        return counts;
+    }
+
     public async Task<IReadOnlyList<string>> GetAllIds(CancellationToken cancellationToken = default)
     {
         await using var command = dataSource.CreateCommand("SELECT id FROM activities ORDER BY id");

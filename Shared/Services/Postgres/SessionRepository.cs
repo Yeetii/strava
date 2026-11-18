@@ -41,6 +41,16 @@ public sealed class SessionRepository(NpgsqlDataSource dataSource) : ISessionRep
         return sessions;
     }
 
+    public async Task<IReadOnlyDictionary<string, DateTime>> GetLastLoginByUsers(CancellationToken cancellationToken = default)
+    {
+        await using var command = dataSource.CreateCommand("SELECT user_id, MAX(created_at_utc) FROM sessions GROUP BY user_id");
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var logins = new Dictionary<string, DateTime>(StringComparer.Ordinal);
+        while (await reader.ReadAsync(cancellationToken))
+            logins[reader.GetString(0)] = reader.GetDateTime(1);
+        return logins;
+    }
+
     public async Task Upsert(Session session, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);

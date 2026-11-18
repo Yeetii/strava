@@ -13,6 +13,7 @@ namespace API.Endpoints.ProtectedAreas;
 public class GetVisitedAreas(
     IActivityVisitedAreaRepository visitedAreasRepository,
     IProtectedAreaRepository protectedAreasRepository,
+    IAdminBoundaryRepository adminBoundariesRepository,
     IActivityRepository activityRepository,
     UserAuthenticationService userAuthService)
 {
@@ -52,17 +53,35 @@ public class GetVisitedAreas(
             .ToArray();
 
         var links = await visitedAreasRepository.GetByUser(user.Id);
-        var areaIds = links
-            .Select(link => StoredFeature.NormalizeFeatureId(FeatureKinds.ProtectedArea, link.AreaId))
+        var rawAreaIds = links.Select(link => link.AreaId).Distinct(StringComparer.Ordinal).ToArray();
+
+        var protectedLookupIds = rawAreaIds
+            .Where(id => !id.StartsWith("country:", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(id => new[] {
+                id,
+                StoredFeature.NormalizeFeatureId(FeatureKinds.ProtectedArea, id),
+                StoredFeature.EnsurePrefixedFeatureId(FeatureKinds.ProtectedArea, id)
+            })
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var lookupIds = areaIds
-            .SelectMany(id => new[] { id, StoredFeature.EnsurePrefixedFeatureId(FeatureKinds.ProtectedArea, id) })
-            .Distinct(StringComparer.Ordinal);
-        var areas = await protectedAreasRepository.GetByIds(lookupIds);
-        var areaById = areas.ToDictionary(
+
+        var protectedAreas = await protectedAreasRepository.GetByIds(protectedLookupIds);
+        var protectedById = protectedAreas.ToDictionary(
             area => area.LogicalId,
             area => area,
+            StringComparer.OrdinalIgnoreCase);
+
+        var remainingIds = rawAreaIds
+            .Where(id => !id.StartsWith("country:", StringComparison.OrdinalIgnoreCase) && !protectedById.ContainsKey(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        var adminBoundaries = remainingIds.Length > 0
+            ? await adminBoundariesRepository.GetByIds(remainingIds)
+            : Array.Empty<StoredFeature>();
+        var adminById = adminBoundaries.ToDictionary(
+            boundary => boundary.LogicalId,
+            boundary => boundary,
             StringComparer.OrdinalIgnoreCase);
 
         var allActivityIds = links.Select(link => link.ActivityId).Distinct().ToArray();
@@ -71,11 +90,42 @@ public class GetVisitedAreas(
             : (await activityRepository.GetByIds(allActivityIds)).ToDictionary(a => a.Id, a => a);
 
         var result = links
-            .GroupBy(link => StoredFeature.NormalizeFeatureId(FeatureKinds.ProtectedArea, link.AreaId))
-            .Where(group => areaById.ContainsKey(group.Key))
+            .GroupBy(link => link.AreaId)
             .Select(group =>
             {
-                var area = areaById[group.Key];
+                var areaId = group.Key;
+                string name;
+                string resolvedAreaType;
+                string? wikidata = null;
+                string? wikimediaCommons = null;
+
+                if (areaId.StartsWith("country:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var countryCode = areaId["country:".Length..].Trim().ToUpperInvariant();
+                    name = GetCountryName(countryCode);
+                    resolvedAreaType = "country";
+                }
+                else if (protectedById.TryGetValue(areaId, out var prot) ||
+                         protectedById.TryGetValue(StoredFeature.NormalizeFeatureId(FeatureKinds.ProtectedArea, areaId), out prot))
+                {
+                    name = GetText(prot.Properties, "name") ?? prot.LogicalId;
+                    resolvedAreaType = GetText(prot.Properties, "areaType") ?? "protected_area";
+                    wikidata = GetText(prot.Properties, "wikidata");
+                    wikimediaCommons = GetText(prot.Properties, "wikimediaCommons") ?? GetText(prot.Properties, "wikimedia_commons");
+                }
+                else if (adminById.TryGetValue(areaId, out var admin))
+                {
+                    name = GetText(admin.Properties, "name") ?? admin.LogicalId;
+                    resolvedAreaType = "region";
+                    wikidata = GetText(admin.Properties, "wikidata");
+                    wikimediaCommons = GetText(admin.Properties, "wikimediaCommons") ?? GetText(admin.Properties, "wikimedia_commons");
+                }
+                else
+                {
+                    name = areaId;
+                    resolvedAreaType = "unknown";
+                }
+
                 var activityIds = group.Select(link => link.ActivityId).Distinct().ToArray();
                 var sortedDates = activityIds
                     .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
@@ -88,14 +138,14 @@ public class GetVisitedAreas(
                     .ToArray();
 
                 return new VisitedAreaDto(
-                    group.Key,
-                    GetText(area.Properties, "name") ?? string.Empty,
-                    GetText(area.Properties, "areaType") ?? string.Empty,
+                    areaId,
+                    name,
+                    resolvedAreaType,
                     activityIds.Length,
                     activityIds.Order().ToArray(),
                     sortedDates,
-                    GetText(area.Properties, "wikidata"),
-                    GetText(area.Properties, "wikimediaCommons"));
+                    wikidata,
+                    wikimediaCommons);
             })
             .Where(area => areaTypes is not { Length: > 0 }
                 || areaTypes.Contains(area.AreaType.ToLowerInvariant()))
@@ -106,6 +156,18 @@ public class GetVisitedAreas(
         response.StatusCode = HttpStatusCode.OK;
         await response.WriteAsJsonAsync(result);
         return response;
+    }
+
+    private static string GetCountryName(string iso2)
+    {
+        try
+        {
+            return new System.Globalization.RegionInfo(iso2).EnglishName;
+        }
+        catch
+        {
+            return iso2;
+        }
     }
 
     private static string? GetText(IDictionary<string, dynamic> properties, string key)

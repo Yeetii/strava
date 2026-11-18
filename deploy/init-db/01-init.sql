@@ -160,7 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_activity_visited_paths_highway ON activity_visite
 CREATE TABLE IF NOT EXISTS activity_visited_areas (
     activity_id  TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    area_id      TEXT NOT NULL REFERENCES protected_areas(id) ON DELETE CASCADE,
+    area_id      TEXT NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (activity_id, area_id)
 );

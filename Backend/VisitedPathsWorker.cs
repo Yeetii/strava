@@ -164,8 +164,7 @@ public class VisitedPathsWorker(
             // carries the name/type/tile columns; the writes are idempotent, and the FK
             // cascade removes rows when the activity itself is deleted.
             await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
-            foreach (var path in paths)
-                await _visitedPathRepository.AddPath(path, cancellationToken);
+            await _visitedPathRepository.AddRange(paths, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
             if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
         }
