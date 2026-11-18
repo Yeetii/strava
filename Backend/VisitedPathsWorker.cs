@@ -4,15 +4,16 @@ using Shared.Geo;
 using Shared.Models;
 using Shared.Services;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Cosmos;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
 using Shared.Services.Shards;
 
 namespace Backend;
 
 public class VisitedPathsWorker(
     ILogger<VisitedPathsWorker> _logger,
-    CollectionClient<Activity> _activitiesCollection,
-    CollectionClient<VisitedPath> _visitedPathsCollection,
+    IActivityRepository _activityRepository,
+    IActivityVisitedPathRepository _visitedPathRepository,
     ShardFeatureClient _highwaysShardFeatureClient,
     QueueClient queueClient,
     UserSyncStatusService _userSyncStatusService)
@@ -35,12 +36,6 @@ public class VisitedPathsWorker(
         Dictionary<(int LatCell, int LngCell), List<int>> CellToPathIndices,
         IReadOnlyList<PathSectionCells?> SectionCellsByPathIndex);
 
-    private sealed class ActivityLinkedDocumentProjection
-    {
-        public required string Id { get; init; }
-        public List<string>? ActivityIds { get; init; }
-    }
-
     private record ActivitySlim(string Id, string UserId, string? Polyline, string? SummaryPolyline);
 
     [Function(nameof(VisitedPathsWorker))]
@@ -52,7 +47,7 @@ public class VisitedPathsWorker(
     {
 
         var ids = jobs.Select(x => x.Body.ToString()).ToList();
-        var activities = await FetchActivitySlims(ids);
+        var activities = await FetchActivitySlims(ids, cancellationToken);
         var activitiesList = activities
             .Where(a => !string.IsNullOrWhiteSpace(a.Polyline ?? a.SummaryPolyline))
             .ToList();
@@ -124,11 +119,6 @@ public class VisitedPathsWorker(
                 .Select(group => (group.First().Path, OsmHighwayId: group.Key))
                 .ToList();
 
-            var currentDocumentIds = visitedPathsByOsmId
-                .Select(path => activity.UserId + "-" + path.OsmHighwayId)
-                .ToHashSet(StringComparer.Ordinal);
-            var linkedDocs = await GetActivityLinkedDocuments(activity.UserId, activity.Id, cancellationToken);
-
             _logger.LogInformation(
                 "Activity {ActivityId} visits {PathCount} paths ({OsmPathCount} by canonical osmId)",
                 activityId,
@@ -137,72 +127,30 @@ public class VisitedPathsWorker(
 
             if (visitedPathsByOsmId.Count == 0)
             {
-                await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
+                // The junction table is the sole record of which paths an activity visited.
+                await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
                 if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
                 return;
             }
 
-            // Batch-read existing VisitedPath documents
-            var visitedPathIds = visitedPathsByOsmId
-                .Select(path => activity.UserId + "-" + path.OsmHighwayId)
+            var paths = visitedPathsByOsmId
+                .Select(pathMatch =>
+                {
+                    var pathFeature = pathMatch.Path;
+                    var featureCentroid = GeometryCentroidHelper.GetCentroid(pathFeature.Geometry);
+                    var (featureTileX, featureTileY) = SlippyTileCalculator.WGS84ToTileIndex(featureCentroid, _highwaysShardFeatureClient.CanonicalZoom);
+
+                    return new VisitedPathInput(
+                        activity.Id,
+                        activity.UserId,
+                        pathMatch.OsmHighwayId,
+                        pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
+                        pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
+                        featureTileX,
+                        featureTileY);
+                })
                 .ToList();
-            var existingDocs = (await _visitedPathsCollection.GetByIdsAsync(visitedPathIds))
-                .ToDictionary(d => d.Id);
-
-            var toUpsert = new List<VisitedPath>();
-            var toPatches = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
-            var partitionKey = new PartitionKey(activity.UserId);
-
-            foreach (var pathMatch in visitedPathsByOsmId)
-            {
-                var pathFeature = pathMatch.Path;
-                var osmHighwayId = pathMatch.OsmHighwayId;
-                var documentId = activity.UserId + "-" + osmHighwayId;
-
-                var featureCentroid = GeometryCentroidHelper.GetCentroid(pathFeature.Geometry);
-                var (featureTileX, featureTileY) = SlippyTileCalculator.WGS84ToTileIndex(featureCentroid, _highwaysShardFeatureClient.CanonicalZoom);
-
-                if (existingDocs.TryGetValue(documentId, out var existing))
-                {
-                    var patchOperations = new List<PatchOperation>();
-
-                    if (!existing.ActivityIds.Contains(activity.Id))
-                    {
-                        patchOperations.Add(PatchOperation.Add("/activityIds/-", activity.Id));
-                    }
-
-                    if (!string.Equals(existing.OsmHighwayId, osmHighwayId, StringComparison.Ordinal))
-                    {
-                        patchOperations.Add(PatchOperation.Set("/osmHighwayId", osmHighwayId));
-                    }
-
-                    if (existing.TileX == null || existing.TileY == null)
-                    {
-                        patchOperations.Add(PatchOperation.Set("/tileX", featureTileX));
-                        patchOperations.Add(PatchOperation.Set("/tileY", featureTileY));
-                    }
-
-                    if (patchOperations.Count > 0)
-                    {
-                        toPatches.Add((documentId, patchOperations));
-                    }
-                }
-                else
-                {
-                    toUpsert.Add(new VisitedPath
-                    {
-                        Id = documentId,
-                        UserId = activity.UserId,
-                        OsmHighwayId = osmHighwayId,
-                        Name = pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
-                        Type = pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
-                        ActivityIds = [activity.Id],
-                        TileX = featureTileX,
-                        TileY = featureTileY
-                    });
-                }
-            }
 
             if (QueueMessageGuard.HasLockToken(job))
             {
@@ -212,8 +160,12 @@ public class VisitedPathsWorker(
                     _logger.LogWarning("Lock lost before writing paths for message {MessageId}; it will be redelivered.", job.MessageId);
                 }
             }
-            await _visitedPathsCollection.ExecuteBatch(partitionKey, creates: toUpsert, patches: toPatches);
-            await CleanupStaleVisitedPathDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
+            // Replace the activity's previous links, then insert the current ones. AddPath
+            // carries the name/type/tile columns; the writes are idempotent, and the FK
+            // cascade removes rows when the activity itself is deleted.
+            await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
+            foreach (var path in paths)
+                await _visitedPathRepository.AddPath(path, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
             if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
         }
@@ -360,29 +312,12 @@ public class VisitedPathsWorker(
         return new PathSectionCells([.. first], [.. middle], [.. last]);
     }
 
-    private async Task<List<ActivitySlim>> FetchActivitySlims(List<string> ids)
+    private async Task<List<ActivitySlim>> FetchActivitySlims(List<string> ids, CancellationToken cancellationToken)
     {
-        const int MaxIdsPerQuery = 256;
-        var all = new List<ActivitySlim>();
-
-        var chunks = ids
-            .Select((id, i) => (id, i))
-            .GroupBy(x => x.i / MaxIdsPerQuery)
-            .Select(g => g.Select(x => x.id).ToList());
-
-        foreach (var chunk in chunks)
-        {
-            var queryText = "SELECT c.id, c.userId, c.polyline, c.summaryPolyline FROM c WHERE c.id IN (" +
-                            string.Join(",", chunk.Select((_, i) => $"@id{i}")) + ")";
-
-            var queryDef = new QueryDefinition(queryText);
-            for (int i = 0; i < chunk.Count; i++)
-                queryDef.WithParameter($"@id{i}", chunk[i]);
-
-            var results = await _activitiesCollection.ExecuteQueryAsync<ActivitySlim>(queryDef);
-            all.AddRange(results);
-        }
-        return all;
+        var activities = await _activityRepository.GetByIds(ids, cancellationToken);
+        return activities
+            .Select(activity => new ActivitySlim(activity.Id, activity.UserId, activity.Polyline, activity.SummaryPolyline))
+            .ToList();
     }
 
     private async Task<IEnumerable<Feature>> FetchNearbyPaths(Dictionary<string, List<Coordinate>> decodedActivities)
@@ -409,58 +344,4 @@ public class VisitedPathsWorker(
         return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
-    private async Task<List<ActivityLinkedDocumentProjection>> GetActivityLinkedDocuments(
-        string userId,
-        string activityId,
-        CancellationToken cancellationToken)
-    {
-        var query = new QueryDefinition(@"
-SELECT c.id, c.activityIds
-FROM c
-WHERE c.userId = @userId
-  AND ARRAY_CONTAINS(c.activityIds, @activityId)")
-            .WithParameter("@userId", userId)
-            .WithParameter("@activityId", activityId);
-
-        return (await _visitedPathsCollection.ExecuteQueryAsync<ActivityLinkedDocumentProjection>(
-            query,
-            cancellationToken: cancellationToken)).ToList();
-    }
-
-    private async Task CleanupStaleVisitedPathDocuments(
-        string userId,
-        string activityId,
-        ISet<string> currentDocumentIds,
-        IEnumerable<ActivityLinkedDocumentProjection> linkedDocs,
-        CancellationToken cancellationToken)
-    {
-        var partitionKey = new PartitionKey(userId);
-        var stalePatches = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
-        var staleDeletes = new List<string>();
-
-        foreach (var linkedDoc in linkedDocs)
-        {
-            if (currentDocumentIds.Contains(linkedDoc.Id))
-                continue;
-
-            var remainingActivityIds = (linkedDoc.ActivityIds ?? [])
-                .Where(id => !string.Equals(id, activityId, StringComparison.Ordinal))
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-
-            if (remainingActivityIds.Count == 0)
-            {
-                staleDeletes.Add(linkedDoc.Id);
-                continue;
-            }
-
-            stalePatches.Add((linkedDoc.Id, [PatchOperation.Set("/activityIds", remainingActivityIds)]));
-        }
-
-        if (stalePatches.Count > 0)
-            await _visitedPathsCollection.ExecuteBatch(partitionKey, patches: stalePatches, cancellationToken: cancellationToken);
-
-        foreach (var staleDelete in staleDeletes)
-            await _visitedPathsCollection.DeleteDocument(staleDelete, partitionKey, cancellationToken);
-    }
 }

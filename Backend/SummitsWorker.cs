@@ -2,32 +2,33 @@ using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
-using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.DependencyInjection;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
+using Shared.Services.Postgres.Spatial.Ingestion;
 using Shared.Geo;
 using Shared.Constants;
-using System.Globalization;
 using Shared.Geo.SummitsCalculator;
 using BAMCIS.GeoJSON;
 
 namespace Backend;
 
-// Input format, given an activityId: 
+// Input format, given an activityId:
 // 11808921572
 public class SummitsWorker(ILogger<SummitsWorker> _logger,
-    CollectionClient<Activity> _activitiesCollection,
-    CollectionClient<SummitedPeak> _summitedPeaksCollection,
-    [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
+    IActivityRepository _activityRepository,
+    IActivitySummitRepository _activitySummitRepository,
+    IPeakRepository _peaksRepository,
     ISummitsCalculator _summitsCalculator,
-    UserSyncStatusService _userSyncStatusService)
+    UserSyncStatusService _userSyncStatusService,
+    IOsmFeatureIngestionService _osmFeatureIngestion)
 {
     private const int MaxDegreeOfParallelism = 4;
 
-    private sealed class ActivityLinkedDocumentProjection
-    {
-        public required string Id { get; init; }
-        public List<string>? ActivityIds { get; init; }
-    }
+    // Matches ISummitsCalculator.FindPointsNearRoute's default threshold: a peak is a summit
+    // when its point lies within this many metres of any decoded route coordinate. Fetching
+    // candidates with the same threshold around each route point keeps the result identical
+    // to the old tile-based fetch while letting PostGIS do the spatial prefilter.
+    private const int PeakProximityMeters = 50;
 
     [Function("SummitsWorker")]
     public async Task Run(
@@ -35,9 +36,9 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     {
 
         var jobIds = jobs.Select(x => x.Body.ToString()).ToList();
-        var activities = await _activitiesCollection.GetByIdsAsync(jobIds, cancellationToken);
+        var activities = await _activityRepository.GetByIds(jobIds, cancellationToken);
         var activitiesById = activities.ToDictionary(x => x.Id, StringComparer.Ordinal);
-        var peaks = (await FetchNearbyPeaks(activitiesById.Values)).ToList();
+        var peaks = (await FetchNearbyPeaks(activitiesById.Values, cancellationToken)).ToList();
 
         // Renew locks after the potentially slow peak fetch before per-job processing
         var realJobs = jobs.Where(QueueMessageGuard.HasLockToken).ToList();
@@ -73,6 +74,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                 await ProcessSummitJob(job, actions, peaks, activity, ct);
             });
     }
+
     private async Task ProcessSummitJob(QueueMessage job, QueueMessageActions actions, List<Feature> peaks, Activity activity, CancellationToken cancellationToken)
     {
         try
@@ -87,7 +89,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             var summits = CalculateSummitedPeaks(activity, peaks).ToList();
             if (summits.Count == 0)
             {
-                await CleanupStaleSummitedPeaksForActivity(activity, new HashSet<string>(StringComparer.Ordinal), cancellationToken);
+                // No summits means this activity should have no rows in activity_summits.
+                await _activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
                 if (QueueMessageGuard.HasLockToken(job))
                     try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
@@ -95,12 +98,20 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
                 return;
             }
             _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
-            var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(_summitedPeaksCollection, activity, summits);
-            var currentDocumentIds = summits
-                .Select(summit => BuildSummitedPeakDocumentId(activity.UserId, summit.Id))
-                .ToHashSet(StringComparer.Ordinal);
-            await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
-            await CleanupStaleSummitedPeaksForActivity(activity, currentDocumentIds, cancellationToken);
+
+            var links = summits
+                .Select(summit => new SummitLink(
+                    activity.Id,
+                    activity.UserId,
+                    NormalizeSummitedPeakId(summit.Id),
+                    DateTime.UtcNow))
+                .ToList();
+
+            // Replace the activity's previous links so stale summits are removed. AddRange is
+            // idempotent (ON CONFLICT DO NOTHING); the FK cascade removes rows when the
+            // activity itself is deleted, so no manual domain-document cleanup is needed.
+            await _activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
+            await _activitySummitRepository.AddRange(links, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
             if (QueueMessageGuard.HasLockToken(job))
                 try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
@@ -125,126 +136,46 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         return summitedPeaks;
     }
 
-    private static async Task<IEnumerable<SummitedPeak>> UpdateSummitedPeaksDocuments(CollectionClient<SummitedPeak> _summitedPeaksCollection, Activity activity, IEnumerable<Feature> summitedPeaks)
-    {
-        var summitedPeakList = summitedPeaks.ToList();
-        if (summitedPeakList.Count == 0)
-            return [];
-
-        var existingDocs = (await _summitedPeaksCollection.GetByIdsAsync(
-            summitedPeakList.Select(peak => BuildSummitedPeakDocumentId(activity.UserId, peak.Id))))
-            .ToDictionary(doc => doc.Id, StringComparer.Ordinal);
-
-        var documents = new List<SummitedPeak>();
-        foreach (var peak in summitedPeakList)
-        {
-            var peakId = NormalizeSummitedPeakId(peak.Id);
-            var documentId = BuildSummitedPeakDocumentId(activity.UserId, peak.Id);
-            var summitedPeakDocument = existingDocs.TryGetValue(documentId, out var existing)
-                ? existing
-                : new SummitedPeak
-                {
-                    Id = documentId,
-                    Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName?.ToString() ?? "" : "",
-                    UserId = activity.UserId,
-                    PeakId = peakId,
-                    Elevation = TryParseElevation(peak.Properties),
-                    ActivityIds = []
-                };
-            summitedPeakDocument.ActivityIds.Add(activity.Id);
-            documents.Add(summitedPeakDocument);
-        }
-        return documents;
-    }
-
     internal static string BuildSummitedPeakDocumentId(string userId, FeatureId peakId)
         => $"{userId}-{NormalizeSummitedPeakId(peakId)}";
-
-    private static float? TryParseElevation(IDictionary<string, dynamic> properties)
-    {
-        if (!properties.TryGetValue("elevation", out var elevationValue) || elevationValue == null)
-            return null;
-
-        // Handle different types that might come from Cosmos/JSON
-        if (elevationValue is float f)
-            return f;
-        if (elevationValue is double d)
-            return (float)d;
-        if (elevationValue is int i)
-            return i;
-        if (elevationValue is long l)
-            return (float)l;
-        if (elevationValue is string s && float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
-            return parsed;
-        if (elevationValue is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
-        {
-            if (je.TryGetSingle(out var single))
-                return single;
-            if (je.TryGetDouble(out var dbl))
-                return (float)dbl;
-        }
-
-        return null;
-    }
 
     internal static string NormalizeSummitedPeakId(FeatureId peakId)
         => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, peakId.Value);
 
-    private async Task CleanupStaleSummitedPeaksForActivity(
-        Activity activity,
-        ISet<string> currentDocumentIds,
-        CancellationToken cancellationToken)
+    private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities, CancellationToken cancellationToken)
     {
-        var query = new QueryDefinition(@"
-SELECT c.id, c.activityIds
-FROM c
-WHERE c.userId = @userId
-  AND ARRAY_CONTAINS(c.activityIds, @activityId)")
-            .WithParameter("@userId", activity.UserId)
-            .WithParameter("@activityId", activity.Id);
+        var decodedRoutes = activities
+            .Select(activity => activity.Polyline ?? activity.SummaryPolyline)
+            .Where(polyline => !string.IsNullOrEmpty(polyline))
+            .Select(polyline => GeoSpatialFunctions.DecodePolyline(polyline!)
+                .DistinctBy(point => (point.Lat, point.Lng))
+                .ToList())
+            .ToList();
 
-        var linkedDocs = await _summitedPeaksCollection.ExecuteQueryAsync<ActivityLinkedDocumentProjection>(query, cancellationToken: cancellationToken);
+        // Warm the PostGIS peaks table from Overpass before any spatial lookup so a freshly
+        // migrated database does not silently yield zero candidates.
+        var routePoints = decodedRoutes.SelectMany(points => points).ToList();
+        var ingestion = await _osmFeatureIngestion.EnsurePeaksAsync(routePoints, cancellationToken)
+            ?? OsmIngestionResult.Empty;
+        _logger.LogInformation(
+            "OSM peak ingestion for {RouteCount} routes: tilesQueried={TilesQueried}, fetched={Fetched}, upserted={Upserted}, failed={Failed}",
+            decodedRoutes.Count,
+            ingestion.TilesQueried,
+            ingestion.FeaturesFetched,
+            ingestion.FeaturesUpserted,
+            ingestion.TilesFailed);
 
-        foreach (var doc in linkedDocs)
+        var peaksById = new Dictionary<string, StoredFeature>(StringComparer.Ordinal);
+        foreach (var points in decodedRoutes)
         {
-            if (currentDocumentIds.Contains(doc.Id))
-                continue;
-
-            var remainingActivityIds = (doc.ActivityIds ?? [])
-                .Where(id => !string.Equals(id, activity.Id, StringComparison.Ordinal))
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-
-            if (remainingActivityIds.Count == 0)
+            foreach (var point in points)
             {
-                await _summitedPeaksCollection.DeleteDocument(doc.Id, new PartitionKey(activity.UserId), cancellationToken);
-                continue;
-            }
-
-            await _summitedPeaksCollection.PatchDocument(
-                doc.Id,
-                new PartitionKey(activity.UserId),
-                [PatchOperation.Set("/activityIds", remainingActivityIds)],
-                cancellationToken: cancellationToken);
-        }
-    }
-
-    private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities)
-    {
-        var tileIndices = new HashSet<(int x, int y)>();
-        foreach (var activity in activities)
-        {
-            var polyline = activity.SummaryPolyline;
-            if (string.IsNullOrEmpty(polyline))
-                continue;
-            var tiles = SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyline(polyline));
-            foreach (var tile in tiles)
-            {
-                tileIndices.Add(tile);
+                var nearby = await _peaksRepository.FindWithinRadius(point, PeakProximityMeters, cancellationToken);
+                foreach (var peak in nearby)
+                    peaksById[peak.Id] = peak;
             }
         }
-        var nearbyPeaks = await _peaksCollection.FetchByTiles(tileIndices);
-        _logger.LogInformation("Found {count} nearby peaks", nearbyPeaks.Count());
-        return nearbyPeaks.Select(x => x.ToFeature());
+        _logger.LogInformation("Found {count} nearby peaks", peaksById.Count);
+        return peaksById.Values.Select(x => x.ToFeature());
     }
 }

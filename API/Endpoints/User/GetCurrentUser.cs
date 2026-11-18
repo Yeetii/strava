@@ -1,20 +1,20 @@
 using System.Net;
 using System.Text.Json.Serialization;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres.Spatial;
 
 namespace API.Endpoints.User;
 
 public class GetCurrentUser(
     UserAuthenticationService userAuthService,
-    CollectionClient<SummitedPeak> summitedPeaksCollection,
-    CollectionClient<VisitedPath> visitedPathsCollection,
-    CollectionClient<VisitedArea> visitedAreasCollection)
+    IActivitySummitRepository summitsRepository,
+    IActivityVisitedPathRepository visitedPathsRepository,
+    IActivityVisitedAreaRepository visitedAreasRepository)
 {
     [OpenApiOperation(tags: ["User management"], Summary = "Get the authenticated user's profile and Strava sync status.")]
     [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
@@ -28,17 +28,12 @@ public class GetCurrentUser(
         if (user == null)
             return req.CreateResponse(HttpStatusCode.Unauthorized);
 
-        var summitedPeaksCountTask = summitedPeaksCollection.ExecuteQueryAsync<int>(
-            new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.userId = @userId")
-                .WithParameter("@userId", user.Id));
-        var visitedPathsCountTask = visitedPathsCollection.ExecuteQueryAsync<int>(
-            new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.userId = @userId")
-                .WithParameter("@userId", user.Id));
-        var visitedAreasCountTask = visitedAreasCollection.ExecuteQueryAsync<int>(
-            new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.userId = @userId")
-                .WithParameter("@userId", user.Id));
-
-        await Task.WhenAll(summitedPeaksCountTask, visitedPathsCountTask, visitedAreasCountTask);
+        var foundTotals = new FoundTotalsResponse
+        {
+            SummitedPeaks = await summitsRepository.CountByUser(user.Id),
+            VisitedPaths = await visitedPathsRepository.CountByUser(user.Id),
+            VisitedAreas = await visitedAreasRepository.CountByUser(user.Id),
+        };
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new CurrentUserResponse
@@ -48,12 +43,7 @@ public class GetCurrentUser(
             FirstName = user.FirstName,
             LastName = user.LastName,
             SyncStatus = user.SyncStatus ?? UserSyncStatusService.CreateDefaultStatus(),
-            FoundTotals = new FoundTotalsResponse
-            {
-                SummitedPeaks = summitedPeaksCountTask.Result.FirstOrDefault(),
-                VisitedPaths = visitedPathsCountTask.Result.FirstOrDefault(),
-                VisitedAreas = visitedAreasCountTask.Result.FirstOrDefault(),
-            },
+            FoundTotals = foundTotals,
         });
         return response;
     }

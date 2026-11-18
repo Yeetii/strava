@@ -12,6 +12,7 @@ namespace Shared.Constants
             .ToArray();
 
         public const string CosmosDb = "db";
+        public const string PostgresConnectionStringKey = "PostgresConnectionString";
         public const string SummitedPeaksContainer = "summitedPeaks";
         public const string ActivitiesContainer = "activities";
         public const string UsersContainer = "users";

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -9,6 +8,7 @@ using Microsoft.OpenApi.Models;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 using UserDocument = Shared.Models.User;
 
 namespace API.Endpoints.Admin;
@@ -16,7 +16,7 @@ namespace API.Endpoints.Admin;
 public record RefetchUserActivitiesResponse(string UserId, bool Queued);
 
 public class RefetchUserActivities(
-    CollectionClient<UserDocument> usersCollection,
+    IUserRepository usersRepository,
     QueueClient queueClient,
     IConfiguration configuration)
 {
@@ -39,7 +39,7 @@ public class RefetchUserActivities(
             return req.CreateResponse(HttpStatusCode.Unauthorized);
         }
 
-        var user = await usersCollection.GetByIdMaybe(userId, new PartitionKey(userId), cancellationToken);
+        var user = await usersRepository.GetById(userId, cancellationToken);
         if (user == null)
         {
             return req.CreateResponse(HttpStatusCode.NotFound);

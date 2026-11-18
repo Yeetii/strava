@@ -6,6 +6,7 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 
 namespace API.Endpoints.User;
 
@@ -18,12 +19,19 @@ public sealed class ActivityStatusProjection
     public ActivityProcessingStatus? ProcessingStatus { get; set; }
 }
 
-public class GetActivityStatuses(
-    UserAuthenticationService userAuthService,
-    CollectionClient<Activity> activitiesCollection)
+public class GetActivityStatuses
 {
     private const int DefaultLimit = 10;
     private const int MaxLimit = 100;
+
+    private readonly UserAuthenticationService _userAuthService;
+    private readonly IActivityRepository _activitiesRepository;
+
+    public GetActivityStatuses(UserAuthenticationService userAuthService, IActivityRepository activitiesRepository)
+    {
+        _userAuthService = userAuthService;
+        _activitiesRepository = activitiesRepository;
+    }
 
     private sealed record ActivityStatusDto(
         string ActivityId,
@@ -41,12 +49,24 @@ public class GetActivityStatuses(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "activityStatuses")] HttpRequestData req)
     {
         var sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
-        var user = await userAuthService.GetUserFromSessionId(sessionId);
+        var user = await _userAuthService.GetUserFromSessionId(sessionId);
         if (user == null)
             return req.CreateResponse(HttpStatusCode.Unauthorized);
 
         var limit = ParseLimit(req.Query["limit"]);
-        var statuses = (await activitiesCollection.ExecuteQueryAsync<ActivityStatusProjection>(BuildQuery(user.Id, limit)))
+        var projected = (await _activitiesRepository.GetAllByUser(user.Id))
+            .OrderByDescending(activity => activity.StartDateLocal)
+            .Take(limit)
+            .Select(activity => new ActivityStatusProjection
+            {
+                Id = activity.Id,
+                Name = activity.Name,
+                StartDateLocal = activity.StartDateLocal,
+                SummaryPolyline = activity.SummaryPolyline,
+                ProcessingStatus = activity.ProcessingStatus,
+            });
+
+        var statuses = projected
             .Select(activity => new ActivityStatusDto(
                 ActivityId: activity.Id,
                 ActivityName: activity.Name ?? string.Empty,

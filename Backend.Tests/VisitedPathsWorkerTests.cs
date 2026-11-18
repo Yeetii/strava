@@ -1,5 +1,13 @@
 using BAMCIS.GeoJSON;
+using Hangfire;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Shared.Models;
+using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
+using Shared.Services.Shards;
 
 namespace Backend.Tests;
 
@@ -143,6 +151,90 @@ public class VisitedPathsWorkerTests
             .ToList();
 
         Assert.Empty(visitedIds);
+    }
+
+    [Fact]
+    public async Task Run_WritesVisitedPathLinksUsingPostgresRepositories()
+    {
+        const string userId = "user-1";
+        const string activityId = "activity-1";
+
+        var activity = new Activity
+        {
+            Id = activityId,
+            UserId = userId,
+            Name = "Morning Run",
+            SportType = SportTypes.RUN,
+            StartDate = DateTime.UtcNow,
+            StartDateLocal = DateTime.UtcNow,
+            Polyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@`",
+            ProcessingStatus = new ActivityProcessingStatus { VisitedPaths = true }
+        };
+
+        var path = new Feature(
+            new LineString(
+            [
+                new Position(-120.2, 38.5),
+                new Position(-120.95, 40.7),
+                new Position(-126.453, 43.252)
+            ]),
+            new Dictionary<string, dynamic>
+            {
+                ["osmId"] = "way/123",
+                ["name"] = "Test Road",
+                ["highway"] = "residential"
+            },
+            null,
+            new FeatureId("path-1"));
+
+        var activities = new Mock<IActivityRepository>();
+        activities
+            .Setup(r => r.GetByIds(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([activity]);
+        activities
+            .Setup(r => r.GetById(activityId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(activity);
+
+        var shards = new Mock<ShardFeatureClient>(
+            Mock.Of<IShardRepository>(),
+            NullLogger<ShardFeatureClient>.Instance,
+            12);
+        shards
+            .Setup(s => s.GetFeaturesForShards(
+                It.IsAny<IEnumerable<(int x, int y)>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([path]);
+
+        var visitedPaths = new Mock<IActivityVisitedPathRepository>();
+        var users = new Mock<IUserRepository>();
+        var syncStatus = new UserSyncStatusService(users.Object, activities.Object);
+        var queue = new QueueClient(new Mock<IBackgroundJobClient>().Object);
+
+        var worker = new VisitedPathsWorker(
+            NullLogger<VisitedPathsWorker>.Instance,
+            activities.Object,
+            visitedPaths.Object,
+            shards.Object,
+            queue,
+            syncStatus);
+
+        await worker.Run(
+            [new QueueMessage(activityId) { LockToken = Guid.NewGuid().ToString() }],
+            new QueueMessageActions(),
+            CancellationToken.None);
+
+        visitedPaths.Verify(r => r.RemoveByActivity(activityId, It.IsAny<CancellationToken>()), Times.Once);
+        visitedPaths.Verify(
+            r => r.AddPath(
+                It.Is<VisitedPathInput>(p => p.ActivityId == activityId
+                    && p.UserId == userId
+                    && p.OsmHighwayId == "way/123"
+                    && p.Name == "Test Road"
+                    && p.Type == "residential"
+                    && p.TileX.HasValue
+                    && p.TileY.HasValue),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     private static Feature CreatePath(string id, params Position[] points)

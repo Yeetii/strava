@@ -3,15 +3,15 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
-using Microsoft.AspNetCore.Mvc;
-using Shared.Constants;
 using Shared.Models;
+using Shared.Services.Postgres;
 
 namespace API
 {
-    public class GetSkiDays(ILoggerFactory loggerFactory)
+    public class GetSkiDays(ILoggerFactory loggerFactory, IActivityRepository activitiesRepository)
     {
         private readonly ILogger _logger = loggerFactory.CreateLogger<GetSkiDays>();
 
@@ -22,14 +22,10 @@ namespace API
         [OpenApiSecurity("function_key", SecuritySchemeType.ApiKey, Name = "code", In = OpenApiSecurityLocationType.Query)]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(SkiDays), Description = "The OK response")]
         [Function("GetSkiDays")]
-        public IActionResult Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "{userId}/skiDays")] HttpRequestData req, string userId,
-        [CosmosDBInput(
-            databaseName: DatabaseConfig.CosmosDb,
-            containerName: DatabaseConfig.ActivitiesContainer,
-            Connection  = "CosmosDBConnection",
-            SqlQuery = "SELECT * FROM c where c.userId = {userId}"
-            )] IEnumerable<Activity> activities)
+        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "{userId}/skiDays")] HttpRequestData req, string userId)
         {
+            IEnumerable<Activity> activities = await activitiesRepository.GetAllByUser(userId);
+
             var before = req.Query["before"];
             var after = req.Query["after"];
 
@@ -41,7 +37,6 @@ namespace API
 
             var skiDays = CalculateSkiDays(activities);
             return new JsonResult(skiDays);
-            
         }
 
         public static SkiDays CalculateSkiDays(IEnumerable<Activity> activities)
@@ -62,7 +57,7 @@ namespace API
 
             var backcountrySkiElevationGain = activities.Where(activity => activity.SportType == SportTypes.BACKCOUNTRY_SKIING)
                 .Sum(activity => (double)activity.TotalElevationGain);
-            
+
             return new SkiDays
             {
                 AlpineSkiDays = alpineSkiDays.Count(),

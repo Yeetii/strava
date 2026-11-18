@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -7,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 using Shared.Services.StravaClient;
 using UserDocument = Shared.Models.User;
 
@@ -15,7 +15,7 @@ namespace API.Endpoints.Admin;
 public record RefreshUserStravaTokenResponse(string UserId, AdminStravaAuthStatus StravaAuthStatus);
 
 public class RefreshUserStravaToken(
-    CollectionClient<UserDocument> usersCollection,
+    IUserRepository usersRepository,
     AuthenticationApi authenticationApi,
     IConfiguration configuration)
 {
@@ -37,7 +37,7 @@ public class RefreshUserStravaToken(
             return req.CreateResponse(HttpStatusCode.Unauthorized);
         }
 
-        var user = await usersCollection.GetByIdMaybe(userId, new PartitionKey(userId), cancellationToken);
+        var user = await usersRepository.GetById(userId, cancellationToken);
         if (user == null)
         {
             return req.CreateResponse(HttpStatusCode.NotFound);
@@ -56,23 +56,7 @@ public class RefreshUserStravaToken(
         user.RefreshToken = tokenResponse.RefreshToken;
         user.StravaScope = tokenResponse.Scope ?? user.StravaScope;
 
-        var patchOperations = new List<PatchOperation>
-        {
-            PatchOperation.Set("/accessToken", user.AccessToken),
-            PatchOperation.Set("/tokenExpiresAt", user.TokenExpiresAt),
-            PatchOperation.Set("/refreshToken", user.RefreshToken)
-        };
-        if (!string.IsNullOrWhiteSpace(tokenResponse.Scope))
-        {
-            patchOperations.Add(PatchOperation.Set("/stravaScope", tokenResponse.Scope));
-        }
-
-        await usersCollection.PatchDocument(
-            user.Id,
-            new PartitionKey(user.Id),
-            patchOperations,
-            priority: CosmosWritePriority.High,
-            cancellationToken: cancellationToken);
+        await usersRepository.Upsert(user, cancellationToken);
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(

@@ -1,6 +1,5 @@
-using Microsoft.Azure.Cosmos;
 using Shared.Models;
-using System.Net;
+using Shared.Services.Postgres;
 
 namespace Shared.Services;
 
@@ -11,12 +10,8 @@ public enum ActivitySyncStage
     VisitedAreas,
 }
 
-public class UserSyncStatusService(
-    CollectionClient<Models.User> usersCollection,
-    CollectionClient<Activity> activitiesCollection)
+public class UserSyncStatusService(IUserRepository users, IActivityRepository activities)
 {
-    private const int MaxPatchRetries = 5;
-
     public static StravaSyncStatus CreateDefaultStatus() => new()
     {
         TotalActivitiesOnStrava = null,
@@ -66,38 +61,18 @@ public class UserSyncStatusService(
 
     public async Task<bool> TryMarkActivityStageProcessed(string userId, string activityId, ActivitySyncStage stage, CancellationToken cancellationToken = default)
     {
-        var partitionKey = new PartitionKey(userId);
+        var activity = await activities.GetById(activityId, cancellationToken)
+            ?? throw new InvalidOperationException($"Activity {activityId} for user {userId} was not found.");
 
-        for (var attempt = 0; attempt < MaxPatchRetries; attempt++)
-        {
-            var activity = await activitiesCollection.GetByIdMaybe(activityId, partitionKey, cancellationToken)
-                ?? throw new InvalidOperationException($"Activity {activityId} for user {userId} was not found.");
+        if (IsStageProcessed(activity.ProcessingStatus, stage))
+            return false;
 
-            if (IsStageProcessed(activity.ProcessingStatus, stage))
-                return false;
+        var nextStatus = CloneActivityProcessingStatus(activity.ProcessingStatus);
+        SetStageProcessed(nextStatus, stage, DateTime.UtcNow);
 
-            var nextStatus = CloneActivityProcessingStatus(activity.ProcessingStatus);
-            SetStageProcessed(nextStatus, stage, DateTime.UtcNow);
-
-            try
-            {
-                await activitiesCollection.PatchDocument(
-                    activity.Id,
-                    partitionKey,
-                    [PatchOperation.Set("/processingStatus", nextStatus)],
-                    activity.ETag,
-                    cancellationToken: cancellationToken);
-
-                await IncrementProcessedActivities(userId, stage, cancellationToken);
-                return true;
-            }
-            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.PreconditionFailed && attempt < MaxPatchRetries - 1)
-            {
-                continue;
-            }
-        }
-
-        throw new InvalidOperationException($"Failed to mark activity {activityId} stage {stage} as processed after {MaxPatchRetries} attempts.");
+        await activities.UpdateProcessingStatus(activity.Id, nextStatus, cancellationToken);
+        await IncrementProcessedActivities(userId, stage, cancellationToken);
+        return true;
     }
 
     private async Task IncrementProcessedActivities(string userId, ActivitySyncStage stage, CancellationToken cancellationToken)
@@ -126,35 +101,15 @@ public class UserSyncStatusService(
 
     private async Task PatchUserSyncStatus(string userId, Func<StravaSyncStatus, bool> mutate, CancellationToken cancellationToken)
     {
-        var partitionKey = new PartitionKey(userId);
+        var user = await users.GetById(userId, cancellationToken)
+            ?? throw new InvalidOperationException($"User {userId} was not found.");
 
-        for (var attempt = 0; attempt < MaxPatchRetries; attempt++)
-        {
-            var user = await usersCollection.GetByIdMaybe(userId, partitionKey, cancellationToken)
-                ?? throw new InvalidOperationException($"User {userId} was not found.");
+        var nextStatus = CloneSyncStatus(user.SyncStatus);
+        if (!mutate(nextStatus))
+            return;
 
-            var nextStatus = CloneSyncStatus(user.SyncStatus);
-            if (!mutate(nextStatus))
-                return;
-
-            try
-            {
-                await usersCollection.PatchDocument(
-                    userId,
-                    partitionKey,
-                    [PatchOperation.Set("/syncStatus", nextStatus)],
-                    user.ETag,
-                    priority: CosmosWritePriority.High,
-                    cancellationToken: cancellationToken);
-                return;
-            }
-            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.PreconditionFailed && attempt < MaxPatchRetries - 1)
-            {
-                continue;
-            }
-        }
-
-        throw new InvalidOperationException($"Failed to update sync status for user {userId} after {MaxPatchRetries} attempts.");
+        user.SyncStatus = nextStatus;
+        await users.Upsert(user, cancellationToken);
     }
 
     private static StravaSyncStatus CloneSyncStatus(StravaSyncStatus? current)

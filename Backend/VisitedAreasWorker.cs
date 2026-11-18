@@ -4,28 +4,27 @@ using Shared.Geo;
 using Shared.Models;
 using Shared.Services;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.DependencyInjection;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
+using Shared.Services.Postgres.Spatial.Ingestion;
 using System.Globalization;
 
 namespace Backend;
 
 public class VisitedAreasWorker(
     ILogger<VisitedAreasWorker> _logger,
-    CollectionClient<Activity> _activitiesCollection,
-    CollectionClient<VisitedArea> _visitedAreasCollection,
-    [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient _protectedAreasCollection,
-    AdminBoundariesCollectionClient _adminBoundariesCollection,
+    IActivityRepository _activityRepository,
+    IActivityVisitedAreaRepository _visitedAreaRepository,
+    IProtectedAreaRepository _protectedAreasRepository,
+    IAdminBoundaryRepository _adminBoundariesRepository,
     QueueClient queueClient,
-    UserSyncStatusService _userSyncStatusService)
+    UserSyncStatusService _userSyncStatusService,
+    IOsmFeatureIngestionService _osmFeatureIngestion)
 {
     private readonly QueueClient _queueClient = queueClient;
     private const int MaxDegreeOfParallelism = 1;
-    private const int AreaTileZoom = 8;
-    private const int AdminBoundaryTileZoom = 6;
     private const int AdminLevelRegion = 4;
     private const int MaxAdminBoundaryLookupPoints = 120;
-    private static readonly TimeSpan CosmosPressureWriteDeferralDelay = TimeSpan.FromMinutes(5);
 
     private sealed record VisitedAreaCandidate(
         string AreaId,
@@ -33,12 +32,6 @@ public class VisitedAreasWorker(
         string AreaType,
         string? Wikidata,
         string? WikimediaCommons);
-
-    private sealed class ActivityLinkedDocumentProjection
-    {
-        public required string Id { get; init; }
-        public List<string>? ActivityIds { get; init; }
-    }
 
     [Function(nameof(VisitedAreasWorker))]
     public async Task Run(
@@ -49,12 +42,12 @@ public class VisitedAreasWorker(
     {
 
         var ids = jobs.Select(x => x.Body.ToString());
-        var activities = await _activitiesCollection.GetByIdsAsync(ids);
+        var activities = await _activityRepository.GetByIds(ids, cancellationToken);
         var activitiesList = activities
             .Where(a => !string.IsNullOrWhiteSpace(GetRoutePolyline(a)))
             .ToList();
 
-        var nearbyAreas = (await FetchNearbyAreas(activitiesList)).ToList();
+        var nearbyAreas = (await FetchNearbyAreas(activitiesList, cancellationToken)).ToList();
 
         var semaphore = new SemaphoreSlim(MaxDegreeOfParallelism, MaxDegreeOfParallelism);
         var processingTasks = jobs.Select(async job =>
@@ -104,7 +97,6 @@ public class VisitedAreasWorker(
                 activityId,
                 boundaryLookupPoints.Count);
 
-            await EnsureAdminRegionsCachedForActivity(boundaryLookupPoints, cancellationToken);
             var nearbyRegions = (await FetchAdminRegionsForActivity(boundaryLookupPoints, cancellationToken)).ToList();
 
             if (nearbyRegions.Count == 0)
@@ -130,11 +122,6 @@ public class VisitedAreasWorker(
                 .Concat(FindVisitedCountriesFromRegions(nearbyRegions))
                 .ToList();
 
-            var currentDocumentIds = visitedAreas
-                .Select(area => activity.UserId + "-" + area.AreaId)
-                .ToHashSet(StringComparer.Ordinal);
-            var linkedDocs = await GetActivityLinkedDocuments(activity.UserId, activity.Id, cancellationToken);
-
             var visitedCountryCount = visitedAreas.Count(a => string.Equals(a.AreaType, "country", StringComparison.Ordinal));
             _logger.LogInformation(
                 "Visited areas summary for activity {ActivityId}: nearby protected={NearbyProtectedCount}, visited admin regions={VisitedRegionCount}, visited countries={VisitedCountryCount}, total visited areas={AreaCount}",
@@ -146,50 +133,16 @@ public class VisitedAreasWorker(
 
             if (visitedAreas.Count == 0)
             {
-                await CleanupStaleVisitedAreaDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
+                // No visited areas means this activity should have no rows in activity_visited_areas.
+                await _visitedAreaRepository.RemoveByActivity(activity.Id, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
                 if (hasRealLockToken) await actions.CompleteMessageAsync(job);
                 return;
             }
 
-            var partitionKey = new PartitionKey(activity.UserId);
-            var documentIds = visitedAreas
-                .Select(area => activity.UserId + "-" + area.AreaId)
+            var links = visitedAreas
+                .Select(area => new VisitedAreaLink(activity.Id, activity.UserId, area.AreaId, DateTime.UtcNow))
                 .ToList();
-            var existingDocs = (await _visitedAreasCollection.GetByIdsAsync(
-                    documentIds,
-                    partitionKey,
-                    cancellationToken))
-                .ToDictionary(doc => doc.Id, StringComparer.Ordinal);
-
-            var toCreate = new List<VisitedArea>();
-            var toPatch = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
-            foreach (var area in visitedAreas)
-            {
-                var documentId = activity.UserId + "-" + area.AreaId;
-                if (existingDocs.TryGetValue(documentId, out var existing))
-                {
-                    if (!existing.ActivityIds.Contains(activity.Id))
-                    {
-                        toPatch.Add((documentId, [
-                            PatchOperation.Add("/activityIds/-", activity.Id)
-                        ]));
-                    }
-                    continue;
-                }
-
-                toCreate.Add(new VisitedArea
-                {
-                    Id = documentId,
-                    UserId = activity.UserId,
-                    AreaId = area.AreaId,
-                    Name = area.Name,
-                    AreaType = area.AreaType,
-                    Wikidata = area.Wikidata,
-                    WikimediaCommons = area.WikimediaCommons,
-                    ActivityIds = [activity.Id]
-                });
-            }
 
             if (hasRealLockToken)
             {
@@ -200,19 +153,17 @@ public class VisitedAreasWorker(
                 }
             }
             _logger.LogInformation(
-                "Writing visited areas for activity {ActivityId}: creates={CreateCount}, patches={PatchCount}, documentIds=[{DocumentIds}]",
+                "Writing visited areas for activity {ActivityId}: links={LinkCount}, areaIds=[{AreaIds}]",
                 activityId,
-                toCreate.Count,
-                toPatch.Count,
-                string.Join(", ", documentIds));
-            await _visitedAreasCollection.ExecuteBatch(
-                partitionKey,
-                creates: toCreate,
-                patches: toPatch,
-                priority: CosmosWritePriority.Low,
-                cancellationToken: cancellationToken);
+                links.Count,
+                string.Join(", ", visitedAreas.Select(area => area.AreaId)));
+            // Replace the activity's previous links, then insert the current ones. The join
+            // table holds only (activity, user, area); the area's descriptive properties come
+            // from the protected_areas/admin_boundaries domain tables. FK cascade removes rows
+            // when the activity itself is deleted.
+            await _visitedAreaRepository.RemoveByActivity(activity.Id, cancellationToken);
+            await _visitedAreaRepository.AddRange(links, cancellationToken);
             _logger.LogInformation("Batch write complete for activity {ActivityId}", activityId);
-            await CleanupStaleVisitedAreaDocuments(activity.UserId, activity.Id, currentDocumentIds, linkedDocs, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
             if (hasRealLockToken) await actions.CompleteMessageAsync(job);
         }
@@ -375,23 +326,44 @@ _logger.LogError(ex,
         }
     }
 
-    private async Task<IEnumerable<StoredFeature>> FetchNearbyAreas(IEnumerable<Activity> activities)
+    private async Task<IEnumerable<StoredFeature>> FetchNearbyAreas(
+        IEnumerable<Activity> activities,
+        CancellationToken cancellationToken)
     {
-        var areaTileIndices = new HashSet<(int x, int y)>();
-        foreach (var activity in activities)
+        // PostGIS performs the containment test (ST_Intersects) that the old worker ran
+        // locally over tile-fetched documents. Query with the same decoded route points
+        // so the candidate set matches the final FindVisitedProtectedAreas result.
+        var decodedRoutes = activities
+            .Select(activity => activity.SummaryPolyline ?? activity.Polyline)
+            .Where(polyline => !string.IsNullOrEmpty(polyline))
+            .Select(polyline => GeoSpatialFunctions.DecodePolyline(polyline!)
+                .DistinctBy(point => (point.Lat, point.Lng))
+                .ToList())
+            .ToList();
+
+        var routePoints = decodedRoutes.SelectMany(points => points).ToList();
+        var ingestion = await _osmFeatureIngestion.EnsureProtectedAreasAsync(routePoints, cancellationToken)
+            ?? OsmIngestionResult.Empty;
+        _logger.LogInformation(
+            "OSM protected-area ingestion for {RouteCount} routes: tilesQueried={TilesQueried}, fetched={Fetched}, upserted={Upserted}, failed={Failed}",
+            decodedRoutes.Count,
+            ingestion.TilesQueried,
+            ingestion.FeaturesFetched,
+            ingestion.FeaturesUpserted,
+            ingestion.TilesFailed);
+
+        var areasById = new Dictionary<string, StoredFeature>(StringComparer.Ordinal);
+        foreach (var points in decodedRoutes)
         {
-            var polyline = activity.SummaryPolyline ?? activity.Polyline;
-            if (string.IsNullOrEmpty(polyline))
-                continue;
-
-            var points = GeoSpatialFunctions.DecodePolyline(polyline);
-            foreach (var tile in SlippyTileCalculator.TileIndicesByLine(points, AreaTileZoom))
-                areaTileIndices.Add(tile);
+            foreach (var point in points)
+            {
+                var containing = await _protectedAreasRepository.FindContainingPoint(point, cancellationToken);
+                foreach (var area in containing)
+                    areasById[area.Id] = area;
+            }
         }
-
-        var areas = (await _protectedAreasCollection.FetchByTiles(areaTileIndices, AreaTileZoom, followPointers: true)).ToList();
-        _logger.LogDebug("Found {Count} nearby protected areas", areas.Count);
-        return areas;
+        _logger.LogDebug("Found {Count} nearby protected areas", areasById.Count);
+        return areasById.Values;
     }
 
     private async Task<IEnumerable<StoredFeatureSummary>> FetchAdminRegionsForActivity(
@@ -402,9 +374,21 @@ _logger.LogError(ex,
             return [];
 
         var coordinates = SampleCoordinatesForAdminBoundaryLookup(activityPoints)
-            .DistinctBy(p => (p.Lat, p.Lng));
+            .DistinctBy(p => (p.Lat, p.Lng))
+            .ToList();
 
-        var summaries = (await _adminBoundariesCollection.FindBoundarySummariesContainingAnyPoint(
+        // Ensure the admin regions used by this worker are stored before the containment query.
+        var ingestion = await _osmFeatureIngestion.EnsureAdminBoundariesAsync(
+            coordinates, AdminLevelRegion, cancellationToken) ?? OsmIngestionResult.Empty;
+        _logger.LogInformation(
+            "OSM admin boundary ingestion for adminLevel={AdminLevel}: tilesQueried={TilesQueried}, fetched={Fetched}, upserted={Upserted}, failed={Failed}",
+            AdminLevelRegion,
+            ingestion.TilesQueried,
+            ingestion.FeaturesFetched,
+            ingestion.FeaturesUpserted,
+            ingestion.TilesFailed);
+
+        var summaries = (await _adminBoundariesRepository.FindSummariesContainingAnyPoint(
             coordinates, AdminLevelRegion, cancellationToken)).ToList();
 
         if (summaries.Count == 0)
@@ -419,7 +403,7 @@ _logger.LogError(ex,
             return summaries;
         }
 
-        var boundaryDocsById = (await _adminBoundariesCollection.GetByIdsAsync(
+        var boundaryDocsById = (await _adminBoundariesRepository.GetByIds(
                 summaries.Select(summary => summary.Id),
                 cancellationToken))
             .ToDictionary(doc => doc.Id, StringComparer.Ordinal);
@@ -442,34 +426,6 @@ _logger.LogError(ex,
             summaries.Count,
             validatedSummaries.Count);
         return validatedSummaries;
-    }
-
-    private async Task EnsureAdminRegionsCachedForActivity(
-        List<Coordinate> activityPoints,
-        CancellationToken cancellationToken)
-    {
-        if (activityPoints.Count == 0)
-            return;
-
-        var tiles = SampleCoordinatesForAdminBoundaryLookup(activityPoints)
-            .Select(point => SlippyTileCalculator.WGS84ToTileIndex(point, AdminBoundaryTileZoom))
-            .Distinct()
-            .ToList();
-
-        if (tiles.Count == 0)
-            return;
-
-        var cached = (await _adminBoundariesCollection.FetchByTiles(
-            tiles,
-            AdminLevelRegion,
-            zoom: AdminBoundaryTileZoom,
-            followPointers: true,
-            cancellationToken: cancellationToken)).Count();
-
-        _logger.LogDebug(
-            "Warmed {TileCount} admin boundary tiles for activity lookup, yielding {BoundaryCount} cached region documents",
-            tiles.Count,
-            cached);
     }
 
     private static StoredFeatureSummary MergeSummaryWithBoundaryDoc(
@@ -551,68 +507,4 @@ _logger.LogError(ex,
         return GetRoutePolyline(activity);
     }
 
-    private async Task<List<ActivityLinkedDocumentProjection>> GetActivityLinkedDocuments(
-        string userId,
-        string activityId,
-        CancellationToken cancellationToken)
-    {
-        var query = new QueryDefinition(@"
-SELECT c.id, c.activityIds
-FROM c
-WHERE c.userId = @userId
-  AND ARRAY_CONTAINS(c.activityIds, @activityId)")
-            .WithParameter("@userId", userId)
-            .WithParameter("@activityId", activityId);
-
-        var requestOptions = new QueryRequestOptions
-        {
-            PartitionKey = new PartitionKey(userId)
-        };
-
-        return (await _visitedAreasCollection.ExecuteQueryAsync<ActivityLinkedDocumentProjection>(
-            query,
-            requestOptions,
-            cancellationToken: cancellationToken)).ToList();
-    }
-
-    private async Task CleanupStaleVisitedAreaDocuments(
-        string userId,
-        string activityId,
-        ISet<string> currentDocumentIds,
-        IEnumerable<ActivityLinkedDocumentProjection> linkedDocs,
-        CancellationToken cancellationToken)
-    {
-        var partitionKey = new PartitionKey(userId);
-        var stalePatches = new List<(string Id, IReadOnlyList<PatchOperation> Operations)>();
-        var staleDeletes = new List<string>();
-
-        foreach (var linkedDoc in linkedDocs)
-        {
-            if (currentDocumentIds.Contains(linkedDoc.Id))
-                continue;
-
-            var remainingActivityIds = (linkedDoc.ActivityIds ?? [])
-                .Where(id => !string.Equals(id, activityId, StringComparison.Ordinal))
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-
-            if (remainingActivityIds.Count == 0)
-            {
-                staleDeletes.Add(linkedDoc.Id);
-                continue;
-            }
-
-            stalePatches.Add((linkedDoc.Id, [PatchOperation.Set("/activityIds", remainingActivityIds)]));
-        }
-
-        if (stalePatches.Count > 0)
-            await _visitedAreasCollection.ExecuteBatch(
-                partitionKey,
-                patches: stalePatches,
-                priority: CosmosWritePriority.Low,
-                cancellationToken: cancellationToken);
-
-        foreach (var staleDelete in staleDeletes)
-            await _visitedAreasCollection.DeleteDocument(staleDelete, partitionKey, cancellationToken);
-    }
 }

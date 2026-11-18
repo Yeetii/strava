@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -7,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 using UserDocument = Shared.Models.User;
 
 namespace API.Endpoints.Admin;
@@ -51,27 +51,10 @@ public record AdminUserStats(
     AdminUserActivityProcessingSummary ActivityProcessingSummary,
     IReadOnlyList<AdminRecentUserActivityStatus> RecentActivities);
 
-internal sealed record UserDetailProjection(
-    string Id,
-    string? UserName,
-    string? FirstName,
-    string? LastName,
-    StravaSyncStatus? SyncStatus);
-
-internal sealed record ActivityDetailProjection(
-    string Id,
-    string Name,
-    DateTime StartDateLocal,
-    ActivityProcessingStatus? ProcessingStatus);
-
-internal sealed record AdminUserLastLoginProjection(
-    string UserId,
-    DateTime? LastLoggedInAtUtc);
-
 public class GetUserStats(
-    CollectionClient<UserDocument> usersCollection,
-    CollectionClient<Activity> activitiesCollection,
-    CollectionClient<Session> sessionsCollection,
+    IUserRepository usersRepository,
+    IActivityRepository activitiesRepository,
+    ISessionRepository sessionsRepository,
     IConfiguration configuration)
 {
     [OpenApiOperation(tags: ["Admin"])]
@@ -90,26 +73,19 @@ public class GetUserStats(
             return req.CreateResponse(HttpStatusCode.Unauthorized);
         }
 
-        var userTask = usersCollection.GetByIdMaybe(userId, new PartitionKey(userId));
-        var activityCountTask = activitiesCollection.ExecuteQueryAsync<int>(
-            new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.userId = @userId")
-                .WithParameter("@userId", userId));
-        var lastLoginTask = sessionsCollection.ExecuteQueryAsync<AdminUserLastLoginProjection>(
-            new QueryDefinition("SELECT c.userId AS userId, MAX(c.createdAtUtc) AS lastLoggedInAtUtc FROM c WHERE c.userId = @userId AND IS_DEFINED(c.createdAtUtc) GROUP BY c.userId")
-                .WithParameter("@userId", userId));
-        var activityDetailsTask = activitiesCollection.ExecuteQueryAsync<ActivityDetailProjection>(
-            new QueryDefinition("SELECT c.id, c.name, c.startDateLocal, c.processingStatus FROM c WHERE c.userId = @userId ORDER BY c.startDateLocal DESC")
-                .WithParameter("@userId", userId));
-
-        await Task.WhenAll(userTask, activityCountTask, lastLoginTask, activityDetailsTask);
-
-        var user = userTask.Result;
+        var user = await usersRepository.GetById(userId);
         if (user == null)
         {
             return req.CreateResponse(HttpStatusCode.NotFound);
         }
 
-        var activities = activityDetailsTask.Result.ToArray();
+        var activities = (await activitiesRepository.GetAllByUser(userId))
+            .OrderByDescending(activity => activity.StartDateLocal)
+            .ToArray();
+        var lastLoggedInAtUtc = (await sessionsRepository.GetByUserId(userId))
+            .Select(session => (DateTime?)session.CreatedAtUtc)
+            .Max();
+
         var processingStatuses = activities
             .Select(activity => activity.ProcessingStatus)
             .Where(status => status != null)
@@ -128,15 +104,13 @@ public class GetUserStats(
                 .Where(updatedAt => updatedAt.HasValue)
                 .Max());
 
-        var lastLoggedInAtUtc = lastLoginTask.Result.FirstOrDefault()?.LastLoggedInAtUtc;
-
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new AdminUserStats(
             UserId: user.Id,
             Username: user.UserName,
             FirstName: user.FirstName,
             LastName: user.LastName,
-            ActivityCount: activityCountTask.Result.FirstOrDefault(),
+            ActivityCount: activities.Length,
             LastLoggedInAtUtc: lastLoggedInAtUtc,
             StravaAuthStatus: BuildStravaAuthStatus(user),
             SyncStatus: user.SyncStatus ?? UserSyncStatusService.CreateDefaultStatus(),

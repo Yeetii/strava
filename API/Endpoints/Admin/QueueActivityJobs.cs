@@ -1,16 +1,16 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 
 namespace API.Endpoints.Admin;
 
 public class QueueActivityJobs(
-    CollectionClient<Activity> activityCollection,
+    IActivityRepository activityRepository,
     QueueClient queueClient,
     UserAuthenticationService userAuthService)
 {
@@ -63,33 +63,11 @@ public class QueueActivityJobs(
         DateTime? startDate = DateTime.TryParse(queryString["startDate"], out var sd) ? sd.ToUniversalTime() : null;
         DateTime? endDate = DateTime.TryParse(queryString["endDate"], out var ed) ? ed.ToUniversalTime() : null;
 
-        var queryBuilder = new System.Text.StringBuilder("SELECT VALUE c.id FROM c WHERE c.userId = @userId");
-        var queryDefinition = new QueryDefinition(queryBuilder.ToString());
-
-        if (startDate.HasValue || endDate.HasValue)
-        {
-            queryBuilder.Clear();
-            queryBuilder.Append("SELECT VALUE c.id FROM c WHERE c.userId = @userId");
-            if (startDate.HasValue)
-                queryBuilder.Append(" AND c.startDate >= @startDate");
-            if (endDate.HasValue)
-                queryBuilder.Append(" AND c.startDate <= @endDate");
-
-            queryDefinition = new QueryDefinition(queryBuilder.ToString())
-                .WithParameter("@userId", effectiveUserId);
-
-            if (startDate.HasValue)
-                queryDefinition = queryDefinition.WithParameter("@startDate", startDate.Value.ToString("O"));
-            if (endDate.HasValue)
-                queryDefinition = queryDefinition.WithParameter("@endDate", endDate.Value.ToString("O"));
-        }
-        else
-        {
-            queryDefinition = queryDefinition.WithParameter("@userId", effectiveUserId);
-        }
-
-        var activityIds = await activityCollection.ExecuteQueryAsync<string>(queryDefinition);
-        var idList = activityIds.ToList();
+        var idList = (await activityRepository.GetAllByUser(effectiveUserId))
+            .Where(activity => !startDate.HasValue || activity.StartDate >= startDate.Value)
+            .Where(activity => !endDate.HasValue || activity.StartDate <= endDate.Value)
+            .Select(activity => activity.Id)
+            .ToList();
 
         var sender = queueClient.CreateSender(queueName);
         foreach (var activityId in idList)
