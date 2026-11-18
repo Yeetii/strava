@@ -29,14 +29,26 @@ if (string.Equals(role, "api", StringComparison.OrdinalIgnoreCase))
     var app = WebApplication.CreateBuilder(args);
     app.Services.AddBackendServices(app.Configuration);
     QueueTransport.AddHangfireStorage(app.Services, app.Configuration);
+    var defaultOrigins = new[]
+    {
+        "https://peakshunters.erikmagnusson.com",
+        "https://stigar.erikmagnusson.com",
+    };
+
+    var configuredOrigins = app.Configuration.GetValue<string>("AllowedOrigins")?
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
+
+    var origins = configuredOrigins.Length > 0
+        ? configuredOrigins.Union(defaultOrigins, StringComparer.OrdinalIgnoreCase).ToArray()
+        : defaultOrigins;
+
     app.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     {
-        var origins = app.Configuration.GetValue<string>("AllowedOrigins")?
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
-        if (origins.Length > 0)
-            policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
-        else
-            policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+        policy.WithOrigins(origins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials()
+            .WithExposedHeaders("Content-Range", "Content-Length", "ETag", "Accept-Ranges");
     }));
 
     var webApp = app.Build();

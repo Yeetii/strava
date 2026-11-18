@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Identity;
 using Azure.Monitor.Query;
-using Azure.Storage.Blobs;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -73,18 +72,6 @@ new CollectionClientBuilder(builder.Services)
     .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
     .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer);
 
-// Organizer store is selected by OrganizerStore:Provider (Blob by default,
-// FileSystem for the self-hosted stack). Keep container creation for the Blob
-// provider so existing deployments behave exactly as before.
-if (!string.Equals(
-        configuration[AppConfig.OrganizerStoreProvider],
-        OrganizerStoreProviders.FileSystem,
-        StringComparison.OrdinalIgnoreCase))
-{
-    var blobConnection = configuration.GetValue<string>("BlobStorageConnection")
-        ?? throw new InvalidOperationException("BlobStorageConnection is not configured.");
-    new BlobContainerClient(blobConnection, BlobContainerNames.RaceOrganizers).CreateIfNotExists();
-}
 builder.Services.AddOrganizerStore(configuration);
 builder.Services.AddShardStore(configuration);
 builder.Services.AddSingleton(serviceProvider =>
@@ -167,16 +154,48 @@ builder.Services.AddSingleton<AdminBoundaryMetricsEnricher>();
 builder.Services.AddSingleton<ISummitsCalculator, SummitsCalculatorWithBoundingBoxFilter>();
 builder.Services.AddSingleton<RaceDiscoveryService>();
 
-var allowedOrigins = configuration.GetValue<string>("AllowedOrigins")?
+// Azure SignalR stays; negotiate is produced by the same code path so the
+// response shape is unchanged. See SignalRNegotiate.
+builder.Services.AddSingleton<Func<string, SignalRConnectionInfo>>(_ =>
+    (Func<string, SignalRConnectionInfo>)(sessionId => SignalRNegotiate.Create(
+        configuration.GetValue<string>("AzureSignalRConnectionString")
+        ?? throw new InvalidOperationException("AzureSignalRConnectionString is not configured."),
+        sessionId)));
+
+var defaultOrigins = new[]
+{
+    "https://peakshunters.erikmagnusson.com",
+    "https://stigar.erikmagnusson.com",
+};
+
+var configuredOrigins = configuration.GetValue<string>("AllowedOrigins")?
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     ?? [];
-builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+
+var allowedOrigins = configuredOrigins.Length > 0
+    ? configuredOrigins.Union(defaultOrigins, StringComparer.OrdinalIgnoreCase).ToArray()
+    : defaultOrigins;
+
+builder.Services.AddCors(options =>
 {
-    if (allowedOrigins.Length > 0)
-        policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
-    else
-        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
-}));
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials()
+            .WithExposedHeaders("Content-Range", "Content-Length", "ETag", "Accept-Ranges");
+    });
+
+    options.AddPolicy(API.Endpoints.Tiles.GetTrailsPmtiles.CorsPolicy, policy =>
+    {
+        policy.SetIsOriginAllowed(_ => true)
+            .AllowAnyHeader()
+            .WithMethods("GET", "HEAD", "OPTIONS")
+            .AllowCredentials()
+            .WithExposedHeaders("Content-Range", "Content-Length", "ETag", "Accept-Ranges");
+    });
+});
 builder.Services.AddOpenApi();
 
 var app = builder.Build();

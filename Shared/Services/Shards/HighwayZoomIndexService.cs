@@ -55,7 +55,7 @@ public class HighwayZoomIndexService(
             var shift = _canonicalZoom - z;
             var x = shardX >> shift;
             var y = shardY >> shift;
-            var path = GetIndexBlobPath(z, x, y);
+            var path = GetIndexPath(z, x, y);
 
             var index = await TryReadIndexModelAsync(path, z, x, y, cancellationToken);
             if (index is null)
@@ -116,7 +116,7 @@ public class HighwayZoomIndexService(
         if (z >= _canonicalZoom)
             return null;
 
-        return await _indexStore.TryGetLastModifiedAsync(GetIndexBlobPath(z, x, y), cancellationToken);
+        return await _indexStore.TryGetLastModifiedAsync(GetIndexPath(z, x, y), cancellationToken);
     }
 
     private async Task<HighwayTileShardSelection> BuildAndPersistIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
@@ -151,7 +151,7 @@ public class HighwayZoomIndexService(
         // canonical shards on every low-zoom request. Incomplete indexes are safe to cache
         // because UpdateIndexesForShardAsync amends existing index blobs as shards materialize.
         var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
-        await _indexStore.WriteAsync(GetIndexBlobPath(z, x, y), payload, cancellationToken);
+        await _indexStore.WriteAsync(GetIndexPath(z, x, y), payload, cancellationToken);
 
         _logger.LogInformation(
             "Built highway shard index for z{Z}/{X}/{Y}. CandidateShards={CandidateShardCount}, ReferencedShards={ShardCount}, IsComplete={IsComplete}, elapsedMs={ElapsedMs}.",
@@ -162,7 +162,7 @@ public class HighwayZoomIndexService(
 
     private async Task<HighwayTileShardSelection?> TryReadIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
     {
-        var model = await TryReadIndexModelAsync(GetIndexBlobPath(z, x, y), z, x, y, cancellationToken);
+        var model = await TryReadIndexModelAsync(GetIndexPath(z, x, y), z, x, y, cancellationToken);
         if (model is null)
             return null;
 
@@ -197,7 +197,7 @@ public class HighwayZoomIndexService(
         }
     }
 
-    internal static string GetIndexBlobPath(int z, int x, int y) => $"index/{z}/{x}/{y}.json";
+    internal static string GetIndexPath(int z, int x, int y) => $"index/{z}/{x}/{y}.json";
 }
 
 public sealed record HighwayTileShardSelection(bool IsComplete, IReadOnlyList<(int x, int y)> Shards);

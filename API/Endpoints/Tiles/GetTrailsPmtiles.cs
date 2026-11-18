@@ -16,6 +16,7 @@ public static class GetTrailsPmtiles
 {
     public const string Route = "/tiles/trails.pmtiles";
     public const string ContentType = "application/octet-stream";
+    public const string CorsPolicy = "PublicTiles";
 
     public static IEndpointRouteBuilder MapGetTrailsPmtiles(
         this IEndpointRouteBuilder endpoints,
@@ -24,8 +25,9 @@ public static class GetTrailsPmtiles
         var outputPath = configuration[AppConfig.RaceTilesOutputPath]
             ?? AppConfig.DefaultRaceTilesOutputPath;
 
-        endpoints.MapGet(Route, (HttpContext context) => BuildResult(context, outputPath))
+        endpoints.MapMethods(Route, ["GET", "HEAD"], (HttpContext context) => BuildResult(context, outputPath))
         .AllowAnonymous()
+        .RequireCors(CorsPolicy)
         .WithName(nameof(GetTrailsPmtiles));
 
         return endpoints;

@@ -1,6 +1,3 @@
-using Azure;
-using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Models;
 using BAMCIS.GeoJSON;
 using Moq;
 using Shared.Geo;
@@ -292,9 +289,9 @@ public class ShardStackTests
     }
 
     [Fact]
-    public void HighwayZoomIndexService_IndexBlobPath_IsStable()
+    public void HighwayZoomIndexService_IndexPath_IsStable()
     {
-        var path = HighwayZoomIndexService.GetIndexBlobPath(9, 277, 168);
+        var path = HighwayZoomIndexService.GetIndexPath(9, 277, 168);
         Assert.Equal("index/9/277/168.json", path);
     }
 
@@ -319,9 +316,7 @@ public class ShardStackTests
     [Fact]
     public async Task HighwayZoomIndexService_GetShardKeysAsync_ReusesCachedIncompleteIndex()
     {
-        var blobName = HighwayZoomIndexService.GetIndexBlobPath(7, 68, 38);
-        var container = new Mock<BlobContainerClient>();
-        var blob = new Mock<BlobClient>();
+        var indexPath = HighwayZoomIndexService.GetIndexPath(7, 68, 38);
         var index = new HighwayTileShardIndex(
             Version: 4,
             Zoom: 7,
@@ -331,19 +326,14 @@ public class ShardStackTests
             Shards: [new HighwayTileShardRef(2200, 1320), new HighwayTileShardRef(2201, 1320)]);
         var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
 
-        container
-            .Setup(client => client.GetBlobClient(blobName))
-            .Returns(blob.Object);
-
-        blob
-            .Setup(client => client.DownloadContentAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Response.FromValue(
-                BlobsModelFactory.BlobDownloadResult(BinaryData.FromBytes(payload)),
-                Mock.Of<Response>()));
+        var indexStore = new Mock<IShardIndexStore>();
+        indexStore
+            .Setup(s => s.TryReadAsync(indexPath, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(payload);
 
         var shardRepository = new FakeShardRepository(new Dictionary<(int z, int x, int y), Shard>());
         var service = new HighwayZoomIndexService(
-            new BlobShardIndexStore(container.Object),
+            indexStore.Object,
             shardRepository,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<HighwayZoomIndexService>.Instance,
             canonicalZoom: 12);
@@ -353,30 +343,58 @@ public class ShardStackTests
         Assert.False(selection.IsComplete);
         Assert.Equal([(2200, 1320), (2201, 1320)], selection.Shards);
         Assert.Equal(0, shardRepository.GetCalls);
-        blob.Verify(client => client.UploadAsync(It.IsAny<BinaryData>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        indexStore.Verify(s => s.WriteAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task BlobShardRepository_DeleteShardAsync_RemovesShardFromExistingIndexes()
+    public async Task FileSystemShardRepository_DeleteShardAsync_RemovesShardFromExistingIndexes()
     {
-        var container = new InMemoryBlobContainer();
-        var shardPath = BlobShardRepository.GetBlobPath(12, 2200, 1320);
-        var shard = CreateShard(CreateHighwayFeature("track", "way-1"));
-        container.SeedBlob(shardPath, BinaryData.FromBytes(ShardBinarySerializer.Serialize(shard)));
+        var root = Path.Combine(Path.GetTempPath(), "shard-sync-test", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var indexStore = new FileSystemShardIndexStore(root);
+            var indexPath = HighwayZoomIndexService.GetIndexPath(7, 68, 41);
+            await indexStore.WriteAsync(indexPath, JsonSerializer.SerializeToUtf8Bytes(
+                new HighwayTileShardIndex(4, 7, 68, 41, false, [new HighwayTileShardRef(2200, 1320)]),
+                JsonOptions), CancellationToken.None);
 
-        var indexPath = HighwayZoomIndexService.GetIndexBlobPath(7, 68, 41);
-        container.SeedBlob(indexPath, BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(
-            new HighwayTileShardIndex(4, 7, 68, 41, false, [new HighwayTileShardRef(2200, 1320)]),
-            JsonOptions)));
+            HighwayZoomIndexService? indexService = null;
+            var repository = new FileSystemShardRepository(
+                root,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<FileSystemShardRepository>.Instance,
+                (_, _, _) => Task.FromResult<IEnumerable<Feature>>([CreateHighwayFeatureForTile(12, 2200, 1320, "track", "way-1")]),
+                canonicalZoom: 12,
+                overlapBufferMeters: 200,
+                onShardChanged: async (x, y, shard, cancellationToken) =>
+                    await indexService!.SyncIndexesForShardAsync(x, y, shard, cancellationToken));
 
-        var repository = CreateBlobShardRepositoryWithIndexSync(container);
+            indexService = new HighwayZoomIndexService(
+                indexStore,
+                repository,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<HighwayZoomIndexService>.Instance,
+                canonicalZoom: 12);
 
-        await repository.DeleteShardAsync(12, 2200, 1320, CancellationToken.None);
+            var shardPath = FileSystemShardRepository.GetShardPath(12, 2200, 1320);
+            var fullShardPath = Path.Combine(root, shardPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullShardPath)!);
+            var shard = CreateShard(CreateHighwayFeature("track", "way-1"));
+            await File.WriteAllBytesAsync(fullShardPath, ShardBinarySerializer.Serialize(shard));
 
-        Assert.False(container.Contains(shardPath));
-        var index = JsonSerializer.Deserialize<HighwayTileShardIndex>(container.GetContent(indexPath), JsonOptions);
-        Assert.NotNull(index);
-        Assert.DoesNotContain(index.Shards, shardRef => shardRef.X == 2200 && shardRef.Y == 1320);
+            await repository.DeleteShardAsync(12, 2200, 1320, CancellationToken.None);
+
+            Assert.False(File.Exists(fullShardPath));
+            var indexBytes = await indexStore.TryReadAsync(indexPath, CancellationToken.None);
+            Assert.NotNull(indexBytes);
+            var index = JsonSerializer.Deserialize<HighwayTileShardIndex>(indexBytes, JsonOptions);
+            Assert.NotNull(index);
+            Assert.DoesNotContain(index.Shards, shardRef => shardRef.X == 2200 && shardRef.Y == 1320);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
     }
 
     private static Feature CreateHighwayFeature(string highway, string id, string? trailVisibility = null)
@@ -417,29 +435,6 @@ public class ShardStackTests
         }
 
         return shard;
-    }
-
-    private static BlobShardRepository CreateBlobShardRepositoryWithIndexSync(InMemoryBlobContainer container)
-    {
-        HighwayZoomIndexService? indexService = null;
-        var repository = new BlobShardRepository(
-            container.Client.Object,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<BlobShardRepository>.Instance,
-            (_, _, _) => Task.FromResult<IEnumerable<Feature>>([CreateHighwayFeatureForTile(12, 2200, 1320, "track", "way-1")]),
-            canonicalZoom: 12,
-            overlapBufferMeters: 200,
-            onShardChanged: async (x, y, shard, cancellationToken) =>
-            {
-                await indexService!.SyncIndexesForShardAsync(x, y, shard, cancellationToken);
-            });
-
-        indexService = new HighwayZoomIndexService(
-            new BlobShardIndexStore(container.Client.Object),
-            repository,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<HighwayZoomIndexService>.Instance,
-            canonicalZoom: 12);
-
-        return repository;
     }
 
     private class FakeShardRepository(Dictionary<(int z, int x, int y), Shard> shards) : IShardRepository
@@ -515,7 +510,7 @@ public class ShardStackTests
 
     private sealed class RecordingHighwayZoomIndexService(HighwayTileShardSelection selection)
         : HighwayZoomIndexService(
-            new BlobShardIndexStore(new Azure.Storage.Blobs.BlobContainerClient("UseDevelopmentStorage=true", "ignored")),
+            Mock.Of<IShardIndexStore>(),
             new FakeShardRepository(new Dictionary<(int z, int x, int y), Shard>()),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<HighwayZoomIndexService>.Instance,
             canonicalZoom: 12)
@@ -538,96 +533,6 @@ public class ShardStackTests
             int y,
             CancellationToken cancellationToken = default)
             => Task.FromResult<DateTimeOffset?>(null);
-    }
-
-    private sealed class InMemoryBlobContainer
-    {
-        private readonly Dictionary<string, BlobState> _blobs = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, Mock<BlobClient>> _clients = new(StringComparer.Ordinal);
-
-        public Mock<BlobContainerClient> Client { get; } = new();
-
-        public InMemoryBlobContainer()
-        {
-            Client
-                .Setup(container => container.GetBlobClient(It.IsAny<string>()))
-                .Returns((string blobName) => GetOrCreateBlobClient(blobName).Object);
-        }
-
-        public bool Contains(string blobName) => _blobs.ContainsKey(blobName);
-
-        public string GetContent(string blobName) => _blobs[blobName].Content.ToString();
-
-        public void SeedBlob(string blobName, BinaryData content)
-        {
-            _blobs[blobName] = new BlobState(content, CreateEtag(blobName, 0));
-        }
-
-        private Mock<BlobClient> GetOrCreateBlobClient(string blobName)
-        {
-            if (_clients.TryGetValue(blobName, out var existing))
-                return existing;
-
-            var client = new Mock<BlobClient>();
-
-            client
-                .Setup(blob => blob.DownloadContentAsync(It.IsAny<CancellationToken>()))
-                .Returns((CancellationToken _) =>
-                {
-                    if (!_blobs.TryGetValue(blobName, out var blob))
-                        throw new RequestFailedException(404, "Blob not found");
-
-                    var details = BlobsModelFactory.BlobDownloadDetails(eTag: blob.ETag);
-                    var result = BlobsModelFactory.BlobDownloadResult(blob.Content, details);
-                    return Task.FromResult(Response.FromValue(result, Mock.Of<Response>()));
-                });
-
-            client
-                .Setup(blob => blob.GetPropertiesAsync(
-                    It.IsAny<BlobRequestConditions>(),
-                    It.IsAny<CancellationToken>()))
-                .Returns((BlobRequestConditions _, CancellationToken _) =>
-                {
-                    if (!_blobs.TryGetValue(blobName, out var blob))
-                        throw new RequestFailedException(404, "Blob not found");
-
-                    var properties = BlobsModelFactory.BlobProperties(eTag: blob.ETag);
-                    return Task.FromResult(Response.FromValue(properties, Mock.Of<Response>()));
-                });
-
-            client
-                .Setup(blob => blob.UploadAsync(It.IsAny<BinaryData>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .Returns((BinaryData content, bool _, CancellationToken _) =>
-                {
-                    PutBlob(blobName, content);
-                    return Task.FromResult(Response.FromValue(default(BlobContentInfo), Mock.Of<Response>()));
-                });
-
-            client
-                .Setup(blob => blob.DeleteIfExistsAsync(
-                    It.IsAny<DeleteSnapshotsOption>(),
-                    It.IsAny<BlobRequestConditions?>(),
-                    It.IsAny<CancellationToken>()))
-                .Returns((DeleteSnapshotsOption _, BlobRequestConditions? _, CancellationToken _) =>
-                {
-                    var deleted = _blobs.Remove(blobName);
-                    return Task.FromResult(Response.FromValue(deleted, Mock.Of<Response>()));
-                });
-
-            _clients[blobName] = client;
-            return client;
-        }
-
-        private void PutBlob(string blobName, BinaryData content)
-        {
-            var version = _blobs.TryGetValue(blobName, out var existing) ? existing.Version + 1 : 0;
-            _blobs[blobName] = new BlobState(content, CreateEtag(blobName, version), version);
-        }
-
-        private static ETag CreateEtag(string blobName, int version)
-            => new($"\"{blobName}:{version}\"");
-
-        private sealed record BlobState(BinaryData Content, ETag ETag, int Version = 0);
     }
 
     private static Feature CreateHighwayFeatureForTile(int z, int x, int y, string highway, string id)

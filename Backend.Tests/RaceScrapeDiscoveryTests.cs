@@ -1758,39 +1758,39 @@ public class RaceScrapeDiscoveryTests
     public void DeriveOrganizerKey_RunsignupSlugIdsAreNormalized()
     {
         Assert.Equal("runsignup.com~Race~TX~Longview~LongviewTrailRunsSpring",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/TX/Longview/LongviewTrailRunsSpring")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/TX/Longview/LongviewTrailRunsSpring")));
 
         Assert.Equal("runsignup.com~HABANERO",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://runsignup.com/HABANERO")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://runsignup.com/HABANERO")));
 
         Assert.Equal("runsignup.com~Race~UT~ParkCity~TripleTrail",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/Events/UT/ParkCity/TripleTrail")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://runsignup.com/Race/Events/UT/ParkCity/TripleTrail")));
 
         // UltraSignup: the ?did= query param uniquely identifies the event, and every
         // .aspx tab (register / results / entrants) for the same did collapses to one key.
         Assert.Equal("ultrasignup.com~register.aspx?did=104195",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=104195")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=104195")));
         Assert.Equal("ultrasignup.com~register.aspx?did=119001",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=119001")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx?did=119001")));
         Assert.Equal("ultrasignup.com~register.aspx?did=119001",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://ultrasignup.com/results_event.aspx?did=119001")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/results_event.aspx?did=119001")));
         Assert.Equal("ultrasignup.com~register.aspx?did=119001",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://ultrasignup.com/entrants_event.aspx?did=119001")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/entrants_event.aspx?did=119001")));
         // No `did` query — fall back to the raw first path segment.
         Assert.Equal("ultrasignup.com~register.aspx",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://ultrasignup.com/register.aspx")));
 
         Assert.Equal("my.raceresult.com~376823",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://my.raceresult.com/376823/info")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://my.raceresult.com/376823/info")));
 
         Assert.Equal("raceroster.com~events~2026~112366~day-of-the-dead-day-1-and-day-2",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://raceroster.com/events/2026/112366/day-of-the-dead-day-1-and-day-2/page/location-and-course-details")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://raceroster.com/events/2026/112366/day-of-the-dead-day-1-and-day-2/page/location-and-course-details")));
 
         Assert.Equal("welcu.com~utcb",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://welcu.com/utcb/utcb2025")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://welcu.com/utcb/utcb2025")));
 
         Assert.Equal("facebook.com~profile.php?id=61552551957764",
-            BlobOrganizerStore.DeriveOrganizerKey(new Uri("https://www.facebook.com/profile.php?id=61552551957764")));
+            OrganizerUrlRules.DeriveOrganizerKey(new Uri("https://www.facebook.com/profile.php?id=61552551957764")));
     }
 
     [Theory]
@@ -1825,7 +1825,7 @@ public class RaceScrapeDiscoveryTests
     [InlineData("https://bit.ly/abc123", "bit.ly~abc123")]
     public void DeriveOrganizerKey_NewPlatformsAreNormalized(string url, string expected)
     {
-        Assert.Equal(expected, BlobOrganizerStore.DeriveOrganizerKey(new Uri(url)));
+        Assert.Equal(expected, OrganizerUrlRules.DeriveOrganizerKey(new Uri(url)));
     }
     // ── BuildFeatureId (name+distance overload) ───────────────────────────────
 

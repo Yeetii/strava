@@ -56,7 +56,6 @@ public interface IOrganizerStore
 public enum OrganizerDocumentSource
 {
     Cache,
-    Blob,
     FileSystem,
 }
 
@@ -71,7 +70,7 @@ public readonly record struct OrganizerReadMetricsSnapshot(
     int StreamedDocuments,
     int CacheHits,
     long CachedBytes,
-    int BlobDownloads,
+    int StoreDownloads,
     long DownloadedBytes);
 
 /// <summary>Shared human-readable byte formatting for organizer read logging.</summary>

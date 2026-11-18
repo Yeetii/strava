@@ -147,7 +147,7 @@ public class ScrapeRaceWorkerTests
     [InlineData("https://airtable.com/shrS5egjcGtRHpEGy", "airtable.com~shrS5egjcGtRHpEGy")]
     public void DeriveOrganizerKey_ScopesNewSluggableHosts(string url, string expected)
     {
-        Assert.Equal(expected, BlobOrganizerStore.DeriveOrganizerKey(new Uri(url)));
+        Assert.Equal(expected, OrganizerUrlRules.DeriveOrganizerKey(new Uri(url)));
     }
 
     [Fact]
