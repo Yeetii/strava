@@ -21,7 +21,7 @@ T2 (S2, S5): Remove dead Cosmos shim code from Shared.Hosting (CosmosDB* attribu
 T3 (S2, S5): Delete dead Cosmos-based Shared services (CollectionClient, CollectionClientBuilder, TiledCollectionClient, AdminBoundariesCollectionClient + their tests), drop Microsoft.Azure.Cosmos from Shared.csproj | route: inline | status: done | commit: d1a0f53
 T4 (S2, S3, S5): Drop Microsoft.Azure.Cosmos from PmtilesJob.csproj; delete the Cosmos migration Tools (csproj, Program.cs, CosmosToPostgresMigrator.cs, AzureWorkbooks/) preserving sync-openapi-source.mjs; clear stale Cosmos usings in API/Backend/tests and update operational docs | route: inline | status: done | commit: ea03db4
 T5 (S2, S5): Remove Azure.Identity/Azure.Monitor.Query packages + usings (API, Backend); delete the two Azure Function App deploy workflows | route: inline | status: done | commit: ea03db4
-T6 (S3, S5): Final verification + update Shared/MIGRATION_PLAN_SELF_HOSTED.md Phase 8 to decommission-complete | route: inline | status: done | commit: pending (slice 4)
+T6 (S3, S5): Final verification + update Shared/MIGRATION_PLAN_SELF_HOSTED.md Phase 8 to decommission-complete | route: inline | status: done | commit: 699071b
 
 ## Log
 
