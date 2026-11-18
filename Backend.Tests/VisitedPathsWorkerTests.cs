@@ -225,14 +225,15 @@ public class VisitedPathsWorkerTests
 
         visitedPaths.Verify(r => r.RemoveByActivity(activityId, It.IsAny<CancellationToken>()), Times.Once);
         visitedPaths.Verify(
-            r => r.AddPath(
-                It.Is<VisitedPathInput>(p => p.ActivityId == activityId
-                    && p.UserId == userId
-                    && p.OsmHighwayId == "way/123"
-                    && p.Name == "Test Road"
-                    && p.Type == "residential"
-                    && p.TileX.HasValue
-                    && p.TileY.HasValue),
+            r => r.AddRange(
+                It.Is<IEnumerable<VisitedPathInput>>(paths => paths.Count() == 1
+                    && paths.First().ActivityId == activityId
+                    && paths.First().UserId == userId
+                    && paths.First().OsmHighwayId == "way/123"
+                    && paths.First().Name == "Test Road"
+                    && paths.First().Type == "residential"
+                    && paths.First().TileX.HasValue
+                    && paths.First().TileY.HasValue),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }

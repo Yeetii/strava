@@ -1,16 +1,13 @@
 using System.Net;
 using Hangfire;
-using Azure.Monitor.Query;
-using Azure.Monitor.Query.Models;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
-using Shared.Constants;
 using Shared.Services;
+using Shared.Services.Postgres.Admin;
 
 namespace API.Endpoints.Admin;
 
@@ -20,15 +17,15 @@ public record QueueStatus(
     long ScheduledCount,
     long FailedCount);
 
-public record CosmosContainerStatus(
-    string ContainerName,
-    long DocumentCount);
+public record PostgresTableStatus(
+    string TableName,
+    long RowCount);
 
 public record AdminStatus(
     IReadOnlyList<QueueStatus> Queues,
-    IReadOnlyList<CosmosContainerStatus> CosmosContainers,
-    int? ProvisionedThroughput,
-    double? LiveRuPerSecond,
+    IReadOnlyList<PostgresTableStatus> PostgresTables,
+    long? DatabaseSizeBytes,
+    int? ActiveConnections,
     int NewActivitiesLast24Hours,
     int ProcessedNewActivitiesLast24Hours,
     int TotalRaceOrganizers,
@@ -39,8 +36,7 @@ internal sealed record ActivityWindowCountsProjection(
     int ProcessedNewActivitiesLast24Hours);
 
 public class GetAdminStatus(
-    CosmosClient cosmosClient,
-    MetricsQueryClient metricsQueryClient,
+    IAdminStatusRepository statusRepository,
     IOrganizerStore organizerStore,
     IConfiguration configuration,
     ILogger<GetAdminStatus> logger)
@@ -59,23 +55,23 @@ public class GetAdminStatus(
         }
 
         var queueStatus = FetchQueueStatus();
-        var containerTasks = DatabaseConfig.AllContainers.Select(FetchContainerStatusAsync);
-        var throughputTask = FetchDatabaseThroughputAsync();
-        var liveRuTask = FetchLiveRuPerSecondAsync();
+        var tableTasks = statusRepository.TableNames.Select(FetchTableStatusAsync).ToArray();
+        var databaseSizeTask = FetchDatabaseSizeBytesAsync();
+        var activeConnectionsTask = FetchActiveConnectionsAsync();
         var activityWindowCountsTask = FetchActivityWindowCountsAsync();
         var raceCountsTask = organizerStore.GetCountsAsync();
 
-        var containerStatuses = await Task.WhenAll(containerTasks);
-        var provisionedThroughput = await throughputTask;
-        var liveRuPerSecond = await liveRuTask;
+        var tableStatuses = await Task.WhenAll(tableTasks);
+        var databaseSizeBytes = await databaseSizeTask;
+        var activeConnections = await activeConnectionsTask;
         var activityWindowCounts = await activityWindowCountsTask;
         var raceCounts = await raceCountsTask;
 
         var status = new AdminStatus(
             [queueStatus],
-            containerStatuses,
-            provisionedThroughput,
-            liveRuPerSecond,
+            tableStatuses,
+            databaseSizeBytes,
+            activeConnections,
             activityWindowCounts.NewActivitiesLast24Hours,
             activityWindowCounts.ProcessedNewActivitiesLast24Hours,
             raceCounts.OrganizerCount,
@@ -117,37 +113,42 @@ public class GetAdminStatus(
         }
     }
 
-    private async Task<CosmosContainerStatus> FetchContainerStatusAsync(string containerName)
+    private async Task<PostgresTableStatus> FetchTableStatusAsync(string tableName)
     {
         try
         {
-            var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, containerName);
-            var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c");
-            using var iterator = container.GetItemQueryIterator<long>(query);
-            if (iterator.HasMoreResults)
-            {
-                var response = await iterator.ReadNextAsync();
-                return new CosmosContainerStatus(containerName, response.FirstOrDefault());
-            }
-
-            return new CosmosContainerStatus(containerName, 0);
+            var rowCount = await statusRepository.GetTableRowCountAsync(tableName);
+            return new PostgresTableStatus(tableName, rowCount);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to fetch document count for Cosmos container {ContainerName}", containerName);
-            return new CosmosContainerStatus(containerName, -1);
+            logger.LogWarning(ex, "Failed to fetch row count for PostgreSQL table {TableName}", tableName);
+            return new PostgresTableStatus(tableName, -1);
         }
     }
 
-    private async Task<int?> FetchDatabaseThroughputAsync()
+    private async Task<long?> FetchDatabaseSizeBytesAsync()
     {
         try
         {
-            return await cosmosClient.GetDatabase(DatabaseConfig.CosmosDb).ReadThroughputAsync();
+            return await statusRepository.GetDatabaseSizeBytesAsync();
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to fetch Cosmos database throughput");
+            logger.LogWarning(ex, "Failed to fetch PostgreSQL database size");
+            return null;
+        }
+    }
+
+    private async Task<int?> FetchActiveConnectionsAsync()
+    {
+        try
+        {
+            return await statusRepository.GetActiveConnectionsAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to fetch active PostgreSQL connection count");
             return null;
         }
     }
@@ -156,95 +157,16 @@ public class GetAdminStatus(
     {
         try
         {
-            var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.ActivitiesContainer);
             var sinceUtc = DateTime.UtcNow.AddHours(-24);
-            var newActivitiesTask = FetchScalarCountAsync(
-                container,
-                new QueryDefinition(
-                    "SELECT VALUE COUNT(1) FROM c WHERE c.startDateLocal >= @sinceUtc")
-                    .WithParameter("@sinceUtc", sinceUtc));
-
-            var processedNewActivitiesTask = FetchScalarCountAsync(
-                container,
-                new QueryDefinition(
-                    """
-                    SELECT VALUE COUNT(1)
-                    FROM c
-                    WHERE c.startDateLocal >= @sinceUtc
-                      AND IS_DEFINED(c.processingStatus)
-                      AND c.processingStatus.summitedPeaks = true
-                      AND c.processingStatus.visitedPaths = true
-                      AND c.processingStatus.visitedAreas = true
-                    """)
-                    .WithParameter("@sinceUtc", sinceUtc));
-
-            await Task.WhenAll(newActivitiesTask, processedNewActivitiesTask);
-
+            var counts = await statusRepository.GetActivityWindowCountsAsync(sinceUtc);
             return new ActivityWindowCountsProjection(
-                newActivitiesTask.Result,
-                processedNewActivitiesTask.Result);
+                counts.NewActivities,
+                counts.ProcessedNewActivities);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to fetch 24-hour activity window counts");
             return new ActivityWindowCountsProjection(-1, -1);
-        }
-    }
-
-    private static async Task<int> FetchScalarCountAsync(Container container, QueryDefinition query)
-    {
-        using var iterator = container.GetItemQueryIterator<int>(query);
-        if (!iterator.HasMoreResults)
-        {
-            return 0;
-        }
-
-        var response = await iterator.ReadNextAsync();
-        return response.FirstOrDefault();
-    }
-
-    private async Task<double?> FetchLiveRuPerSecondAsync()
-    {
-        var resourceId = configuration.GetValue<string>("CosmosAccountResourceId");
-        if (string.IsNullOrEmpty(resourceId))
-        {
-            return null;
-        }
-
-        try
-        {
-            // Query TotalRequestUnits over the last 5 minutes with 1-minute granularity.
-            // The metric reports RUs consumed per minute; dividing by 60 gives RU/s.
-            var options = new MetricsQueryOptions
-            {
-                Granularity = TimeSpan.FromMinutes(1),
-                TimeRange = new QueryTimeRange(TimeSpan.FromMinutes(5))
-            };
-            options.Aggregations.Add(MetricAggregationType.Total);
-
-            var result = await metricsQueryClient.QueryResourceAsync(
-                resourceId,
-                ["TotalRequestUnits"],
-                options);
-
-            var timeSeries = result.Value.Metrics.FirstOrDefault()?.TimeSeries.FirstOrDefault();
-            if (timeSeries is null)
-            {
-                return null;
-            }
-
-            // Take the most recent data point that has a value
-            var latest = timeSeries.Values
-                .Where(v => v.Total.HasValue)
-                .OrderByDescending(v => v.TimeStamp)
-                .FirstOrDefault();
-
-            return latest?.Total / 60.0;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to fetch live Cosmos RU/s from Azure Monitor");
-            return null;
         }
     }
 }

@@ -79,6 +79,39 @@ public sealed class PeakRepository(NpgsqlDataSource dataSource) : IPeakRepositor
         return result;
     }
 
+    public async Task<IReadOnlyList<StoredFeature>> GetByTiles(
+        IEnumerable<(int x, int y)> tiles,
+        CancellationToken cancellationToken = default)
+    {
+        var tileList = (tiles ?? []).Distinct().ToList();
+        if (tileList.Count == 0)
+            return [];
+
+        await using var command = dataSource.CreateCommand("""
+            SELECT id, name, elevation, tile_x, tile_y, ST_X(geom) AS lng, ST_Y(geom) AS lat
+            FROM peaks p
+            WHERE EXISTS (
+                SELECT 1 FROM unnest(@xs::int[], @ys::int[]) AS t(x, y)
+                WHERE p.tile_x = t.x AND p.tile_y = t.y
+            )
+            ORDER BY id
+            """);
+        command.Parameters.Add(new NpgsqlParameter("xs", NpgsqlDbType.Array | NpgsqlDbType.Integer)
+        {
+            Value = tileList.Select(t => t.x).ToArray(),
+        });
+        command.Parameters.Add(new NpgsqlParameter("ys", NpgsqlDbType.Array | NpgsqlDbType.Integer)
+        {
+            Value = tileList.Select(t => t.y).ToArray(),
+        });
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = new List<StoredFeature>();
+        while (await reader.ReadAsync(cancellationToken))
+            result.Add(Map(reader));
+        return result;
+    }
+
     public async Task<IReadOnlyList<StoredFeature>> FindWithinRadius(
         Coordinate center,
         int radiusMeters,

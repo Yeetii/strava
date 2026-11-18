@@ -1,24 +1,21 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres.Admin;
+using Shared.Services.Postgres.Spatial;
 
 namespace Backend;
 
 public class BackfillAdminBoundaryMetrics(
     AdminBoundaryMetricsEnricher enricher,
-    CollectionClient<StoredFeature> storedFeaturesCollection,
+    IAdminBoundaryRepository adminBoundaries,
+    IBackendAdminQueries queries,
     ILogger<BackfillAdminBoundaryMetrics> logger)
 {
     private const int DefaultBatchSize = 5;
     private const int MaxBatchSize = 25;
-
-    private readonly AdminBoundaryMetricsEnricher _enricher = enricher;
-    private readonly CollectionClient<StoredFeature> _storedFeaturesCollection = storedFeaturesCollection;
-    private readonly ILogger<BackfillAdminBoundaryMetrics> _logger = logger;
 
     [Function(nameof(BackfillAdminBoundaryMetrics))]
     public async Task<HttpResponseData> Run(
@@ -26,52 +23,44 @@ public class BackfillAdminBoundaryMetrics(
         CancellationToken cancellationToken)
     {
         var batchSize = ParseBatchSize(req);
-        var query = new QueryDefinition(@"
-SELECT * FROM c
-WHERE c.kind = @kind
-AND NOT STARTSWITH(c.id, @emptyPrefix)
-AND (
-    NOT IS_DEFINED(c.properties.adminBoundaryMetricsVersion)
-    OR c.properties.adminBoundaryMetricsVersion < @metricsVersion
-)")
-            .WithParameter("@kind", FeatureKinds.AdminBoundary)
-            .WithParameter("@emptyPrefix", "empty-")
-            .WithParameter("@metricsVersion", AdminBoundaryMetricsEnricher.MetricsVersion);
-        var (boundaries, _) = await _storedFeaturesCollection.ExecuteQueryPageAsync<StoredFeature>(
-            query,
-            batchSize,
-            cancellationToken: cancellationToken);
 
-        var patches = new List<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)>();
+        // Same selection as the old Cosmos query: non-empty admin boundaries whose metrics
+        // version is behind the current one, ordered by id for deterministic paging.
+        var boundaryIds = await queries.GetStaleAdminBoundaryIds(
+            AdminBoundaryMetricsEnricher.MetricsVersion,
+            afterId: null,
+            batchSize,
+            cancellationToken);
+        var boundaries = await adminBoundaries.GetByIds(boundaryIds, cancellationToken);
+
+        var processed = 0;
         var failed = new List<string>();
 
         foreach (var boundary in boundaries.Where(OsmFeaturesChangeTrigger.ShouldEnrich))
         {
             try
             {
-                _logger.LogInformation("Backfilling admin boundary {BoundaryId}", boundary.Id);
-                var ops = await _enricher.CalculatePatchOperationsAsync(boundary, cancellationToken);
-                var pk = new PartitionKeyBuilder().Add((double)boundary.X).Add((double)boundary.Y).Build();
-                patches.Add((boundary.Id, pk, ops));
+                logger.LogInformation("Backfilling admin boundary {BoundaryId}", boundary.Id);
+                var metrics = await enricher.CalculateMetricsAsync(boundary, cancellationToken);
+                await adminBoundaries.UpdateMetrics(
+                    boundary.Id, metrics, AdminBoundaryMetricsEnricher.MetricsVersion, cancellationToken);
+                processed++;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to backfill admin boundary {BoundaryId}", boundary.Id);
+                logger.LogError(ex, "Failed to backfill admin boundary {BoundaryId}", boundary.Id);
                 failed.Add(boundary.Id);
             }
         }
-
-        await _storedFeaturesCollection.PatchDocuments(patches, cancellationToken: cancellationToken);
-        var processed = patches.Count;
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(new
         {
             requestedBatchSize = batchSize,
-            fetched = boundaries.Count,
+            fetched = boundaryIds.Count,
             processed,
             failed,
-            hasMore = boundaries.Count == batchSize
+            hasMore = boundaryIds.Count == batchSize
         }, cancellationToken);
         return response;
     }

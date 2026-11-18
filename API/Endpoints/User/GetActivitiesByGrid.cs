@@ -4,15 +4,18 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
-using Shared.Services;
+using Shared.Geo;
+using Shared.Services.Shards;
 using API.Utils;
 
 namespace API.Endpoints.User;
 
-public class GetActivitiesByGrid([FromKeyedServices(FeatureKinds.Path)] TiledCollectionClient _pathsCollectionClient)
+public class GetActivitiesByGrid(ShardFeatureClient _shardFeatureClient)
 {
+    // The legacy PathsCollectionClient stored and served path features at zoom 11.
+    private const int PathTileZoom = 11;
+
     [OpenApiOperation(tags: ["Activities"])]
     [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(double), Required = true)]
     [OpenApiParameter(name: "y", In = ParameterLocation.Path, Type = typeof(double), Required = true)]
@@ -25,8 +28,12 @@ public class GetActivitiesByGrid([FromKeyedServices(FeatureKinds.Path)] TiledCol
     {
         try
         {
-            var activities = await _pathsCollectionClient.FetchByTiles([(x, y)], cancellationToken: cancellationToken);
-            var featureCollection = new FeatureCollection(activities.Select(a => a.ToFeature()));
+            // Path features live in the local filesystem shards, not in PostGIS. Map the
+            // requested zoom-11 tile onto the shard stack's canonical zoom before loading it.
+            var shardKeys = SlippyTileCalculator.GetIntersectingTileKeys(
+                PathTileZoom, x, y, _shardFeatureClient.CanonicalZoom);
+            var activities = await _shardFeatureClient.GetFeaturesForShards(shardKeys, cancellationToken);
+            var featureCollection = new FeatureCollection(activities);
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(featureCollection);
             return response;

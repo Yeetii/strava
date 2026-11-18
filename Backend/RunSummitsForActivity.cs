@@ -81,7 +81,9 @@ public class RunSummitsForActivity(
                 activity.Id,
                 activity.UserId,
                 SummitsWorker.NormalizeSummitedPeakId(summit.Id),
-                DateTime.UtcNow));
+                DateTime.UtcNow))
+            .ToList();
+        await activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
         await activitySummitRepository.AddRange(links, cancellationToken);
         await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
 
@@ -131,16 +133,16 @@ public class RunSummitsForActivity(
             ingestion.FeaturesUpserted,
             ingestion.TilesFailed);
 
-        var peaksById = new Dictionary<string, StoredFeature>(StringComparer.Ordinal);
-        foreach (var points in decodedRoutes)
-        {
-            foreach (var point in points)
-            {
-                var nearby = await peaksRepository.FindWithinRadius(point, PeakProximityMeters, cancellationToken);
-                foreach (var peak in nearby)
-                    peaksById[peak.Id] = peak;
-            }
-        }
-        return peaksById.Values.Select(x => x.ToFeature());
+        var tileIndices = routePoints
+            .Select(point => SlippyTileCalculator.WGS84ToTileIndex(point, 11))
+            .Distinct()
+            .ToList();
+
+        if (tileIndices.Count == 0)
+            return [];
+
+        var peaks = await peaksRepository.GetByTiles(tileIndices, cancellationToken);
+        logger.LogInformation("Found {count} nearby peaks across {tileCount} tiles", peaks.Count, tileIndices.Count);
+        return peaks.Select(x => x.ToFeature());
     }
 }

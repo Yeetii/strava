@@ -22,6 +22,7 @@ using Shared.Models;
 using Shared.Services;
 using Shared.Services.GarminClient;
 using Shared.Services.Postgres;
+using Shared.Services.Postgres.Admin;
 using Shared.Services.Postgres.Spatial;
 using Shared.Services.Postgres.Spatial.Ingestion;
 using Shared.Services.Shards;
@@ -49,22 +50,6 @@ builder.Services.AddSingleton(socketsHttpHandler);
 builder.Services.AddHttpClient();
 
 var configuration = builder.Configuration;
-var configuredConnectionMode = configuration.GetValue<string>("CosmosConnectionMode");
-var connectionMode = Enum.TryParse<ConnectionMode>(configuredConnectionMode, ignoreCase: true, out var parsedConnectionMode)
-    ? parsedConnectionMode
-    : ConnectionMode.Direct;
-CosmosClientOptions apiCosmosClientOptions = new()
-{
-    HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
-    SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
-    ConnectionMode = connectionMode,
-    AllowBulkExecution = true,
-    MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(1),
-    MaxRetryAttemptsOnRateLimitedRequests = 5
-};
-string apiCosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection")
-    ?? throw new Exception("No cosmos connection string found");
-builder.Services.AddSingleton(new CosmosClient(apiCosmosDbConnectionString, apiCosmosClientOptions));
 
 // PostgreSQL + PostGIS data source and repositories. The connection string is
 // supplied by the deploy environment; the localhost default keeps local and
@@ -75,16 +60,8 @@ builder.Services.AddSingleton(NpgsqlDataSource.Create(apiPostgresConnectionStrin
 builder.Services.AddPostgresCoreRepositories();
 builder.Services.AddPostgresSpatialRepositories();
 builder.Services.AddPostgresOsmIngestion();
-
-new CollectionClientBuilder(builder.Services)
-    .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer)
-    .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
-    .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)
-    .AddCollection<UserSyncItem>(DatabaseConfig.CosmosDb, DatabaseConfig.UserSyncItemsContainer)
-    .AddCollection<Session>(DatabaseConfig.CosmosDb, DatabaseConfig.SessionsContainer)
-    .AddCollection<Activity>(DatabaseConfig.CosmosDb, DatabaseConfig.ActivitiesContainer)
-    .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
-    .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer);
+builder.Services.AddPostgresAdminQueries();
+builder.Services.AddBackendAdminQueries();
 
 builder.Services.AddOrganizerStore(configuration);
 builder.Services.AddShardStore(configuration);
@@ -152,7 +129,6 @@ builder.Services.AddHttpClient<OverpassClient>(client =>
 // producer shim turns QueueClient sends into Hangfire jobs.
 QueueTransport.AddHangfireStorage(builder.Services, configuration);
 QueueTransport.AddHangfireQueueProducer(builder.Services);
-builder.Services.AddSingleton(new MetricsQueryClient(new DefaultAzureCredential()));
 builder.Services.AddScoped(serviceProvider =>
     new UserAuthenticationService(
         serviceProvider.GetRequiredService<IUserRepository>(),

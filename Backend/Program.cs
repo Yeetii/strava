@@ -81,17 +81,26 @@ hostBuilder.Services.AddHangfireServer(options => options.WorkerCount = 1);
 
 var isHeavy = string.Equals(role, "heavy", StringComparison.OrdinalIgnoreCase);
 var isSchedule = string.Equals(role, "schedule", StringComparison.OrdinalIgnoreCase);
+
+if (isHeavy)
+{
+    // Hangfire recurring-job targets that replace the two Cosmos change feeds.
+    hostBuilder.Services.AddSingleton<AdminBoundaryMetricsPollingJob>();
+    hostBuilder.Services.AddSingleton<QueueActivityJobs>();
+}
+
 if (isSchedule)
     hostBuilder.AddFunctionTimers(registry, (descriptor, services, ct) =>
         FunctionInvoker.InvokeAsync(descriptor, services, ct));
 hostBuilder.AddFunctionWorkers(
     registry,
-    (descriptor, services, ct) => FunctionInvoker.InvokeAsync(descriptor, services, ct),
-    enableChangeFeeds: isHeavy);
+    (descriptor, services, ct) => FunctionInvoker.InvokeAsync(descriptor, services, ct));
 
-// Timers run only in the schedule role; change feeds only in the heavy role.
-// Queued jobs run on the heavy role's Hangfire server. Recurring-job
-// registration is done by RecurringJobRegistrationHostedService.
+// Timers run only in the schedule role. Queued jobs and the polling jobs that
+// replaced the Cosmos change feeds run on the heavy role's Hangfire server.
+// [TimerTrigger] recurring-job registration is done by
+// RecurringJobRegistrationHostedService; the two polling jobs are registered
+// directly below through the DI-based IRecurringJobManager.
 
 var host = hostBuilder.Build();
 
@@ -105,6 +114,18 @@ if (isHeavy)
         // Hangfire storage schema is created on first use; force it here so the
         // empty-state check (P0 step 4) is observable at startup.
         scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
+
+        var recurringJobs = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+        recurringJobs.AddOrUpdate<AdminBoundaryMetricsPollingJob>(
+            AdminBoundaryMetricsPollingJob.RecurringJobId,
+            job => job.RunAsync(CancellationToken.None),
+            AdminBoundaryMetricsPollingJob.CronExpression,
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+        recurringJobs.AddOrUpdate<QueueActivityJobs>(
+            "poll-activity-processing-jobs",
+            job => job.PollAndQueueAsync(CancellationToken.None),
+            "*/5 * * * *",
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
     }
 }
 

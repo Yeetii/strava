@@ -1,15 +1,14 @@
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
-using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres.Spatial;
 
 namespace Backend;
 
 public class AdminBoundaryEnrichmentWorker(
     AdminBoundaryMetricsEnricher enricher,
-    CollectionClient<StoredFeature> storedFeaturesCollection,
+    IAdminBoundaryRepository adminBoundaries,
     ILogger<AdminBoundaryEnrichmentWorker> logger)
 {
     private static readonly TimeSpan InvocationSafetyBuffer = TimeSpan.FromSeconds(75);
@@ -39,10 +38,10 @@ public class AdminBoundaryEnrichmentWorker(
 
         await RenewLocksAsync(messages, actions, logger, cancellationToken);
 
-        IEnumerable<StoredFeature> documents;
+        IEnumerable<Shared.Models.StoredFeature> documents;
         try
         {
-            documents = await storedFeaturesCollection.GetByIdsAsync(ids.Distinct(StringComparer.Ordinal), cancellationToken);
+            documents = await adminBoundaries.GetByIds(ids.Distinct(StringComparer.Ordinal), cancellationToken);
         }
         catch (Exception ex)
         {
@@ -52,8 +51,7 @@ public class AdminBoundaryEnrichmentWorker(
 
         var documentsById = documents.ToDictionary(document => document.Id, StringComparer.Ordinal);
 
-        var patches = new List<(string Id, PartitionKey PartitionKey, IReadOnlyList<PatchOperation> Operations)>();
-        var messagesToCompleteAfterPatch = new List<QueueMessage>();
+        var completedMessages = new List<QueueMessage>();
         var patchedIds = new HashSet<string>(StringComparer.Ordinal);
 
         for (var index = 0; index < messages.Length; index++)
@@ -95,13 +93,16 @@ public class AdminBoundaryEnrichmentWorker(
             try
             {
                 logger.LogInformation("[AdminBoundaryEnrichmentWorker] Enriching admin boundary {BoundaryId}", document.Id);
-                var ops = await RunWithPeriodicLockRenewalAsync(
+                await RunWithPeriodicLockRenewalAsync(
                     message, actions, logger, LockRenewalInterval,
-                    ct => enricher.CalculatePatchOperationsAsync(document, ct),
+                    async ct =>
+                    {
+                        var metrics = await enricher.CalculateMetricsAsync(document, ct);
+                        await adminBoundaries.UpdateMetrics(
+                            document.Id, metrics, AdminBoundaryMetricsEnricher.MetricsVersion, ct);
+                    },
                     cancellationToken);
-                var pk = new PartitionKeyBuilder().Add((double)document.X).Add((double)document.Y).Build();
-                patches.Add((document.Id, pk, ops));
-                messagesToCompleteAfterPatch.Add(message);
+                completedMessages.Add(message);
                 patchedIds.Add(boundaryId);
             }
             catch (Exception ex)
@@ -111,22 +112,8 @@ public class AdminBoundaryEnrichmentWorker(
             }
         }
 
-        if (patches.Count > 0)
-        {
-            try
-            {
-                await RenewLocksAsync(messagesToCompleteAfterPatch, actions, logger, cancellationToken);
-                await storedFeaturesCollection.PatchDocuments(patches, cancellationToken: cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "[AdminBoundaryEnrichmentWorker] Failed to persist admin boundary patches");
-                throw;
-            }
-        }
-
-        await RenewLocksAsync(messagesToCompleteAfterPatch, actions, logger, cancellationToken);
-        foreach (var message in messagesToCompleteAfterPatch)
+        await RenewLocksAsync(completedMessages, actions, logger, cancellationToken);
+        foreach (var message in completedMessages)
         {
             await TryCompleteMessageAsync(message, actions, logger, cancellationToken);
         }
@@ -137,12 +124,12 @@ public class AdminBoundaryEnrichmentWorker(
     /// <paramref name="message"/> every <paramref name="renewalInterval"/> in the background.
     /// The background renewal loop is cancelled as soon as the work completes.
     /// </summary>
-    private static async Task<T> RunWithPeriodicLockRenewalAsync<T>(
+    private static async Task RunWithPeriodicLockRenewalAsync(
         QueueMessage message,
         QueueMessageActions actions,
         ILogger logger,
         TimeSpan renewalInterval,
-        Func<CancellationToken, Task<T>> work,
+        Func<CancellationToken, Task> work,
         CancellationToken cancellationToken)
     {
         using var renewalCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -170,7 +157,7 @@ public class AdminBoundaryEnrichmentWorker(
 
         try
         {
-            return await work(cancellationToken);
+            await work(cancellationToken);
         }
         finally
         {

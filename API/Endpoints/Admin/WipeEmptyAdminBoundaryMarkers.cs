@@ -1,25 +1,25 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
-using Shared.Constants;
-using Shared.Services;
+using Shared.Services.Postgres.Admin;
 
 namespace API.Endpoints.Admin;
 
 public class WipeEmptyAdminBoundaryMarkers(
-    CosmosClient cosmosClient,
-    IConfiguration configuration)
+    IOsmFeatureAdminQueries adminQueries,
+    IConfiguration configuration,
+    ILogger<WipeEmptyAdminBoundaryMarkers> logger)
 {
     [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
     [OpenApiParameter(name: "adminLevel", In = ParameterLocation.Query, Type = typeof(int), Required = false,
-        Description = "OSM admin_level to wipe empty markers for (e.g. 2 or 4). When omitted, all admin levels are wiped.")]
+        Description = "Accepted for compatibility. PostgreSQL tile-query markers are keyed by kind/zoom/x/y and carry no admin level, so all adminBoundary markers are wiped.")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(int),
-        Description = "Number of empty markers deleted.")]
+        Description = "Number of adminBoundary tile-query markers deleted.")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
     [Function(nameof(WipeEmptyAdminBoundaryMarkers))]
     public async Task<HttpResponseData> Run(
@@ -28,46 +28,18 @@ public class WipeEmptyAdminBoundaryMarkers(
         if (!IsAuthorized(req))
             return req.CreateResponse(HttpStatusCode.Unauthorized);
 
-        var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
-
         var adminLevelParam = req.Query["adminLevel"];
-        QueryDefinition query;
-
         if (!string.IsNullOrWhiteSpace(adminLevelParam) && int.TryParse(adminLevelParam, out var adminLevel))
         {
-            query = new QueryDefinition(
-                "SELECT c.id, c.x, c.y FROM c" +
-                " WHERE c.kind = @kind" +
-                " AND STARTSWITH(c.id, @prefix)")
-                .WithParameter("@kind", FeatureKinds.AdminBoundary)
-                .WithParameter("@prefix", $"empty-{FeatureKinds.AdminBoundary}-{adminLevel}-");
-        }
-        else
-        {
-            query = new QueryDefinition(
-                "SELECT c.id, c.x, c.y FROM c" +
-                " WHERE c.kind = @kind" +
-                " AND STARTSWITH(c.id, @prefix)")
-                .WithParameter("@kind", FeatureKinds.AdminBoundary)
-                .WithParameter("@prefix", $"empty-{FeatureKinds.AdminBoundary}-");
+            logger.LogWarning(
+                "adminLevel={AdminLevel} cannot narrow the wipe: osm_tile_queries has no admin_level column; all adminBoundary tile-query markers will be deleted",
+                adminLevel);
         }
 
-        var toDelete = new List<(string Id, double X, double Y)>();
-        using var feed = container.GetItemQueryIterator<CoordItem>(query);
-        while (feed.HasMoreResults)
-        {
-            var page = await feed.ReadNextAsync();
-            toDelete.AddRange(page.Select(i => (i.Id, (double)i.X, (double)i.Y)));
-        }
-
-        foreach (var (id, x, y) in toDelete)
-        {
-            var pk = new PartitionKeyBuilder().Add(x).Add(y).Build();
-            await container.DeleteItemAsync<object>(id, pk);
-        }
+        var deleted = await adminQueries.DeleteOsmTileQueriesAsync();
 
         var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(toDelete.Count);
+        await response.WriteAsJsonAsync(deleted);
         return response;
     }
 
@@ -80,6 +52,4 @@ public class WipeEmptyAdminBoundaryMarkers(
         return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
             && providedKeys.FirstOrDefault() == adminKey;
     }
-
-    private record CoordItem(string Id, int X, int Y);
 }

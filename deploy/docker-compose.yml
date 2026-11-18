@@ -116,6 +116,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
   # Heavy workers: Service Bus queue consumers + Cosmos change-feed processors.
@@ -146,6 +148,8 @@ services:
       api:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------

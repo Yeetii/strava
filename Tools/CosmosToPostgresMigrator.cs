@@ -338,13 +338,16 @@ internal static class CosmosToPostgresMigrator
                         continue;
                     }
 
+                    await transaction.SaveAsync("doc_sp");
                     try
                     {
                         await command.ExecuteNonQueryAsync();
                         stats.Written++;
+                        await transaction.ReleaseAsync("doc_sp");
                     }
                     catch (Exception ex)
                     {
+                        await transaction.RollbackAsync("doc_sp");
                         stats.Failed++;
                         Console.WriteLine($"  ERROR writing id={docId}: {ex.Message}");
                     }

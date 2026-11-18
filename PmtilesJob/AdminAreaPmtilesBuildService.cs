@@ -1,20 +1,18 @@
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
-using Shared.Constants;
 using Shared.Models;
-using Shared.Services;
+using Shared.Services.Postgres.Spatial;
 
 namespace PmtilesJob;
 
 public class AdminAreaPmtilesBuildService(
-    CosmosClient cosmosClient,
+    IAdminBoundaryRepository adminBoundaries,
     PmtilesUtilityService pmtilesUtilityService,
     ILogger<AdminAreaPmtilesBuildService> logger)
 {
     public static IReadOnlyList<int> DefaultAdminLevels { get; } = [2, 4];
 
-    private readonly CosmosClient _cosmosClient = cosmosClient;
+    private readonly IAdminBoundaryRepository _adminBoundaries = adminBoundaries;
     private readonly PmtilesUtilityService _pmtilesUtilityService = pmtilesUtilityService;
     private readonly ILogger<AdminAreaPmtilesBuildService> _logger = logger;
 
@@ -57,20 +55,13 @@ public class AdminAreaPmtilesBuildService(
         IReadOnlyCollection<int> adminLevels,
         CancellationToken cancellationToken)
     {
-        var container = _cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
-        var adminLevelValues = adminLevels.Select(level => $"'{level}'");
-        var query = new QueryDefinition(
-            $"SELECT * FROM c WHERE c.kind = @kind AND ARRAY_CONTAINS([{string.Join(",", adminLevelValues)}], c.properties.adminLevel) AND (NOT IS_DEFINED(c.properties.isPointer) OR c.properties.isPointer != true)")
-            .WithParameter("@kind", FeatureKinds.AdminBoundary);
-
-        var iterator = container.GetItemQueryIterator<StoredFeature>(query);
         var featuresByLayer = new Dictionary<string, List<Feature>>(StringComparer.Ordinal);
         var totalFeatureCount = 0;
 
-        while (iterator.HasMoreResults)
+        foreach (var level in adminLevels)
         {
-            var page = await iterator.ReadNextAsync(cancellationToken);
-            foreach (var feature in page)
+            var boundaries = await _adminBoundaries.GetByLevel(level, cancellationToken);
+            foreach (var feature in boundaries)
             {
                 var geoJsonFeature = feature.ToFeature();
                 if (geoJsonFeature.Id is not null)
@@ -78,7 +69,7 @@ public class AdminAreaPmtilesBuildService(
                     geoJsonFeature.Properties["featureId"] = geoJsonFeature.Id;
                 }
 
-                var layerName = GetLayerName(feature);
+                var layerName = GetLayerName(feature, level);
                 if (!featuresByLayer.TryGetValue(layerName, out var layerFeatures))
                 {
                     layerFeatures = [];
@@ -111,26 +102,24 @@ public class AdminAreaPmtilesBuildService(
         return (layerInputs, totalFeatureCount);
     }
 
-    private static string GetLayerName(StoredFeature feature)
+    private static string GetLayerName(StoredFeature feature, int fallbackLevel)
     {
-        if (!feature.Properties.TryGetValue("adminLevel", out var adminLevelValue))
+        if (feature.Properties.TryGetValue("adminLevel", out var adminLevelValue))
         {
-            return "admin_areas";
+            var adminLevelText = adminLevelValue?.ToString();
+            if (int.TryParse(adminLevelText, out int parsedAdminLevel))
+                return LayerNameForLevel(parsedAdminLevel);
         }
 
-        var adminLevelText = adminLevelValue?.ToString();
-        if (!int.TryParse(adminLevelText, out int parsedAdminLevel))
-        {
-            return "admin_areas";
-        }
-
-        return parsedAdminLevel switch
-        {
-            2 => "countries",
-            4 => "regions",
-            _ => $"admin_level_{parsedAdminLevel}",
-        };
+        return LayerNameForLevel(fallbackLevel);
     }
+
+    private static string LayerNameForLevel(int adminLevel) => adminLevel switch
+    {
+        2 => "countries",
+        4 => "regions",
+        _ => $"admin_level_{adminLevel}",
+    };
 
     private static string CreateRunTempPath(string runId)
     {

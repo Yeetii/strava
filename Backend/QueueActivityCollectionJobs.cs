@@ -1,10 +1,10 @@
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Admin;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json.Serialization;
 
 namespace Backend;
 
@@ -41,28 +41,33 @@ internal static class QueueActivityCollectionJobs
     }
 
     public static async Task QueueAllActivitiesAsync(
-        CollectionClient<Activity> activitiesClient,
+        IActivityRepository activities,
         QueueClient queueClient,
         string queueName,
-        string? userId = null)
+        string? userId = null,
+        CancellationToken cancellationToken = default)
     {
-        var activityIds = await activitiesClient.ExecuteQueryAsync<string>(BuildActivityIdsQueryDefinition(userId));
+        IReadOnlyList<string> activityIds = string.IsNullOrWhiteSpace(userId)
+            ? await activities.GetAllIds(cancellationToken)
+            : (await activities.GetAllByUser(userId, cancellationToken)).Select(a => a.Id).ToList();
+
         await QueueActivityIdsAsync(activityIds, queueClient, queueName);
     }
 
     public static async Task QueueActivitiesExcludingTypesAsync(
-        CollectionClient<Activity> activitiesClient,
+        IBackendAdminQueries queries,
+        IActivityRepository activities,
         QueueClient queueClient,
         string queueName,
         IReadOnlySet<string> excludedSportTypes,
         ActivitySyncStage stage,
-        string? userId = null)
+        string? userId = null,
+        CancellationToken cancellationToken = default)
     {
-        var projections = await activitiesClient.ExecuteQueryAsync<ActivityIdProjection>(
-            BuildActivityProjectionsQueryDefinition(userId));
+        var projections = await queries.GetActivityProjections(userId, cancellationToken);
 
         var included = new List<string>();
-        var excluded = new List<ActivityIdProjection>();
+        var excluded = new List<BackendActivityProjection>();
         foreach (var p in projections)
         {
             if (string.IsNullOrEmpty(p.SportType) || !excludedSportTypes.Contains(p.SportType))
@@ -72,13 +77,14 @@ internal static class QueueActivityCollectionJobs
         }
 
         await QueueActivityIdsAsync(included, queueClient, queueName);
-        await MarkExcludedActivitiesAsync(activitiesClient, excluded, stage);
+        await MarkExcludedActivitiesAsync(activities, excluded, stage, cancellationToken);
     }
 
     private static async Task MarkExcludedActivitiesAsync(
-        CollectionClient<Activity> activitiesClient,
-        List<ActivityIdProjection> excluded,
-        ActivitySyncStage stage)
+        IActivityRepository activities,
+        List<BackendActivityProjection> excluded,
+        ActivitySyncStage stage,
+        CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
         foreach (var p in excluded)
@@ -121,43 +127,8 @@ internal static class QueueActivityCollectionJobs
                     next.VisitedAreasDoneAtUtc = now;
                     break;
             }
-            await activitiesClient.PatchDocument(
-                p.Id,
-                new PartitionKey(p.UserId),
-                [PatchOperation.Set("/processingStatus", next)]);
+            await activities.UpdateProcessingStatus(p.Id, next, cancellationToken);
         }
-    }
-
-    private sealed class ActivityIdProjection
-    {
-        [JsonPropertyName("id")]
-        public required string Id { get; init; }
-        [JsonPropertyName("userId")]
-        public required string UserId { get; init; }
-        [JsonPropertyName("sportType")]
-        public string? SportType { get; init; }
-        [JsonPropertyName("processingStatus")]
-        public ActivityProcessingStatus? ProcessingStatus { get; init; }
-    }
-
-    internal static QueryDefinition BuildActivityProjectionsQueryDefinition(string? userId)
-    {
-        if (string.IsNullOrWhiteSpace(userId))
-            return new QueryDefinition("SELECT c.id, c.userId, c.sportType, c.processingStatus FROM c");
-
-        return new QueryDefinition("SELECT c.id, c.userId, c.sportType, c.processingStatus FROM c WHERE c.userId = @userId")
-            .WithParameter("@userId", userId);
-    }
-
-    internal static QueryDefinition BuildActivityIdsQueryDefinition(string? userId)
-    {
-        if (string.IsNullOrWhiteSpace(userId))
-        {
-            return new QueryDefinition("SELECT VALUE c.id FROM c");
-        }
-
-        return new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.userId = @userId")
-            .WithParameter("@userId", userId);
     }
 
     internal static string BuildQueueAllMessageId(string queueName, string activityId)

@@ -2,12 +2,13 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 using Shared.Services.StravaClient;
 using System.Text.Json;
 
 namespace Backend
 {
-public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
+public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, IActivityRepository _activityRepository, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
 {
         private const int MaxAccessTokenRequestAttempts = 3;
         private readonly QueueClient _queueClient = queueClient;
@@ -92,7 +93,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
                 _logger.LogInformation("Fetched {amount} activities", activitiesList.Count);
 
                 var activityIds = activitiesList.Select(activity => activity.Id.ToString()).ToList();
-                var existingActivities = (await _activitiesCollection.GetByIdsAsync(activityIds, cancellationToken))
+                var existingActivities = (await _activityRepository.GetByIds(activityIds, cancellationToken))
                     .ToDictionary(activity => activity.Id, StringComparer.Ordinal);
 
                 var newActivityCount = activityIds.Count(id => !existingActivities.ContainsKey(id));
@@ -102,10 +103,9 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
                     return ActivityMapper.MapSummaryActivity(activity, existingActivity);
                 });
 
-                await _activitiesCollection.BulkUpsert(
+                await _activityRepository.BulkUpsert(
                     mappedActivities,
-                    cancellationToken: cancellationToken,
-                    priority: CosmosWritePriority.High);
+                    cancellationToken: cancellationToken);
                 await _userSyncStatusService.IncrementSyncedActivities(fetchJob.UserId, newActivityCount, cancellationToken);
 
                 var discoveredMinimumTotal = ((page - 1) * 200) + activitiesList.Count;

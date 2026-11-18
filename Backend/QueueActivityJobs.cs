@@ -1,21 +1,27 @@
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Admin;
 
 namespace Backend
 {
-    public class QueueActivityJobs(QueueClient queueClient, CollectionClient<Activity> activitiesCollection)
+    /// <summary>
+    /// Replacement for the activities Cosmos change feed. The CosmosDBTrigger handler is gone;
+    /// <see cref="PollAndQueueAsync"/> is registered as a Hangfire recurring job by Program.cs and
+    /// polls PostgreSQL for activities with pending processing stages before running the same
+    /// per-activity enqueue/mark-excluded logic as before.
+    /// </summary>
+    public class QueueActivityJobs(
+        QueueClient queueClient,
+        IActivityRepository activities,
+        IBackendAdminQueries queries)
     {
-        [Function(nameof(QueueActivityJobs))]
+        private const int PollBatchSize = 500;
+
         public async Task Run(
-            [CosmosDBTrigger(
-            databaseName: DatabaseConfig.CosmosDb,
-            containerName: DatabaseConfig.ActivitiesContainer,
-            Connection = "CosmosDBConnection",
-            LeaseContainerPrefix = "activityJobs",
-            CreateLeaseContainerIfNotExists = true)] IReadOnlyList<Activity> updatedActivities,
+            IReadOnlyList<Activity> updatedActivities,
             CancellationToken cancellationToken)
         {
             var summitsSender = queueClient.CreateSender(QueueConfig.CalculateSummitsJobs);
@@ -37,6 +43,18 @@ namespace Backend
                 await Task.WhenAll(queueTasks);
                 await MarkExcludedIfNeededAsync(activity, cancellationToken);
             }
+        }
+
+        /// <summary>Entry point for the Hangfire recurring polling job (see Program.cs).</summary>
+        public async Task PollAndQueueAsync(CancellationToken cancellationToken = default)
+        {
+            var ids = await queries.GetActivityIdsNeedingProcessing(PollBatchSize, cancellationToken);
+            if (ids.Count == 0)
+                return;
+
+            var activitiesToQueue = await activities.GetByIds(ids, cancellationToken);
+            if (activitiesToQueue.Count > 0)
+                await Run(activitiesToQueue, cancellationToken);
         }
 
         private async Task MarkExcludedIfNeededAsync(Activity activity, CancellationToken cancellationToken)
@@ -68,11 +86,7 @@ namespace Backend
                 SportTypeExcluded = true,
             };
 
-            await activitiesCollection.PatchDocument(
-                activity.Id,
-                new PartitionKey(activity.UserId),
-                [PatchOperation.Set("/processingStatus", next)],
-                cancellationToken: cancellationToken);
+            await activities.UpdateProcessingStatus(activity.Id, next, cancellationToken);
         }
 
         internal static bool ShouldQueueSummits(Activity activity)

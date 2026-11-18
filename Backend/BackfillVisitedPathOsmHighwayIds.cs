@@ -1,16 +1,14 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
-using Shared.Models;
-using Shared.Services;
+using Shared.Services.Postgres.Admin;
 
 namespace Backend;
 
 public class BackfillVisitedPathOsmHighwayIds(
-    CollectionClient<VisitedPath> visitedPathsCollection,
+    IBackendAdminQueries queries,
     QueueClient queueClient,
     ILogger<BackfillVisitedPathOsmHighwayIds> logger)
 {
@@ -18,16 +16,6 @@ public class BackfillVisitedPathOsmHighwayIds(
     private const int MaxBatchSize = 1000;
     private const int DefaultMaxPages = 1000;
     private const int MaxMaxPages = 10000;
-
-    private readonly CollectionClient<VisitedPath> _visitedPathsCollection = visitedPathsCollection;
-    private readonly QueueClient _queueClient = queueClient;
-    private readonly ILogger<BackfillVisitedPathOsmHighwayIds> _logger = logger;
-
-    private sealed class VisitedPathActivityProjection
-    {
-        public required string Id { get; init; }
-        public List<string>? ActivityIds { get; init; }
-    }
 
     [Function(nameof(BackfillVisitedPathOsmHighwayIds))]
     public async Task<HttpResponseData> Run(
@@ -42,7 +30,7 @@ public class BackfillVisitedPathOsmHighwayIds(
             continuationToken,
             cancellationToken);
 
-        _logger.LogInformation(
+        logger.LogInformation(
             "Visited-path OSM backfill queued {QueuedCount} activity messages from {DocumentCount} documents (batchSize={BatchSize}, hasMore={HasMore})",
             queuedActivities,
             fetchedDocuments,
@@ -88,7 +76,7 @@ public class BackfillVisitedPathOsmHighwayIds(
         while (!string.IsNullOrWhiteSpace(continuationToken) && pageCount < maxPages);
 
         var stoppedByLimit = !string.IsNullOrWhiteSpace(continuationToken) && pageCount >= maxPages;
-        _logger.LogInformation(
+        logger.LogInformation(
             "Visited-path OSM full backfill processed {PageCount} pages, {DocumentCount} documents, queued {QueuedCount} activity messages. StoppedByLimit={StoppedByLimit}",
             pageCount,
             totalDocuments,
@@ -115,33 +103,21 @@ public class BackfillVisitedPathOsmHighwayIds(
         string? continuationToken,
         CancellationToken cancellationToken)
     {
-
-        var query = new QueryDefinition(@"
-SELECT c.id, c.activityIds
-FROM c
-WHERE NOT IS_DEFINED(c.osmHighwayId)
-   OR IS_NULL(c.osmHighwayId)
-   OR c.osmHighwayId = ''");
-
-        var (items, nextContinuationToken) = await _visitedPathsCollection.ExecuteQueryPageAsync<VisitedPathActivityProjection>(
-            query,
+        // Deterministic keyset paging over activity_visited_paths instead of the old Cosmos
+        // continuation token. The token is the last (highest) activity_id from the page.
+        var activityIds = await queries.GetActivityIdsWithMissingOsmHighwayId(
+            continuationToken,
             batchSize,
-            continuationToken: continuationToken,
-            cancellationToken: cancellationToken);
-
-        var activityIds = items
-            .SelectMany(item => item.ActivityIds ?? [])
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+            cancellationToken);
 
         var queuedActivities = await QueueActivityCollectionJobs.QueueActivityIdsAsync(
             activityIds,
-            _queueClient,
+            queueClient,
             QueueConfig.CalculateVisitedPathsJobs,
             TimeSpan.Zero);
 
-        return (items.Count, queuedActivities, nextContinuationToken);
+        var nextContinuationToken = activityIds.Count == batchSize ? activityIds[^1] : null;
+        return (activityIds.Count, queuedActivities, nextContinuationToken);
     }
 
     private static int ParseBatchSize(HttpRequestData req)

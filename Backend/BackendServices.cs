@@ -11,6 +11,7 @@ using Shared.Geo.SummitsCalculator;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
+using Shared.Services.Postgres.Admin;
 using Shared.Services.Postgres.Spatial;
 using Shared.Services.Postgres.Spatial.Ingestion;
 using Shared.Services.Shards;
@@ -67,17 +68,6 @@ public static class BackendServices
         });
         services.AddSharedGeocodingCache(configuration);
 
-        string cosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection")
-            ?? throw new Exception("No cosmos connection string found");
-        CosmosClientOptions cosmosClientOptions = new()
-        {
-            HttpClientFactory = () => new HttpClient(socketsHttpHandler, disposeHandler: false),
-            SerializerOptions = new CosmosSerializationOptions { PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase },
-            AllowBulkExecution = true,
-            MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromMinutes(3)
-        };
-        services.AddSingleton(new CosmosClient(cosmosDbConnectionString, cosmosClientOptions));
-
         // PostgreSQL + PostGIS data source and repositories. The connection
         // string is supplied by the deploy environment; the localhost default
         // keeps local and test hosts startable before Postgres is configured.
@@ -87,16 +77,8 @@ public static class BackendServices
         services.AddPostgresCoreRepositories();
         services.AddPostgresSpatialRepositories();
         services.AddPostgresOsmIngestion();
-
-        new CollectionClientBuilder(services)
-            .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
-            .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)
-            .AddCollection<UserSyncItem>(DatabaseConfig.CosmosDb, DatabaseConfig.UserSyncItemsContainer)
-            .AddCollection<Session>(DatabaseConfig.CosmosDb, DatabaseConfig.SessionsContainer)
-            .AddCollection<Activity>(DatabaseConfig.CosmosDb, DatabaseConfig.ActivitiesContainer)
-            .AddCollection<VisitedPath>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedPathsContainer)
-            .AddCollection<VisitedArea>(DatabaseConfig.CosmosDb, DatabaseConfig.VisitedAreasContainer)
-            .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
+        services.AddPostgresAdminQueries();
+        services.AddBackendAdminQueries();
 
         services.AddOrganizerStore(configuration);
         services.AddShardStore(configuration);

@@ -37,24 +37,24 @@ public class GetUsersStatus(
             return req.CreateResponse(HttpStatusCode.Unauthorized);
         }
 
-        var users = await usersRepository.GetAll();
-        var usersWithCounts = await Task.WhenAll(users.Select(async user => new
-        {
-            User = user,
-            ActivityCount = (await activitiesRepository.GetAllByUser(user.Id)).Count,
-            LastLoggedInAtUtc = (await sessionsRepository.GetByUserId(user.Id))
-                .Select(session => (DateTime?)session.CreatedAtUtc)
-                .Max(),
-        }));
+        var usersTask = usersRepository.GetAll();
+        var countsTask = activitiesRepository.GetActivityCountsByUser();
+        var loginsTask = sessionsRepository.GetLastLoginByUsers();
 
-        var result = usersWithCounts
-            .Select(item => new AdminUserStatus(
-                UserId: item.User.Id,
-                Username: item.User.UserName,
-                FirstName: item.User.FirstName,
-                LastName: item.User.LastName,
-                ActivityCount: item.ActivityCount,
-                LastLoggedInAtUtc: item.LastLoggedInAtUtc))
+        await Task.WhenAll(usersTask, countsTask, loginsTask);
+
+        var users = await usersTask;
+        var activityCounts = await countsTask;
+        var lastLogins = await loginsTask;
+
+        var result = users
+            .Select(user => new AdminUserStatus(
+                UserId: user.Id,
+                Username: user.UserName,
+                FirstName: user.FirstName,
+                LastName: user.LastName,
+                ActivityCount: activityCounts.GetValueOrDefault(user.Id, 0),
+                LastLoggedInAtUtc: lastLogins.TryGetValue(user.Id, out var lastLogin) ? lastLogin : null))
             .OrderByDescending(user => user.LastLoggedInAtUtc ?? DateTime.MinValue)
             .ThenByDescending(user => user.ActivityCount)
             .ThenBy(user => user.Username ?? user.UserId)

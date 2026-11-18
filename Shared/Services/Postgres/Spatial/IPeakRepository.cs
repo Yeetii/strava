@@ -8,6 +8,7 @@ public interface IPeakRepository
     Task<StoredFeature?> GetById(string id, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<StoredFeature>> GetByIds(IEnumerable<string> ids, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<StoredFeature>> GetByTile(int x, int y, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StoredFeature>> GetByTiles(IEnumerable<(int x, int y)> tiles, CancellationToken cancellationToken = default);
     Task Upsert(StoredFeature peak, CancellationToken cancellationToken = default);
     Task BulkUpsert(IEnumerable<StoredFeature> peaks, CancellationToken cancellationToken = default);
 

@@ -1,18 +1,22 @@
-using System.Diagnostics;
 using System.Globalization;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Cosmos;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shared.Geo;
 using Shared.Models;
+using Shared.Services.Postgres.Admin;
+using Shared.Services.Postgres.Spatial;
 
 namespace Shared.Services;
 
+/// <summary>
+/// Calculates admin-boundary metrics from the PostGIS domain tables. The output shape (property
+/// names and values) and the <c>adminBoundaryMetricsVersion</c> stamp are unchanged from the
+/// Cosmos implementation; only the reads and the persistence handoff changed.
+/// </summary>
 public sealed class AdminBoundaryMetricsEnricher(
-    [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient peaksCollection,
-    [FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient protectedAreasCollection,
-    AdminBoundariesCollectionClient adminBoundariesCollection,
+    IPeakRepository peaks,
+    IAdminBoundaryRepository adminBoundaries,
+    IBackendAdminQueries queries,
     ILogger<AdminBoundaryMetricsEnricher> logger)
 {
     public const int AnalysisTileZoom = 8;
@@ -28,108 +32,98 @@ public sealed class AdminBoundaryMetricsEnricher(
     /// </summary>
     public const int MaxBorderZ8Tiles = 200;
 
-    private readonly TiledCollectionClient _peaksCollection = peaksCollection;
-    private readonly TiledCollectionClient _protectedAreasCollection = protectedAreasCollection;
-    private readonly AdminBoundariesCollectionClient _adminBoundariesCollection = adminBoundariesCollection;
-
-    public async Task<IReadOnlyList<PatchOperation>> CalculatePatchOperationsAsync(StoredFeature boundary, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Computes the metrics to merge into an admin boundary's JSONB properties. The dictionary
+    /// keys are the same property names the old Cosmos patches set (minus the "/properties/"
+    /// prefix), so the enriched document shape is unchanged.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, object?>> CalculateMetricsAsync(
+        StoredFeature boundary,
+        CancellationToken cancellationToken = default)
     {
         // Country-level boundaries (adminLevel=2) are too large to enrich meaningfully.
         if (IsAdminLevel(boundary, 2))
         {
             logger.LogInformation("[AdminBoundaryMetricsEnricher] Skip {BoundaryId}: country-level boundary", boundary.Id);
-            return [PatchOperation.Set("/properties/adminBoundaryMetricsVersion", MetricsVersion)];
+            return new Dictionary<string, object?> { ["adminBoundaryMetricsVersion"] = MetricsVersion };
         }
 
-        // --- Tile classification (pure CPU / geo) ---
-        var (interiorZ8, borderZ8) = CalculateCandidateTilesSplit(boundary.Geometry, AnalysisTileZoom, BorderSamplingStep);
-
-        // Too many border tiles → boundary is very large or complex; stamp the version and move on.
-        if (borderZ8.Count > MaxBorderZ8Tiles)
-        {
-            logger.LogInformation("[AdminBoundaryMetricsEnricher] {BoundaryId}: {BrdZ8} border z8 tiles exceeds limit {Limit}; stamping version only", boundary.Id, borderZ8.Count, MaxBorderZ8Tiles);
-            var earlyOps = new List<PatchOperation> { PatchOperation.Set("/properties/adminBoundaryMetricsVersion", MetricsVersion) };
-            var derivedCode = TryExtractCountryCodeFromProperties(boundary.Properties);
-            if (derivedCode != null)
-                earlyOps.Add(PatchOperation.Set("/properties/countryCode", derivedCode));
-            return earlyOps;
-        }
-
-        logger.LogInformation("[AdminBoundaryMetricsEnricher] Start {BoundaryId} z8[int={IntZ8} brd={BrdZ8}]",
-            boundary.Id, interiorZ8.Count, borderZ8.Count);
-
-        var peakIntResult = interiorZ8.Count > 0
-            ? await _peaksCollection.FetchSlimByTilesMeasured(interiorZ8, AnalysisTileZoom, populateMissingTiles: false, cancellationToken: cancellationToken)
-            : new CollectionClient<StoredFeature>.MeasuredResult<IEnumerable<StoredFeatureSummary>>([], 0);
-        var interiorPeaks = peakIntResult.Value.Where(p => p.Kind == FeatureKinds.Peak).ToList();
-
-        // --- Border peaks (centroid check per peak) ---
-        var peakBrdResult = borderZ8.Count > 0
-            ? await _peaksCollection.FetchSlimByTilesMeasured(borderZ8, AnalysisTileZoom, populateMissingTiles: false, cancellationToken: cancellationToken)
-            : new CollectionClient<StoredFeature>.MeasuredResult<IEnumerable<StoredFeatureSummary>>([], 0);
-        var borderPeakCandidates = peakBrdResult.Value.Where(p => p.Kind == FeatureKinds.Peak).ToList();
-        var borderPeaks = borderPeakCandidates
-            .Where(p => RouteFeatureMatcher.IsPointInGeometry(p.ResolvedCentroid, boundary.Geometry))
-            .ToList();
-        var peaksWithin = (IReadOnlyList<StoredFeatureSummary>)interiorPeaks.Concat(borderPeaks).ToList();
-
-        // --- Interior protected areas (no geometry check needed) ---
-        var paIntResult = interiorZ8.Count > 0
-            ? await _protectedAreasCollection.FetchSlimByTilesMeasured(interiorZ8, AnalysisTileZoom, followPointers: true, populateMissingTiles: false, cancellationToken: cancellationToken)
-            : new CollectionClient<StoredFeature>.MeasuredResult<IEnumerable<StoredFeatureSummary>>([], 0);
-        var interiorProtectedAreas = paIntResult.Value.Where(a => a.Kind == FeatureKinds.ProtectedArea).ToList();
-
-        // --- Border protected areas (centroid check per area) ---
-        var paBrdResult = borderZ8.Count > 0
-            ? await _protectedAreasCollection.FetchSlimByTilesMeasured(borderZ8, AnalysisTileZoom, followPointers: true, populateMissingTiles: false, cancellationToken: cancellationToken)
-            : new CollectionClient<StoredFeature>.MeasuredResult<IEnumerable<StoredFeatureSummary>>([], 0);
-        var borderPACandidates = paBrdResult.Value.Where(a => a.Kind == FeatureKinds.ProtectedArea).ToList();
-        var borderProtectedAreas = borderPACandidates
-            .Where(a => RouteFeatureMatcher.IsPointInGeometry(a.ResolvedCentroid, boundary.Geometry))
-            .ToList();
-
-        var protectedAreasWithin = (IReadOnlyList<StoredFeatureSummary>)interiorProtectedAreas.Concat(borderProtectedAreas).ToList();
-
-        var metrics = BuildMetricsDictionary(peaksWithin, protectedAreasWithin);
-        var ops = new List<PatchOperation>();
-        foreach (var (key, value) in metrics)
-            ops.Add(PatchOperation.Set($"/properties/{key}", value));
-
-        ops.AddRange(await GetCountryPatchOpsAsync(boundary, cancellationToken));
-
-        logger.LogInformation(
-            "[AdminBoundaryMetricsEnricher] Done {BoundaryId}: {OpCount} ops | peaks={Peaks} PA={PA} | RU={RU:F1}",
-            boundary.Id, ops.Count,
-            peaksWithin.Count, protectedAreasWithin.Count,
-            peakIntResult.RequestCharge + peakBrdResult.RequestCharge + paIntResult.RequestCharge + paBrdResult.RequestCharge);
-        return ops;
-    }
-
-    private async Task<IReadOnlyList<PatchOperation>> GetCountryPatchOpsAsync(StoredFeature boundary, CancellationToken cancellationToken)
-    {
-        var ops = new List<PatchOperation>();
         var centroid = boundary.ResolvedCentroid;
 
-        var country = (await _adminBoundariesCollection.FindBoundarySummariesContainingAnyPoint(
-            [centroid], adminLevel: 2, cancellationToken: cancellationToken)).FirstOrDefault();
+        // PostGIS does the spatial prefilter directly. A radius covering the boundary's bounding
+        // box is a superset of the peaks we want; the exact geometry test below narrows it to the
+        // same "peak centroid inside boundary" set the tile-based Cosmos implementation produced.
+        var (min, max) = GetBounds(boundary.Geometry);
+        var radiusMeters = RadiusCoveringBounds(centroid, min, max);
+        var peakCandidates = await peaks.FindWithinRadius(centroid, radiusMeters, cancellationToken);
+        var peaksWithin = (IReadOnlyList<StoredFeatureSummary>)peakCandidates
+            .Select(StoredFeatureSummary.FromStoredFeature)
+            .Where(p => RouteFeatureMatcher.IsPointInGeometry(p.ResolvedCentroid, boundary.Geometry))
+            .ToList();
+
+        // Protected areas: centroid-within-boundary, evaluated with ST_Intersects in the query layer.
+        var protectedAreasWithin = await queries.FindProtectedAreaSummariesWithinBoundary(
+            boundary.Geometry, cancellationToken);
+
+        var metrics = BuildMetricsDictionary(peaksWithin, protectedAreasWithin);
+        await AddCountryMetricsAsync(metrics, boundary, cancellationToken);
+
+        logger.LogInformation(
+            "[AdminBoundaryMetricsEnricher] Done {BoundaryId}: peaks={Peaks} PA={PA}",
+            boundary.Id, peaksWithin.Count, protectedAreasWithin.Count);
+        return new Dictionary<string, object?>(metrics);
+    }
+
+    /// <summary>Haversine distance from the centroid to the farthest bounding-box corner, in metres.</summary>
+    private static int RadiusCoveringBounds(Coordinate centre, Coordinate min, Coordinate max)
+    {
+        const double earthRadiusMetres = 6_371_000;
+
+        double DistanceTo(Coordinate corner)
+        {
+            var lat1 = centre.Lat * Math.PI / 180.0;
+            var lat2 = corner.Lat * Math.PI / 180.0;
+            var dLat = lat2 - lat1;
+            var dLng = (corner.Lng - centre.Lng) * Math.PI / 180.0;
+            var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2)
+                    + Math.Cos(lat1) * Math.Cos(lat2) * Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
+            return 2 * earthRadiusMetres * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        }
+
+        var farthest = new[]
+        {
+            DistanceTo(new Coordinate(min.Lng, min.Lat)),
+            DistanceTo(new Coordinate(min.Lng, max.Lat)),
+            DistanceTo(new Coordinate(max.Lng, min.Lat)),
+            DistanceTo(new Coordinate(max.Lng, max.Lat)),
+        }.Max();
+
+        return (int)Math.Min(int.MaxValue, Math.Ceiling(farthest) + 1_000);
+    }
+
+    private async Task AddCountryMetricsAsync(
+        IDictionary<string, object?> metrics,
+        StoredFeature boundary,
+        CancellationToken cancellationToken)
+    {
+        var country = (await adminBoundaries.FindSummariesContainingAnyPoint(
+            [boundary.ResolvedCentroid], adminLevel: 2, cancellationToken: cancellationToken)).FirstOrDefault();
 
         if (country != null)
         {
-            ops.Add(PatchOperation.Set("/properties/countryId", country.Id));
+            metrics["countryId"] = country.Id;
             if (country.Properties.TryGetValue("countryCode", out var code)
                 && code?.ToString() is string countryCode)
             {
-                ops.Add(PatchOperation.Set("/properties/countryCode", countryCode));
-                return ops;
+                metrics["countryCode"] = countryCode;
+                return;
             }
         }
 
         // Fall back: derive country code from the boundary's own OSM tags.
         var derivedCode = TryExtractCountryCodeFromProperties(boundary.Properties);
         if (derivedCode != null)
-            ops.Add(PatchOperation.Set("/properties/countryCode", derivedCode));
-
-        return ops;
+            metrics["countryCode"] = derivedCode;
     }
 
     /// <summary>

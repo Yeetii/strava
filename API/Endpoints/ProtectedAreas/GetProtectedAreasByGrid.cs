@@ -3,15 +3,16 @@ using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
-using Shared.Services;
+using Shared.Geo;
+using Shared.Services.Postgres.Spatial;
 using API.Utils;
 
 namespace API.Endpoints.ProtectedAreas;
 
-public class GetProtectedAreasByGrid([FromKeyedServices(FeatureKinds.ProtectedArea)] TiledCollectionClient protectedAreasCollectionClient)
+public class GetProtectedAreasByGrid(IProtectedAreaRepository protectedAreas)
 {
+    // Protected areas are stored at zoom 8; the optional zoom selects a view over those tiles.
     private const int DefaultZoom = 8;
 
     [OpenApiOperation(tags: ["ProtectedAreas"])]
@@ -26,8 +27,26 @@ public class GetProtectedAreasByGrid([FromKeyedServices(FeatureKinds.ProtectedAr
         try
         {
             var zoom = ParseZoom(req);
-            var protectedAreas = await protectedAreasCollectionClient.FetchByTiles([(x, y)], zoom, cancellationToken: cancellationToken);
-            var featureCollection = new FeatureCollection(protectedAreas.Select(area => area.ToFeature()).ToList());
+            IEnumerable<Feature> features;
+            if (zoom == DefaultZoom)
+            {
+                var areas = await protectedAreas.GetByTile(x, y, cancellationToken);
+                features = areas.Select(area => area.ToFeature()).ToList();
+            }
+            else
+            {
+                var storageKeys = SlippyTileCalculator.GetIntersectingTileKeys(zoom, x, y, DefaultZoom);
+                var matched = new List<Feature>();
+                foreach (var (storageX, storageY) in storageKeys)
+                {
+                    var areas = await protectedAreas.GetByTile(storageX, storageY, cancellationToken);
+                    matched.AddRange(areas
+                        .Where(area => SlippyTileCalculator.WGS84ToTileIndex(area.ResolvedCentroid, zoom) == (x, y))
+                        .Select(area => area.ToFeature()));
+                }
+                features = matched;
+            }
+            var featureCollection = new FeatureCollection(features);
 
             var response = req.CreateResponse(HttpStatusCode.OK);
             await response.WriteAsJsonAsync(featureCollection);
