@@ -175,16 +175,40 @@ builder.Services.AddSingleton<Func<string, SignalRConnectionInfo>>(_ =>
         ?? throw new InvalidOperationException("AzureSignalRConnectionString is not configured."),
         sessionId)));
 
-var allowedOrigins = configuration.GetValue<string>("AllowedOrigins")?
+var defaultOrigins = new[]
+{
+    "https://peakshunters.erikmagnusson.com",
+    "https://stigar.erikmagnusson.com",
+};
+
+var configuredOrigins = configuration.GetValue<string>("AllowedOrigins")?
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     ?? [];
-builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+
+var allowedOrigins = configuredOrigins.Length > 0
+    ? configuredOrigins.Union(defaultOrigins, StringComparer.OrdinalIgnoreCase).ToArray()
+    : defaultOrigins;
+
+builder.Services.AddCors(options =>
 {
-    if (allowedOrigins.Length > 0)
-        policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
-    else
-        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
-}));
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials()
+            .WithExposedHeaders("Content-Range", "Content-Length", "ETag", "Accept-Ranges");
+    });
+
+    options.AddPolicy(API.Endpoints.Tiles.GetTrailsPmtiles.CorsPolicy, policy =>
+    {
+        policy.SetIsOriginAllowed(_ => true)
+            .AllowAnyHeader()
+            .WithMethods("GET", "HEAD", "OPTIONS")
+            .AllowCredentials()
+            .WithExposedHeaders("Content-Range", "Content-Length", "ETag", "Accept-Ranges");
+    });
+});
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
