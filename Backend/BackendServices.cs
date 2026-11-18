@@ -1,7 +1,5 @@
-using System.Configuration;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Microsoft.Extensions.DependencyInjection;
@@ -44,10 +42,10 @@ public static class BackendServices
         services.AddSingleton(socketsHttpHandler);
         services.AddHttpClient("apiClient", client =>
             client.BaseAddress = new Uri(configuration.GetValue<string>("ApiUrl")
-                ?? throw new ConfigurationErrorsException("No API Url found in config")));
+                ?? throw new InvalidOperationException("No API Url found in config")));
         services.AddHttpClient("backendApiClient", client =>
             client.BaseAddress = new Uri(configuration.GetValue<string>("BackendApiUrl")
-                ?? throw new ConfigurationErrorsException("No Backend API Url found in config")));
+                ?? throw new InvalidOperationException("No Backend API Url found in config")));
         services.AddHttpClient("stravaClient", client =>
             client.BaseAddress = new Uri("https://www.strava.com/api/v3/"));
         services.AddSingleton(serviceProvider =>

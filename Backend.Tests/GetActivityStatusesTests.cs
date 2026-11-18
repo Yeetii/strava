@@ -1,6 +1,5 @@
 using System.Net;
 using System.Security.Claims;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -25,19 +24,6 @@ public class GetActivityStatusesTests
         var response = await endpoint.Run(request);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public void BuildQuery_UsesProjectionAndDescendingOrder()
-    {
-        var query = GetActivityStatuses.BuildQuery("user-1", 5);
-
-        Assert.Contains("SELECT TOP 5", query.QueryText, StringComparison.Ordinal);
-        Assert.Contains("c.id", query.QueryText, StringComparison.Ordinal);
-        Assert.Contains("c.name", query.QueryText, StringComparison.Ordinal);
-        Assert.Contains("c.startDateLocal", query.QueryText, StringComparison.Ordinal);
-        Assert.Contains("c.processingStatus", query.QueryText, StringComparison.Ordinal);
-        Assert.Contains("ORDER BY c.startDateLocal DESC", query.QueryText, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -22,7 +22,7 @@ public sealed class AdminBoundaryMetricsEnricher(
     public const int AnalysisTileZoom = 8;
     public const int BorderSamplingStep = 10;
     public const int MetricsVersion = 2;
-    /// <summary>Storage zoom for the peaks collection (must match <see cref="CollectionClientBuilder"/>).</summary>
+    /// <summary>Storage zoom for the peaks collection.</summary>
     public const int PeakStorageZoom = 11;
     /// <summary>
     /// Maximum number of zoom-8 border tiles (tiles the boundary ring passes through).

@@ -61,7 +61,7 @@ public class RaceDiscoveryService(QueueClient queueClient, IOrganizerStore organ
 
     public static QueueMessage BuildScrapeQueueMessage(ScrapeRaceMessage message)
     {
-        var body = BinaryData.FromString(JsonSerializer.Serialize(message, JsonSerializerOptions));
+        var body = JsonSerializer.Serialize(message, JsonSerializerOptions);
         return new QueueMessage(body)
         {
             ContentType = "application/json",
@@ -91,7 +91,7 @@ public class RaceDiscoveryService(QueueClient queueClient, IOrganizerStore organ
 
     public static QueueMessage BuildDiscoveryQueueMessage(RaceDiscoveryMessage message)
     {
-        var body = BinaryData.FromString(JsonSerializer.Serialize(message, JsonSerializerOptions));
+        var body = JsonSerializer.Serialize(message, JsonSerializerOptions);
         var queueMessage = new QueueMessage(body)
         {
             ContentType = "application/json",

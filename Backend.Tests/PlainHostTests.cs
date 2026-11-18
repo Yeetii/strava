@@ -153,7 +153,7 @@ public class PlainHostTests
     [Fact]
     public void QueueEnvelope_RoundTripsBodyAndMetadata()
     {
-        var envelope = QueueMessageEnvelope.From(new QueueMessage(BinaryData.FromString("activity-1"))
+        var envelope = QueueMessageEnvelope.From(new QueueMessage("activity-1")
         {
             MessageId = "m1",
             ContentType = "application/json",

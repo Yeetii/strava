@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -78,23 +77,6 @@ public class GetActivityStatuses
         var response = req.CreateResponse(HttpStatusCode.OK);
         await response.WriteAsJsonAsync(statuses);
         return response;
-    }
-
-    public static QueryDefinition BuildQuery(string userId, int limit)
-    {
-        // Cosmos SQL does not support parameterizing TOP; limit is clamped via ParseLimit.
-        return new QueryDefinition($"""
-            SELECT TOP {limit}
-                c.id,
-                c.name,
-                c.startDateLocal,
-                c.summaryPolyline,
-                c.processingStatus
-            FROM c
-            WHERE c.userId = @userId
-            ORDER BY c.startDateLocal DESC
-            """)
-            .WithParameter("@userId", userId);
     }
 
     public static int ParseLimit(string? rawLimit)

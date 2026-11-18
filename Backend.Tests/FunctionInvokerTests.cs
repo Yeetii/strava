@@ -27,7 +27,7 @@ public class FunctionInvokerTests
             DeclaringType = typeof(SingleMessageWorker),
             Method = typeof(SingleMessageWorker).GetMethod(nameof(SingleMessageWorker.Run))!,
         };
-        var message = new QueueMessage(BinaryData.FromString("{\"userId\":\"3185589\"}"));
+        var message = new QueueMessage("{\"userId\":\"3185589\"}");
 
         await FunctionInvoker.InvokeAsync(
             descriptor,

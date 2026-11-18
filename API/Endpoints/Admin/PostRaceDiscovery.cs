@@ -63,7 +63,7 @@ public class PostRaceDiscovery(
         for (var page = pageStart; page <= pageEnd; page++)
         {
             var payload = new { agent, page };
-            var message = new QueueMessage(BinaryData.FromString(JsonSerializer.Serialize(payload)))
+            var message = new QueueMessage(JsonSerializer.Serialize(payload))
             {
                 ContentType = "application/json",
                 MessageId = $"discovery:{agent}:{page}",

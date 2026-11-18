@@ -18,7 +18,7 @@ public class DeleteAccountWorker(
         QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
-        var deleteJob = message.Body.ToObjectFromJson<AccountDeleteJob>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var deleteJob = JsonSerializer.Deserialize<AccountDeleteJob>(message.Body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (deleteJob == null)
             throw new InvalidOperationException("Account delete job payload is invalid.");
 
