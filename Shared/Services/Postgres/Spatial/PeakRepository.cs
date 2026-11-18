@@ -88,7 +88,7 @@ public sealed class PeakRepository(NpgsqlDataSource dataSource) : IPeakRepositor
             return [];
 
         await using var command = dataSource.CreateCommand("""
-            SELECT id, name, elevation, tile_x, tile_y, ST_X(geom) AS lng, ST_Y(geom) AS lat
+            SELECT id, name, elevation, tile_x, tile_y, ST_AsGeoJSON(geom) AS geom_json
             FROM peaks p
             WHERE EXISTS (
                 SELECT 1 FROM unnest(@xs::int[], @ys::int[]) AS t(x, y)
