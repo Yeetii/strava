@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Creates deploy/.env from .env.example and fills in generated local secrets.
-# Azure connection strings and application secrets still have to be supplied.
+# Application secrets and Strava credentials still have to be supplied.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -43,6 +43,6 @@ Created ${ENV_FILE}
 Next:
   1. Edit ${ENV_FILE} and replace every REPLACE placeholder.
   2. Set IMAGE_NAMESPACE to the lowercase GitHub owner that publishes the images.
-  3. Keep COMPOSE_PROFILES empty until the API has been verified against the
-     self-hosted stack. Cosmos DB and Service Bus remain on Azure.
+  3. Keep COMPOSE_PROFILES empty until the API has been verified before
+     starting queue consumers and timers.
 EOF

@@ -14,33 +14,31 @@
 
 ## Goal
 
-Reduce Azure costs by moving database-heavy and compute-heavy backend workloads onto a self-hosted, containerized server while keeping the project operational during the transition.
+Move all backend workloads and data onto a self-hosted, containerized server and decommission the Azure footprint.
 
-What still drives cost: Cosmos DB RU pressure, excessive reads/writes, and the remaining Azure store footprint (Blob, Tables). Azure Functions scaling is no longer a problem — compute is self-hosted on fixed-size containers.
+Completed: compute runs on fixed-size plain .NET 10 containers, queues/timers run on Hangfire/Redis, structured data lives in PostgreSQL + PostGIS, and race/shard data lives on local disk. All Azure SDK packages, shims, tooling and deploy workflows have been removed.
 
 ---
 
-## Current state (2026-11-17)
+## Current state (2026-11-18)
 
 | Area | Reality |
 | --- | --- |
-| Hosts | Plain .NET 10 (ASP.NET Core Kestrel `api` + Generic Host workers). **No Azure Functions runtime, no `host.json`, no per-function whitelist env vars.** |
-| Containers | `api`, `worker-schedule` (profile `schedules`), `worker-heavy` (profile `workers`), `pmtiles`, `redis`. |
+| Hosts | Plain .NET 10 (ASP.NET Core Kestrel `api` + Generic Host workers). No Functions runtime, no `host.json`, no per-function whitelist env vars. |
+| Containers | `api`, `worker-schedule` (profile `schedules`), `worker-heavy` (profile `workers`), `pmtiles`, `redis`, `postgres`. |
 | Roles | `WORKER_ROLE` = `api` \| `schedule` \| `heavy` (`Shared.Hosting`). |
-| Queues / timers | 11 queues + 12 weekly crons on Hangfire/Redis. **Service Bus SDK removed from source.** |
-| Change feeds | 3 Cosmos feeds in-process via SDK `ChangeFeedProcessor`, same lease containers. |
-| Redis | Durable Hangfire storage: `--appendonly yes`, `--maxmemory-policy noeviction`. Not yet a general read cache. |
-| Public access | Tailscale Funnel → `https://<machine>.<tailnet>.ts.net`; API publishes `127.0.0.1:8080:80`. No Caddy/TLS or DNS cutover. |
-| Race/organizer data | `IOrganizerStore` / `FileSystemOrganizerStore` (`OrganizerStore__Provider=FileSystem`), host dir `/opt/data/strava/races` → `/data/races`. `pmtiles` builds tiles there; API serves `/tiles/trails.pmtiles`. |
-| Geocoding cache | Single `RedisGeocodingCache` used by both Backend and PmtilesJob. |
-| CI / deploy | `.github/workflows/selfhosted-deploy.yml`: builds `api`/`backend`/`pmtiles` → GHCR (SHA + `latest`), joins tailnet as `tag:ci`, rsyncs `deploy/`, runs `deploy.sh` (health-check + auto-rollback). |
-| Guardrail | `deploy/scripts/verify-role-coverage.sh`: 11 queues / 2 feeds / 12 crons each map to one role; legacy function-list env vars rejected. |
-| Monitoring / backups | Beszel. **No automated host backup job in the repo** (`backups/` is gitignored) — adding one is part of adding Postgres. Cosmos/Storage have platform backups. |
+| Queues / timers | 11 queues + 12 weekly crons on Hangfire/Redis. No Service Bus SDK. |
+| Change feeds | Replaced by PostgreSQL polling jobs; no change-feed processor remains. |
+| Data | PostgreSQL + PostGIS for structured data; race/organizer/shard/tile data on local bind mounts. |
+| Redis | Durable Hangfire storage: `--appendonly yes`, `--maxmemory-policy noeviction`, plus the shared geocoding cache. |
+| Public access | Tailscale Funnel → `https://<machine>.<tailnet>.ts.net`; API publishes `127.0.0.1:8080:80`. |
+| CI / deploy | `.github/workflows/selfhosted-deploy.yml`: builds `api`/`backend`/`pmtiles` → GHCR (SHA + `latest`), joins tailnet as `tag:ci`, rsyncs `deploy/`, runs `deploy.sh` (health-check + auto-rollback). The two Azure Function App deploy workflows are removed. |
+| Guardrail | `deploy/scripts/verify-role-coverage.sh`: 11 queues / 0 feeds / 12 crons each map to one role; legacy function-list env vars rejected. |
+| Monitoring / backups | Beszel. **No automated host backup job in the repo** (`backups/` is gitignored). Back up `/opt/data/strava` (Redis AOF + PostgreSQL data) before storage changes. |
 
-**Still on Azure:** Cosmos DB (`activities`, `users`, `userSyncItems`, `sessions`, `visitedPaths`, `visitedAreas`, `peaksGroups`, `summitedPeaks`, `osmFeatures`, `raceOrganizers`)
+**Still on Azure:** nothing — all Azure services are decommissioned.
 
-
-**Not done:** Postgres (no `Npgsql`/EF/PostgreSql reference anywhere), general Redis read caching beyond geocoding, and the operational proof listed below.
+**Not done:** general Redis read caching beyond geocoding, and the operational proof listed below.
 
 ### Decisions made during implementation
 
@@ -67,7 +65,7 @@ Still-open proof (do not claim done): worker soak against production traffic; P0
 
 **Phase 7 — final cutover.** Short controlled write freeze per entity: pause/queue writes → final sync → validate counts → switch reads then writes → resume. Keep Cosmos read-only through a validation period.
 
-**Phase 8 — decommission.** Azure Blob Storage and Table Storage have been removed from source. Cosmos remains to be migrated to Postgres.
+**Phase 8 — decommission (complete).** All Azure services are gone: Functions runtime, Service Bus, Tables, Blob and Cosmos have been removed from source, along with their SDK packages, dead shims, migration tooling, Azure Workbooks and the two Azure Function App deploy workflows. Historical specs and ADRs are kept as the migration record.
 
 ---
 
@@ -81,7 +79,7 @@ Still-open proof (do not claim done): worker soak against production traffic; P0
 
 ## Next actions
 
-1. Capture the baseline: Cosmos RU/call volume per container, endpoint latency, Hangfire queue depth, Funnel bandwidth for tile endpoints.
-2. Finish Phase 4 caching (the geocoding cache is Redis-only; Azure Tables is retired).
-3. Pilot Postgres on one derived container (e.g. `visitedPaths` or `peaksGroups`), serve reads, measure against the baseline.
-4. Add a host backup job — there is none in the repo today.
+1. Add a host backup job — there is still none in the repo; back up the Redis AOF and PostgreSQL data directory.
+2. Finish general read caching beyond the geocoding cache.
+3. Capture an operational baseline on the self-hosted stack: endpoint latency, Hangfire queue depth, Funnel bandwidth for tile endpoints.
+4. Keep `dotnet test strava.sln` and `deploy/scripts/verify-role-coverage.sh` green on future changes.

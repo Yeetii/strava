@@ -35,16 +35,12 @@ in the Azure Functions Runtime Exit plan.
    tailscale funnel status
    ```
 
-## P0 — baseline capture
+## P0 — baseline capture (historical)
 
-Before enabling any worker role, capture the comparison baseline (per-queue
-depth, Cosmos RU/s, endpoint latencies):
-
-```bash
-./deploy/scripts/capture-baseline.sh
-```
-
-Store the output outside the repository. Repeat after each phase cutover.
+Baseline capture was a migration-time activity (per-queue depth, Cosmos RU/s,
+endpoint latencies). The Azure CLI script used for it has been removed now that
+the Azure services are decommissioned; baseline metrics were stored outside the
+repository.
 
 ## P1b — expose the home API
 
