@@ -62,6 +62,7 @@ public sealed class FunctionWorkerRegistry
 
 public interface ITimerJobDispatcher
 {
+    [JobConsoleServerFilter]
     Task RunAsync(string functionName);
 }
 

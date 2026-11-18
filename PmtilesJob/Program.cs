@@ -84,6 +84,7 @@ var builder = Host.CreateDefaultBuilder(args)
     {
         logging.ClearProviders();
         logging.AddConsole();
+        logging.AddJobConsoleLogging();
         logging.AddFilter("System.Net.Http.HttpClient.ILocationGeocodingService", LogLevel.Warning);
     });
 

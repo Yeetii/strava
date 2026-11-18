@@ -11,5 +11,6 @@ namespace Shared.Hosting;
 /// </summary>
 public interface IRaceTilesBuildJob
 {
+    [JobConsoleServerFilter]
     Task RunAsync();
 }

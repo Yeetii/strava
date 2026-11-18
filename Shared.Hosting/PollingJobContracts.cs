@@ -11,6 +11,7 @@ namespace Shared.Hosting;
 /// </summary>
 public interface IAdminBoundaryMetricsPollingJob
 {
+    [JobConsoleServerFilter]
     Task RunAsync(CancellationToken cancellationToken = default);
 }
 
@@ -20,5 +21,6 @@ public interface IAdminBoundaryMetricsPollingJob
 /// </summary>
 public interface IQueueActivityJobs
 {
+    [JobConsoleServerFilter]
     Task PollAndQueueAsync(CancellationToken cancellationToken = default);
 }

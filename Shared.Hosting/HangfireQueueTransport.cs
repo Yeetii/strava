@@ -3,15 +3,22 @@
 // body with an SDK-free QueueMessage. No Service Bus connection is needed.
 
 using Hangfire;
+using Hangfire.Console;
 using Hangfire.Redis.StackExchange;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace Shared.Hosting;
 
 public static class QueueTransport
 {
+    // UseConsole() mutates global Hangfire state and throws when called twice.
+    // Several host entry points reach AddHangfireStorage, so guard per process.
+    private static int _consoleInitialized;
+
     /// <summary>
     /// Registers Hangfire storage exactly once per host. Call this from the host
     /// entry point before resolving any queue producer.
@@ -19,11 +26,21 @@ public static class QueueTransport
     public static void AddHangfireStorage(IServiceCollection services, IConfiguration configuration)
     {
         var redis = configuration.GetValue<string>("RedisConnectionString") ?? "redis:6379,abortConnect=false";
-        services.AddHangfire(config => config
-            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-            .UseSimpleAssemblyNameTypeSerializer()
-            .UseRecommendedSerializerSettings()
-            .UseRedisStorage(redis));
+        services.AddHangfire(config =>
+        {
+            config.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                .UseSimpleAssemblyNameTypeSerializer()
+                .UseRecommendedSerializerSettings()
+                .UseRedisStorage(redis);
+
+            if (Interlocked.Exchange(ref _consoleInitialized, 1) == 0)
+                config.UseConsole();
+        });
+
+        // Turns every worker's existing ILogger output into console lines for
+        // whichever job is currently executing on this async flow.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<ILoggerProvider, HangfireConsoleLoggerProvider>());
     }
 
     /// <summary>Registers the Hangfire-backed queue producer in a host that produces jobs.</summary>
@@ -46,6 +63,7 @@ public sealed class QueueJobDispatcher(
 {
     [AutomaticRetry(Attempts = 5, DelaysInSeconds = [60, 300, 900, 1800, 3600])]
     [JobDisplayName("{0}")]
+    [JobConsoleServerFilter]
     public async Task Execute(string queueName, QueueMessageEnvelope envelope)
     {
         var descriptor = registry.Queues.FirstOrDefault(d =>
