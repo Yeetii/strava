@@ -20,9 +20,6 @@ public class PlainHostTests
         var registry = FunctionWorkerRegistry.Discover(typeof(BackendServices).Assembly);
 
         Assert.Equal(11, registry.Queues.Count);
-        // Both Cosmos change feeds were replaced by Hangfire polling jobs in the
-        // PostgreSQL migration, so the plain host now discovers zero change feeds.
-        Assert.Equal(0, registry.ChangeFeeds.Count);
         Assert.Equal(12, registry.Timers.Count);
     }
 
@@ -156,7 +153,7 @@ public class PlainHostTests
     [Fact]
     public void QueueEnvelope_RoundTripsBodyAndMetadata()
     {
-        var envelope = QueueMessageEnvelope.From(new QueueMessage(BinaryData.FromString("activity-1"))
+        var envelope = QueueMessageEnvelope.From(new QueueMessage("activity-1")
         {
             MessageId = "m1",
             ContentType = "application/json",

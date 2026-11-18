@@ -9,7 +9,7 @@ public class ScrapeRaceWorkerTests
     [Fact]
     public void DeserializeMessage_AcceptsJsonAutomaticMessage()
     {
-        var received = new QueueMessage(BinaryData.FromString("""{"organizerKey":"sample.com","isUrgent":false}"""));
+        var received = new QueueMessage("""{"organizerKey":"sample.com","isUrgent":false}""");
 
         var message = ScrapeRaceWorker.DeserializeMessage(received);
 
@@ -20,7 +20,7 @@ public class ScrapeRaceWorkerTests
     [Fact]
     public void DeserializeMessage_FallsBackToPlainTextUrgentMessage()
     {
-        var received = new QueueMessage(BinaryData.FromString("sample.com"));
+        var received = new QueueMessage("sample.com");
 
         var message = ScrapeRaceWorker.DeserializeMessage(received);
 

@@ -6,8 +6,7 @@ namespace Shared.Services.Postgres;
 /// <summary>
 /// Registers the five core PostgreSQL repositories. An <see cref="NpgsqlDataSource"/> singleton
 /// must already be registered by the caller (T5). Repositories themselves are registered as
-/// singletons too: they hold only the thread-safe data source and no per-request state, matching
-/// the existing <c>CollectionClientBuilder</c> registration style for Cosmos clients.
+/// singletons too: they hold only the thread-safe data source and no per-request state.
 /// </summary>
 public static class PostgresCoreRepositoryServiceCollectionExtensions
 {

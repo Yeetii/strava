@@ -21,7 +21,7 @@ public sealed class OsmFeatureIngestionService(
     IAdminBoundaryRepository adminBoundaries,
     ILogger<OsmFeatureIngestionService> logger) : IOsmFeatureIngestionService
 {
-    // Storage zooms previously configured in CollectionClientBuilder / AdminBoundariesCollectionClient.
+    // Storage zooms used for the OSM feature domain tables.
     private const int PeakZoom = 11;
     private const int ProtectedAreaZoom = 8;
     private const int AdminBoundaryZoom = 6;

@@ -18,7 +18,7 @@ public class DeleteActivityWorker(
         QueueMessageActions actions,
         CancellationToken cancellationToken)
     {
-        var deleteJob = message.Body.ToObjectFromJson<ActivityDeleteJob>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var deleteJob = JsonSerializer.Deserialize<ActivityDeleteJob>(message.Body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (deleteJob == null)
             throw new InvalidOperationException("Activity delete job payload is invalid.");
 

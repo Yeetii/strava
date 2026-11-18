@@ -47,46 +47,11 @@ namespace Microsoft.Azure.Functions.Worker
         public bool RunOnStartup { get; set; }
     }
 
-    [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Method)]
-    public sealed class CosmosDBTriggerAttribute(string databaseName, string containerName) : Attribute
-    {
-        public string DatabaseName { get; } = databaseName;
-        public string ContainerName { get; } = containerName;
-        public string? Connection { get; set; }
-        public string? LeaseContainerPrefix { get; set; }
-        public bool CreateLeaseContainerIfNotExists { get; set; }
-    }
-
     [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Method | AttributeTargets.Property)]
     public sealed class QueueOutputAttribute(string queueName) : Attribute
     {
         public string QueueName { get; } = queueName;
         public string? Connection { get; set; }
-    }
-
-    [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Property | AttributeTargets.Method)]
-    public sealed class CosmosDBOutputAttribute(string databaseName, string containerName) : Attribute
-    {
-        public string DatabaseName { get; } = databaseName;
-        public string ContainerName { get; } = containerName;
-        public string? Connection { get; set; }
-        public bool CreateIfNotExists { get; set; }
-        public string? PartitionKey { get; set; }
-    }
-
-    /// <summary>
-    /// Reproduces the CosmosDB input binding used by a handful of GET endpoints.
-    /// The mapper materializes the SQL query into the parameter's IEnumerable type.
-    /// </summary>
-    [AttributeUsage(AttributeTargets.Parameter)]
-    public sealed class CosmosDBInputAttribute(string databaseName, string containerName) : Attribute
-    {
-        public string DatabaseName { get; } = databaseName;
-        public string ContainerName { get; } = containerName;
-        public string? Connection { get; set; }
-        public string? SqlQuery { get; set; }
-        public string? Id { get; set; }
-        public string? PartitionKey { get; set; }
     }
 
     [AttributeUsage(AttributeTargets.Property)]

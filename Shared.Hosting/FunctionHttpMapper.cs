@@ -5,11 +5,9 @@
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,7 +56,7 @@ public static class FunctionHttpMapper
         var request = new HttpRequestData(context);
         var functionContext = request.FunctionContext;
         var instance = ActivatorUtilities.CreateInstance(services, declaringType);
-        var args = await BuildArgumentsAsync(method, request, context, functionContext, services, ct);
+        var args = await BuildArgumentsAsync(method, request, context, functionContext, ct);
 
         object? result = method.Invoke(instance, args);
         if (result is Task task)
@@ -69,7 +67,7 @@ public static class FunctionHttpMapper
                 : null;
         }
 
-        await WriteResultAsync(result, method, request, context, services, ct);
+        await WriteResultAsync(result, request, context, services, ct);
     }
 
     private static async Task<object?[]> BuildArgumentsAsync(
@@ -77,7 +75,6 @@ public static class FunctionHttpMapper
         HttpRequestData request,
         HttpContext context,
         FunctionContext functionContext,
-        IServiceProvider services,
         CancellationToken ct)
     {
         var values = new List<object?>();
@@ -106,13 +103,6 @@ public static class FunctionHttpMapper
                 values.Add(ct);
                 continue;
             }
-            var cosmosInput = parameter.GetCustomAttribute<CosmosDBInputAttribute>();
-            if (cosmosInput is not null)
-            {
-                values.Add(await QueryCosmosInputAsync(cosmosInput, type, context, request, services, ct));
-                continue;
-            }
-
             var routeValue = context.Request.RouteValues.TryGetValue(name, out var raw) ? raw?.ToString() : null;
             if (routeValue is not null)
             {
@@ -137,46 +127,6 @@ public static class FunctionHttpMapper
         return values.ToArray();
     }
 
-    private static async Task<object?> QueryCosmosInputAsync(
-        CosmosDBInputAttribute attribute,
-        Type parameterType,
-        HttpContext context,
-        HttpRequestData request,
-        IServiceProvider services,
-        CancellationToken ct)
-    {
-        var client = services.GetRequiredService<CosmosClient>();
-        var container = client.GetContainer(attribute.DatabaseName, attribute.ContainerName);
-        var sql = attribute.SqlQuery ?? "SELECT * FROM c";
-        var names = Regex.Matches(sql, @"\{([A-Za-z0-9_]+)\}")
-            .Select(m => m.Groups[1].Value)
-            .Distinct()
-            .ToList();
-        var parameterized = Regex.Replace(sql, @"\{([A-Za-z0-9_]+)\}", m => $"@{m.Groups[1].Value}");
-        var query = new QueryDefinition(parameterized);
-        foreach (var name in names)
-        {
-            var raw = context.Request.RouteValues.TryGetValue(name, out var rv)
-                ? rv?.ToString()
-                : request.Query.TryGetValue(name, out var qv) ? qv.ToString() : null;
-            query = query.WithParameter($"@{name}", raw ?? string.Empty);
-        }
-
-        var elementType = parameterType.IsGenericType
-            ? parameterType.GetGenericArguments()[0]
-            : typeof(object);
-        var list = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(elementType))!;
-        using var iterator = container.GetItemQueryIterator<JsonElement>(query);
-        while (iterator.HasMoreResults)
-            foreach (var item in await iterator.ReadNextAsync(ct))
-            {
-                var value = JsonSerializer.Deserialize(item.GetRawText(), elementType, FunctionsJson.Options);
-                if (value is not null)
-                    list.Add(value);
-            }
-        return list;
-    }
-
     private static object? ConvertValue(string? value, Type targetType)
     {
         if (value is null)
@@ -191,7 +141,6 @@ public static class FunctionHttpMapper
 
     private static async Task WriteResultAsync(
         object? result,
-        MethodInfo method,
         HttpRequestData request,
         HttpContext context,
         IServiceProvider services,
@@ -209,11 +158,10 @@ public static class FunctionHttpMapper
         }
         else if (result is not null && HasOutputBindings(result.GetType()))
         {
-            httpResponse = await ProcessBindingsAsync(result, method, request, context, services, ct);
+            httpResponse = await ProcessBindingsAsync(result, request, context, services, ct);
         }
         else if (result is not null)
         {
-            await ProcessCosmosMethodOutputAsync(result, method, services, ct);
             context.Response.StatusCode = (int)HttpStatusCode.OK;
             context.Response.ContentType = "application/json; charset=utf-8";
             await JsonSerializer.SerializeAsync(context.Response.Body, result,
@@ -231,7 +179,6 @@ public static class FunctionHttpMapper
 
     private static async Task<HttpResponseData?> ProcessBindingsAsync(
         object bindings,
-        MethodInfo method,
         HttpRequestData request,
         HttpContext context,
         IServiceProvider services,
@@ -264,12 +211,8 @@ public static class FunctionHttpMapper
                     new QueueMessage(JsonSerializer.Serialize(value, FunctionsJson.Options)), ct);
             }
 
-            var cosmos = property.GetCustomAttribute<CosmosDBOutputAttribute>();
-            if (cosmos is not null && services.GetService<CosmosClient>() is { } cosmosClient)
-                await WriteCosmosOutputAsync(cosmosClient, cosmos, value, ct);
         }
 
-        await ProcessCosmosMethodOutputAsync(bindings, method, services, ct);
         // An IActionResult [HttpResult] was written straight to HttpContext.
         // Fabricating a fresh OK response here would rewrite StatusCode and
         // headers on the already-started response — aborting the transfer
@@ -280,40 +223,9 @@ public static class FunctionHttpMapper
         return httpResponse ?? request.CreateResponse(HttpStatusCode.OK);
     }
 
-    private static async Task ProcessCosmosMethodOutputAsync(
-        object result, MethodInfo method, IServiceProvider services, CancellationToken ct)
-    {
-        var cosmos = method.GetCustomAttribute<CosmosDBOutputAttribute>();
-        if (cosmos is null || services.GetService<CosmosClient>() is not { } client)
-            return;
-
-        foreach (var item in Enumerate(result))
-            await WriteCosmosOutputAsync(client, cosmos, item, ct);
-    }
-
-    private static async Task WriteCosmosOutputAsync(
-        CosmosClient client, CosmosDBOutputAttribute attribute, object item, CancellationToken ct)
-    {
-        var container = client.GetContainer(attribute.DatabaseName, attribute.ContainerName);
-        var id = item.GetType().GetProperty("Id")?.GetValue(item)?.ToString()
-                 ?? Guid.NewGuid().ToString();
-        await container.UpsertItemAsync(item, new PartitionKey(id), cancellationToken: ct);
-    }
-
-    private static IEnumerable<object> Enumerate(object value)
-    {
-        if (value is System.Collections.IEnumerable enumerable and not string)
-            foreach (var item in enumerable)
-                if (item is not null)
-                    yield return item;
-        else
-            yield return value;
-    }
-
     private static bool HasOutputBindings(Type type) => type.GetProperties().Any(p =>
         p.GetCustomAttribute<HttpResultAttribute>() is not null ||
-        p.GetCustomAttribute<QueueOutputAttribute>() is not null ||
-        p.GetCustomAttribute<CosmosDBOutputAttribute>() is not null);
+        p.GetCustomAttribute<QueueOutputAttribute>() is not null);
 
     private static async Task WriteActionResultAsync(IActionResult actionResult, HttpContext context)
     {

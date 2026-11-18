@@ -221,7 +221,7 @@ namespace Shared.Models
         // When Properties come back from Cosmos via System.Text.Json, values are JsonElement
         // rather than native CLR types.  BAMCIS GeoJSON re-serializes them as nested wrappers,
         // producing e.g. [[]] instead of ["tracedetrail"].  Convert them back to plain objects.
-        // When read via Newtonsoft (CollectionClient), nested objects come back as JToken.
+        // When read via Newtonsoft, nested objects come back as JToken.
         private static dynamic NormalizePropertyValue(dynamic value)
         {
             if (value is System.Text.Json.JsonElement je)

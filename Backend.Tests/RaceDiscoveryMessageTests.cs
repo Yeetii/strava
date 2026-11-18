@@ -55,7 +55,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_DefaultsMissingPageToFirstPage()
     {
-        var received = new QueueMessage(BinaryData.FromString("""{"agent":"tracedetrail"}"""));
+        var received = new QueueMessage("""{"agent":"tracedetrail"}""");
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 
@@ -68,7 +68,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_AcceptsCamelCasePage()
     {
-        var received = new QueueMessage(BinaryData.FromString("""{"agent":"duv","page":4}"""));
+        var received = new QueueMessage("""{"agent":"duv","page":4}""");
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 
@@ -81,7 +81,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_AcceptsItraMetadata()
     {
-        var received = new QueueMessage(BinaryData.FromString("""{"agent":"itra","page":7,"country":"US","countryIndex":226,"countryPage":3,"countryPageCount":4,"racesOnPage":40}"""));
+        var received = new QueueMessage("""{"agent":"itra","page":7,"country":"US","countryIndex":226,"countryPage":3,"countryPageCount":4,"racesOnPage":40}""");
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 

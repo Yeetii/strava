@@ -26,8 +26,6 @@ public enum BackendLinkFeature
 
 /// <summary>
 /// Backend-only PostgreSQL queries that do not belong to the shared core or spatial repositories.
-/// This is the replacement for the ad-hoc Cosmos SQL / QueryDefinition calls that remained in the
-/// Backend workers and backfills after T5/T6.
 /// </summary>
 public interface IBackendAdminQueries
 {

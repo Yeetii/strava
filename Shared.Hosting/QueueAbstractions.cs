@@ -16,11 +16,9 @@ public sealed class QueueMessage
 {
     public QueueMessage() { }
 
-    public QueueMessage(string body) => Body = BinaryData.FromString(body);
+    public QueueMessage(string body) => Body = body;
 
-    public QueueMessage(BinaryData body) => Body = body;
-
-    public BinaryData Body { get; set; } = BinaryData.Empty;
+    public string Body { get; set; } = string.Empty;
     public string MessageId { get; set; } = Guid.NewGuid().ToString();
     public int DeliveryCount { get; set; } = 1;
     public string? ContentType { get; set; }
@@ -55,9 +53,8 @@ public sealed class QueueMessageActions(
         renew?.Invoke(message, cancellationToken) ?? Task.CompletedTask;
 }
 
-/// <summary>Type-safe Hangfire payload for a queued message. BinaryData is not
-/// reliably serializable by Hangfire's JSON serializer, so the body travels as
-/// a string and is rebuilt as BinaryData by the dispatcher.</summary>
+/// <summary>Type-safe Hangfire payload for a queued message: the body travels as
+/// a string, which Hangfire's JSON serializer handles directly.</summary>
 public sealed class QueueMessageEnvelope
 {
     public string Body { get; set; } = string.Empty;
@@ -69,7 +66,7 @@ public sealed class QueueMessageEnvelope
 
     public static QueueMessageEnvelope From(QueueMessage message) => new()
     {
-        Body = message.Body.ToString(),
+        Body = message.Body,
         MessageId = message.MessageId,
         DeliveryCount = message.DeliveryCount,
         ContentType = message.ContentType,
@@ -81,7 +78,7 @@ public sealed class QueueMessageEnvelope
 
     public QueueMessage ToMessage()
     {
-        var message = new QueueMessage(BinaryData.FromString(Body))
+        var message = new QueueMessage(Body)
         {
             MessageId = MessageId ?? Guid.NewGuid().ToString(),
             DeliveryCount = DeliveryCount,

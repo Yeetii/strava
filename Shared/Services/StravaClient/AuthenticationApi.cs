@@ -1,4 +1,3 @@
-using System.Configuration;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Shared.Services.StravaClient.Model;
@@ -7,7 +6,7 @@ namespace Shared.Services.StravaClient;
 
 public class AuthenticationApi(HttpClient _httpClient, IConfiguration configuration)
 {
-    readonly string ClientSecret = configuration.GetValue<string>("StravaClientSecret") ?? throw new ConfigurationErrorsException("No strava client secret found");
+    readonly string ClientSecret = configuration.GetValue<string>("StravaClientSecret") ?? throw new InvalidOperationException("No strava client secret found");
     const string BaseUrl = "https://www.strava.com/api/v3/oauth/token";
 
     public async Task<TokenResponse> RefreshToken(string refreshToken)

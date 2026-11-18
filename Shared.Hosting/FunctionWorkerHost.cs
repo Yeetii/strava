@@ -1,11 +1,9 @@
 // Worker-side "envelope" for the Azure Functions Runtime Exit campaign.
-// Queues are Hangfire jobs produced by QueueClient, timers are Hangfire
-// recurring jobs, and Cosmos change-feed triggers are in-process
-// ChangeFeedProcessors. Function bodies are invoked unchanged.
+// Queues are Hangfire jobs produced by QueueClient and timers are Hangfire
+// recurring jobs. Function bodies are invoked unchanged.
 
 using System.Reflection;
 using Hangfire;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -25,7 +23,6 @@ public sealed class FunctionWorkerRegistry
 {
     public List<FunctionDescriptor> Queues { get; } = [];
     public List<FunctionDescriptor> Timers { get; } = [];
-    public List<FunctionDescriptor> ChangeFeeds { get; } = [];
 
     public static FunctionWorkerRegistry Discover(Assembly assembly)
     {
@@ -52,8 +49,6 @@ public sealed class FunctionWorkerRegistry
                         Method = method,
                         Cron = timer.Schedule,
                     });
-                else if (FunctionAttributeLookup.Get<CosmosDBTriggerAttribute>(method) is not null)
-                    registry.ChangeFeeds.Add(descriptor);
             }
         }
         return registry;
@@ -137,44 +132,15 @@ public static class FunctionWorkerHostExtensions
     }
 
     /// <summary>
-    /// Registers every discovered Cosmos change-feed processor as an
-    /// <see cref="IHostedService"/>. Queues are Hangfire jobs dispatched by
-    /// QueueJobDispatcher; call <see cref="AddFunctionTimers"/> as well to
-    /// register the timer jobs.
+    /// Registers the discovered worker registry. Queues are Hangfire jobs
+    /// dispatched by QueueJobDispatcher; call <see cref="AddFunctionTimers"/>
+    /// as well to register the timer jobs.
     /// </summary>
     public static IHostApplicationBuilder AddFunctionWorkers(
         this IHostApplicationBuilder builder,
-        FunctionWorkerRegistry registry,
-        Func<FunctionDescriptor, IServiceProvider, CancellationToken, Task> invoker,
-        bool enableChangeFeeds = true)
+        FunctionWorkerRegistry registry)
     {
         builder.Services.AddSingleton(registry);
-
-        if (enableChangeFeeds)
-        {
-            foreach (var descriptor in registry.ChangeFeeds)
-            {
-                var trigger = FunctionAttributeLookup.Get<CosmosDBTriggerAttribute>(descriptor.Method)!;
-                var options = new ChangeFeedWorker.Options
-                {
-                    FunctionName = descriptor.Name,
-                    DatabaseName = trigger.DatabaseName,
-                    ContainerName = trigger.ContainerName,
-                    LeasePrefix = string.IsNullOrWhiteSpace(trigger.LeaseContainerPrefix)
-                        ? descriptor.Name
-                        : trigger.LeaseContainerPrefix!,
-                };
-                builder.Services.AddSingleton<IHostedService>(sp =>
-                    new ChangeFeedWorker(
-                        sp.GetRequiredService<CosmosClient>(),
-                        options,
-                        sp,
-                        registry,
-                        sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(),
-                        sp.GetRequiredService<ILogger<ChangeFeedWorker>>()));
-            }
-        }
-
         return builder;
     }
 }

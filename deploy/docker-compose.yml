@@ -3,13 +3,12 @@ name: peakshunters
 # Internal-only deployment. Public exposure is provided by Tailscale Funnel
 # (see docs/tailscale-funnel-runbook.md), not by published ports.
 #
-# Azure Functions is gone: all four containers run plain .NET 10 hosts. Roles
-# are selected with WORKER_ROLE (api | schedule | heavy) instead of the old
-# per-function whitelist environment entries.
+# All containers run plain .NET 10 hosts. Roles are selected with WORKER_ROLE
+# (api | schedule | heavy) instead of the old per-function whitelist entries.
 #
-# Cosmos DB stays on Azure. Organizer data, race tiles, highway
-# shards and zoom indexes are all local bind mounts; no Blob connection is used.
-# Service Bus is kept for P1a and removed in P2 (see the Functions Runtime Exit plan).
+# All Azure services are decommissioned. Structured data lives in PostgreSQL;
+# organizer data, race tiles, highway shards and zoom indexes are local bind
+# mounts. No cloud connection strings are required.
 
 x-logging: &default-logging
   driver: json-file
@@ -62,8 +61,8 @@ services:
       # writes and the weekly build see the same data.
       OrganizerStore__Provider: FileSystem
       OrganizerStore__RaceDataDir: /data/races
-      # Highway shards and zoom indexes are local too, so no Blob connection is
-      # needed by the API host.
+      # Highway shards and zoom indexes are local too, so the API host needs no
+      # external store connection.
       ShardStore__Provider: FileSystem
       ShardStore__RootDir: /data/shards
     expose:
@@ -89,8 +88,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Scheduled jobs (the 12 weekly crons) as Hangfire recurring jobs on Redis.
-  # Enable with COMPOSE_PROFILES=schedules after disabling the matching Azure
-  # timer functions.
+  # Enable with COMPOSE_PROFILES=schedules.
   # ---------------------------------------------------------------------------
   worker-schedule:
     <<: *app-service
@@ -120,10 +118,8 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # Heavy workers: Service Bus queue consumers + Cosmos change-feed processors.
-  # Enable with COMPOSE_PROFILES=workers. While Azure and this container both
-  # listen to a queue they act as competing consumers; disable the Azure worker
-  # functions to take 100% of the load. P2 swaps these to Hangfire jobs.
+  # Heavy workers: Hangfire queue consumers + PostgreSQL polling jobs.
+  # Enable with COMPOSE_PROFILES=workers.
   # ---------------------------------------------------------------------------
   worker-heavy:
     <<: *app-service
@@ -156,7 +152,7 @@ services:
   # Race PMTiles builder. Own image (tippecanoe compiled in) with its own
   # Hangfire worker for the weekly build; a one-shot run is:
   #   docker compose run --rm pmtiles build-race-tiles-from-organizers
-  # No Azure connection strings are needed: organizers and tile output live on
+  # No backing-service connection strings are needed: organizers and tile output live on
   # the host directory at /opt/data/strava/races (RACE_DATA_DIR). REDIS_CONNECTION_STRING
   # (in *plain-env) is only Hangfire storage.
   # ---------------------------------------------------------------------------

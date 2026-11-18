@@ -63,8 +63,7 @@ namespace Backend
                 groups.Add(group);
             });
 
-            // Replace the implicit CosmosDBOutput write: persist the parent first, then each child
-            // with its ParentId through the peaks_groups repository.
+            // Persist each curated group through the peaks_groups repository.
             foreach (var group in groups)
                 await peaksGroupRepository.Upsert(group);
 

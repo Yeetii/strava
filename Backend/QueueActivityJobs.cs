@@ -9,7 +9,6 @@ using Shared.Services.Postgres.Admin;
 namespace Backend
 {
     /// <summary>
-    /// Replacement for the activities Cosmos change feed. The CosmosDBTrigger handler is gone;
     /// <see cref="PollAndQueueAsync"/> is registered as a Hangfire recurring job by Program.cs and
     /// polls PostgreSQL for activities with pending processing stages before running the same
     /// per-activity enqueue/mark-excluded logic as before.

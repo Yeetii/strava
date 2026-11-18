@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
-# Plain .NET 10 host image for the Azure Functions Runtime Exit campaign.
-# Produces the same published output for all four roles; WORKER_ROLE at runtime
-# selects api / schedule / heavy. No Functions runtime packages remain.
+# Plain .NET 10 host image for the self-hosted stack. Produces the same
+# published output for all four roles; WORKER_ROLE at runtime selects
+# api / schedule / heavy. No Functions runtime packages remain.
 
 ARG DOTNET_VERSION=10.0
 
