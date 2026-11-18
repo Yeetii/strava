@@ -31,6 +31,10 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: 'Run tests'
+        shell: bash
+        run: dotnet test strava.sln --configuration Release --verbosity minimal
+
       - name: 'Resolve Project Dependencies Using Dotnet'
         shell: bash
         run: |

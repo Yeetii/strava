@@ -1,5 +1,6 @@
 using Microsoft.Azure.Functions.Worker;
 using Shared.Constants;
+using Shared.Hosting;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
@@ -16,7 +17,7 @@ namespace Backend
     public class QueueActivityJobs(
         QueueClient queueClient,
         IActivityRepository activities,
-        IBackendAdminQueries queries)
+        IBackendAdminQueries queries) : IQueueActivityJobs
     {
         private const int PollBatchSize = 500;
 

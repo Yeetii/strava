@@ -29,6 +29,11 @@ public static class AppConfig
     // Dedicated Hangfire queue: only the pmtiles worker serves it, so the
     // API dashboard can enqueue the job but Backend workers cannot pick it up.
     public const string RaceTilesQueueName = "pmtiles";
+
+    // Dedicated Hangfire queue for the Backend polling recurring jobs. Only the
+    // heavy worker serves it, so other hosts sharing the store cannot activate
+    // jobs whose implementations are registered only in the Backend assembly.
+    public const string BackendPollingQueueName = "backend-polling";
 }
 
 public static class OrganizerStoreProviders

@@ -77,16 +77,29 @@ hostBuilder.Services.AddBackendServices(hostBuilder.Configuration);
 
 // Hangfire storage is registered exactly once here, not in BackendServices.
 QueueTransport.AddHangfireStorage(hostBuilder.Services, hostBuilder.Configuration);
-hostBuilder.Services.AddHangfireServer(options => options.WorkerCount = 1);
 
 var isHeavy = string.Equals(role, "heavy", StringComparison.OrdinalIgnoreCase);
 var isSchedule = string.Equals(role, "schedule", StringComparison.OrdinalIgnoreCase);
 
+hostBuilder.Services.AddHangfireServer(options =>
+{
+    options.WorkerCount = 1;
+    if (isHeavy)
+        options.Queues = [Shared.Constants.AppConfig.BackendPollingQueueName, Hangfire.States.EnqueuedState.DefaultQueue];
+});
+
 if (isHeavy)
 {
     // Hangfire recurring-job targets that replace the two Cosmos change feeds.
+    // Register the shared contracts against the same instances: every other host
+    // only needs the interface types to deserialize the recurring jobs.
     hostBuilder.Services.AddSingleton<AdminBoundaryMetricsPollingJob>();
+    hostBuilder.Services.AddSingleton<IAdminBoundaryMetricsPollingJob>(sp =>
+        sp.GetRequiredService<AdminBoundaryMetricsPollingJob>());
     hostBuilder.Services.AddSingleton<QueueActivityJobs>();
+    hostBuilder.Services.AddSingleton<IQueueActivityJobs>(sp =>
+        sp.GetRequiredService<QueueActivityJobs>());
+    hostBuilder.Services.AddSingleton<IHostedService, PollingJobRegistrationHostedService>();
 }
 
 if (isSchedule)
@@ -99,8 +112,8 @@ hostBuilder.AddFunctionWorkers(
 // Timers run only in the schedule role. Queued jobs and the polling jobs that
 // replaced the Cosmos change feeds run on the heavy role's Hangfire server.
 // [TimerTrigger] recurring-job registration is done by
-// RecurringJobRegistrationHostedService; the two polling jobs are registered
-// directly below through the DI-based IRecurringJobManager.
+// RecurringJobRegistrationHostedService; the two polling jobs are registered by
+// PollingJobRegistrationHostedService on a queue only the heavy worker serves.
 
 var host = hostBuilder.Build();
 
@@ -108,25 +121,10 @@ FunctionsJson.Options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 
 if (isHeavy)
 {
-    using (var scope = host.Services.CreateScope())
-    {
-        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-        // Hangfire storage schema is created on first use; force it here so the
-        // empty-state check (P0 step 4) is observable at startup.
-        scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
-
-        var recurringJobs = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
-        recurringJobs.AddOrUpdate<AdminBoundaryMetricsPollingJob>(
-            AdminBoundaryMetricsPollingJob.RecurringJobId,
-            job => job.RunAsync(CancellationToken.None),
-            AdminBoundaryMetricsPollingJob.CronExpression,
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
-        recurringJobs.AddOrUpdate<QueueActivityJobs>(
-            "poll-activity-processing-jobs",
-            job => job.PollAndQueueAsync(CancellationToken.None),
-            "*/5 * * * *",
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
-    }
+    using var scope = host.Services.CreateScope();
+    // Hangfire storage schema is created on first use; force it here so the
+    // empty-state check (P0 step 4) is observable at startup.
+    scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
 }
 
 host.Run();

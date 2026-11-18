@@ -1,6 +1,7 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
+using Shared.Hosting;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres.Admin;
@@ -72,7 +73,7 @@ public static class OsmFeaturesChangeTrigger
 public sealed class AdminBoundaryMetricsPollingJob(
     IBackendAdminQueries queries,
     QueueClient queueClient,
-    ILogger<AdminBoundaryMetricsPollingJob> logger)
+    ILogger<AdminBoundaryMetricsPollingJob> logger) : IAdminBoundaryMetricsPollingJob
 {
     public const string RecurringJobId = "poll-admin-boundary-enrichment";
     public const string CronExpression = "*/5 * * * *";
