@@ -54,12 +54,12 @@ for container in api worker-schedule worker-heavy; do
 done
 
 # Trigger inventory from the source.
-grep -rhoE '\[QueueTrigger\(' "${BACKEND_DIR}" --include='*.cs' | wc -l | tr -d ' ' >"${tmp}/sb"
-grep -rhoE '\[CosmosDBTrigger\(' "${BACKEND_DIR}" --include='*.cs' | wc -l | tr -d ' ' >"${tmp}/feeds"
-grep -rhoE '\[TimerTrigger\(' "${BACKEND_DIR}" --include='*.cs' | wc -l | tr -d ' ' >"${tmp}/crons"
+(grep -rhoE '\[QueueTrigger\(' "${BACKEND_DIR}" --include='*.cs' || true) | wc -l | tr -d ' ' >"${tmp}/sb"
+(grep -rhoE '\[CosmosDBTrigger\(' "${BACKEND_DIR}" --include='*.cs' || true) | wc -l | tr -d ' ' >"${tmp}/feeds"
+(grep -rhoE '\[TimerTrigger\(' "${BACKEND_DIR}" --include='*.cs' || true) | wc -l | tr -d ' ' >"${tmp}/crons"
 
 [[ "$(cat "${tmp}/sb")" == "11" ]] || fail "expected 11 queue triggers, found $(cat "${tmp}/sb")"
-[[ "$(cat "${tmp}/feeds")" == "2" ]] || fail "expected 2 change-feed triggers, found $(cat "${tmp}/feeds")"
+[[ "$(cat "${tmp}/feeds")" == "0" ]] || fail "expected 0 change-feed triggers (replaced by polling), found $(cat "${tmp}/feeds")"
 [[ "$(cat "${tmp}/crons")" == "12" ]] || fail "expected 12 timer triggers, found $(cat "${tmp}/crons")"
 
 # Cron strings carry over verbatim: 1 + 1 + 10.
@@ -94,6 +94,6 @@ for project_dir in "${BACKEND_DIR}" "${API_DIR}"; do
 done
 
 if [[ "${status}" -eq 0 ]]; then
-    echo "Role coverage OK: 11 queues, 2 feeds, 12 crons mapped to plain-host roles; no legacy function-list plumbing."
+    echo "Role coverage OK: 11 queues, 0 feeds, 12 crons mapped to plain-host roles; no legacy function-list plumbing."
 fi
 exit "${status}"
