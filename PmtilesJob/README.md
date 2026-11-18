@@ -62,17 +62,12 @@ Optional defaults in `appsettings.json`:
 - `TileJoinBinaryPath` — path to the `tile-join` executable.
 - `ForceRaceTileBuild` — when `true`, build even if nothing is marked dirty.
 
-## Seed the local store from Blob (one-off)
+## Race data location
 
-Run once during rollout, from the repository root. This is a `Tools` command and
-is deliberately **not** part of the pmtiles image:
-
-```bash
-dotnet run --project Tools/CosmosBulkDelete.csproj -- export-organizers-to-disk --data-dir /data/races
-```
-
-It needs the Blob connection string temporarily to read existing organizers and
-routes. Once the directory is populated, the race build runs entirely from disk.
+Organizer data now lives entirely on local disk via `FileSystemOrganizerStore`;
+there is no one-off export from Blob and no `Tools` command to run. The host
+directory is mounted at `/data/races` and shared with the API, so the race build
+reads organizers and writes the PMTiles archive entirely from disk.
 
 ## Utility commands (developer machine only)
 

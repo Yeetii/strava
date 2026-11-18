@@ -173,17 +173,11 @@ All containers should reach `healthy` or `running` within about 2 minutes.
 
 The `pmtiles` container runs a weekly race-tile build from the host directory
 `RACE_DATA_DIR` (`/opt/data/strava/races`, mounted at `/data/races`) shared with `api`.
-Create it on the server with `mkdir -p /opt/data/strava/races`, then populate it once from the existing Blob
-store, from a machine that has the Blob connection string configured:
-
-```bash
-dotnet run --project Tools/CosmosBulkDelete.csproj -- export-organizers-to-disk --data-dir /data/races
-```
-
-This is a `Tools` command, not part of the image. After seeding, the pmtiles
-container needs no Azure configuration — it reads organizers and writes the
-archive entirely on disk (`/data/races/tiles/trails.pmtiles`, served by `api`
-at `/tiles/trails.pmtiles`). Verify a build with:
+Create it on the server with `mkdir -p /opt/data/strava/races`. Organizer data is
+managed on local disk via `FileSystemOrganizerStore`; there is no one-off export
+from Blob to run. The pmtiles container needs no Azure configuration — it reads
+organizers and writes the archive entirely on disk (`/data/races/tiles/trails.pmtiles`,
+served by `api` at `/tiles/trails.pmtiles`). Verify a build with:
 
 ```bash
 cd /opt/stacks/strava
