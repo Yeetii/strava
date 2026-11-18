@@ -154,14 +154,6 @@ builder.Services.AddSingleton<AdminBoundaryMetricsEnricher>();
 builder.Services.AddSingleton<ISummitsCalculator, SummitsCalculatorWithBoundingBoxFilter>();
 builder.Services.AddSingleton<RaceDiscoveryService>();
 
-// Azure SignalR stays; negotiate is produced by the same code path so the
-// response shape is unchanged. See SignalRNegotiate.
-builder.Services.AddSingleton<Func<string, SignalRConnectionInfo>>(_ =>
-    (Func<string, SignalRConnectionInfo>)(sessionId => SignalRNegotiate.Create(
-        configuration.GetValue<string>("AzureSignalRConnectionString")
-        ?? throw new InvalidOperationException("AzureSignalRConnectionString is not configured."),
-        sessionId)));
-
 var defaultOrigins = new[]
 {
     "https://peakshunters.erikmagnusson.com",
