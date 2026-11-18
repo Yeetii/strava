@@ -4,7 +4,7 @@ using Npgsql;
 namespace Shared.Services.Postgres;
 
 /// <summary>
-/// Registers the four core PostgreSQL repositories. An <see cref="NpgsqlDataSource"/> singleton
+/// Registers the five core PostgreSQL repositories. An <see cref="NpgsqlDataSource"/> singleton
 /// must already be registered by the caller (T5). Repositories themselves are registered as
 /// singletons too: they hold only the thread-safe data source and no per-request state, matching
 /// the existing <c>CollectionClientBuilder</c> registration style for Cosmos clients.
@@ -19,6 +19,7 @@ public static class PostgresCoreRepositoryServiceCollectionExtensions
         services.AddSingleton<ISessionRepository, SessionRepository>();
         services.AddSingleton<IUserSyncItemRepository, UserSyncItemRepository>();
         services.AddSingleton<IActivityRepository, ActivityRepository>();
+        services.AddSingleton<IPeaksGroupRepository, PeaksGroupRepository>();
         return services;
     }
 }

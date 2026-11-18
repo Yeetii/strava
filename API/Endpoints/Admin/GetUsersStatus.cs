@@ -1,12 +1,11 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
-using Shared.Services;
+using Shared.Services.Postgres;
 using UserDocument = Shared.Models.User;
 
 namespace API.Endpoints.Admin;
@@ -19,24 +18,10 @@ public record AdminUserStatus(
     int ActivityCount,
     DateTime? LastLoggedInAtUtc);
 
-internal sealed record UserSummaryProjection(
-    string Id,
-    string? UserName,
-    string? FirstName,
-    string? LastName);
-
-internal sealed record ActivityCountProjection(
-    string UserId,
-    int ActivityCount);
-
-internal sealed record AdminUsersLastLoginProjection(
-    string UserId,
-    DateTime? LastLoggedInAtUtc);
-
 public class GetUsersStatus(
-    CollectionClient<UserDocument> usersCollection,
-    CollectionClient<Activity> activitiesCollection,
-    CollectionClient<Session> sessionsCollection,
+    IUserRepository usersRepository,
+    IActivityRepository activitiesRepository,
+    ISessionRepository sessionsRepository,
     IConfiguration configuration)
 {
     [OpenApiOperation(tags: ["Admin"])]
@@ -52,33 +37,31 @@ public class GetUsersStatus(
             return req.CreateResponse(HttpStatusCode.Unauthorized);
         }
 
-        var usersTask = usersCollection.ExecuteQueryAsync<UserSummaryProjection>(
-            new QueryDefinition("SELECT c.id, c.userName, c.firstName, c.lastName FROM c"));
-        var activityCountsTask = activitiesCollection.ExecuteQueryAsync<ActivityCountProjection>(
-            new QueryDefinition("SELECT c.userId AS userId, COUNT(1) AS activityCount FROM c GROUP BY c.userId"));
-        var lastLoginTask = sessionsCollection.ExecuteQueryAsync<AdminUsersLastLoginProjection>(
-            new QueryDefinition("SELECT c.userId AS userId, MAX(c.createdAtUtc) AS lastLoggedInAtUtc FROM c WHERE IS_DEFINED(c.createdAtUtc) GROUP BY c.userId"));
+        var users = await usersRepository.GetAll();
+        var usersWithCounts = await Task.WhenAll(users.Select(async user => new
+        {
+            User = user,
+            ActivityCount = (await activitiesRepository.GetAllByUser(user.Id)).Count,
+            LastLoggedInAtUtc = (await sessionsRepository.GetByUserId(user.Id))
+                .Select(session => (DateTime?)session.CreatedAtUtc)
+                .Max(),
+        }));
 
-        await Task.WhenAll(usersTask, activityCountsTask, lastLoginTask);
-
-        var activityCountsByUserId = activityCountsTask.Result.ToDictionary(item => item.UserId, item => item.ActivityCount, StringComparer.OrdinalIgnoreCase);
-        var lastLoginByUserId = lastLoginTask.Result.ToDictionary(item => item.UserId, item => item.LastLoggedInAtUtc, StringComparer.OrdinalIgnoreCase);
-
-        var users = usersTask.Result
-            .Select(user => new AdminUserStatus(
-                UserId: user.Id,
-                Username: user.UserName,
-                FirstName: user.FirstName,
-                LastName: user.LastName,
-                ActivityCount: activityCountsByUserId.TryGetValue(user.Id, out var activityCount) ? activityCount : 0,
-                LastLoggedInAtUtc: lastLoginByUserId.TryGetValue(user.Id, out var lastLoggedInAtUtc) ? lastLoggedInAtUtc : null))
+        var result = usersWithCounts
+            .Select(item => new AdminUserStatus(
+                UserId: item.User.Id,
+                Username: item.User.UserName,
+                FirstName: item.User.FirstName,
+                LastName: item.User.LastName,
+                ActivityCount: item.ActivityCount,
+                LastLoggedInAtUtc: item.LastLoggedInAtUtc))
             .OrderByDescending(user => user.LastLoggedInAtUtc ?? DateTime.MinValue)
             .ThenByDescending(user => user.ActivityCount)
             .ThenBy(user => user.Username ?? user.UserId)
             .ToArray();
 
         var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(users);
+        await response.WriteAsJsonAsync(result);
         return response;
     }
 

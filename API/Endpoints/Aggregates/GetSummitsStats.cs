@@ -1,11 +1,12 @@
+using System.Globalization;
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres.Spatial;
 
 namespace API.Endpoints.Aggregates
 {
@@ -22,11 +23,11 @@ namespace API.Endpoints.Aggregates
         public int TotalPeaksClimbed { get; set; }
         public required int[] TotalPeaksClimbedCategorized { get; set; }
         public required VisitedPeak[] MostVisitedPeaks { get; set; }
-
     }
 
     public class GetSummitsStats(UserAuthenticationService _userAuthService,
-        CollectionClient<SummitedPeak> _summitedPeaksCollection)
+        IActivitySummitRepository summitsRepository,
+        IPeakRepository peaksRepository)
     {
         [OpenApiOperation(tags: ["Aggregates"])]
         [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = false)]
@@ -44,10 +45,28 @@ namespace API.Endpoints.Aggregates
                 return response;
             }
 
-            var summitedPeaksQuery = new QueryDefinition($"SELECT * FROM c where c.userId = '{user.Id}'");
-            var summitedPeaks = SummitedPeakConsolidator.ConsolidateByPeakId(
-                await _summitedPeaksCollection.ExecuteQueryAsync<SummitedPeak>(summitedPeaksQuery)
-            );
+            var linksByPeak = (await summitsRepository.GetByUser(user.Id))
+                .GroupBy(link => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, link.PeakId))
+                .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+            var lookupIds = linksByPeak.Keys
+                .SelectMany(id => new[] { id, StoredFeature.EnsurePrefixedFeatureId(FeatureKinds.Peak, id) })
+                .Distinct(StringComparer.Ordinal);
+            var peaks = await peaksRepository.GetByIds(lookupIds);
+
+            var summitedPeaks = peaks.Select(peak =>
+            {
+                linksByPeak.TryGetValue(peak.LogicalId, out var summitLinks);
+                return new SummitedPeak
+                {
+                    Id = $"{user.Id}-{peak.LogicalId}",
+                    Name = GetText(peak.Properties, "name") ?? string.Empty,
+                    UserId = user.Id,
+                    PeakId = peak.LogicalId,
+                    Elevation = ParseElevation(peak.Properties),
+                    ActivityIds = summitLinks?.Select(link => link.ActivityId).Distinct().ToHashSet()
+                        ?? new HashSet<string>()
+                };
+            }).ToList();
 
             var summitsStats = new SummitsStats
             {
@@ -59,6 +78,19 @@ namespace API.Endpoints.Aggregates
             response.StatusCode = HttpStatusCode.OK;
             await response.WriteAsJsonAsync(summitsStats);
             return response;
+        }
+
+        private static string? GetText(IDictionary<string, dynamic> properties, string key)
+            => properties.TryGetValue(key, out var value) && value is not null
+                ? value.ToString()
+                : null;
+
+        private static float? ParseElevation(IDictionary<string, dynamic> properties)
+        {
+            var raw = GetText(properties, "ele") ?? GetText(properties, "elevation");
+            return float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var elevation)
+                ? elevation
+                : null;
         }
 
         private static int[] GetTotalPeaksClimbedCategorized(IEnumerable<SummitedPeak> summitedPeaks)

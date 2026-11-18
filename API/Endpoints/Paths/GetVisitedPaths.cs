@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -8,13 +7,15 @@ using Microsoft.OpenApi.Models;
 using Shared.Geo;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
 using Shared.Services.Shards;
 
 namespace API.Endpoints.Paths;
 
 public class GetVisitedPaths(
-    CollectionClient<VisitedPath> visitedPathsCollection,
-    CollectionClient<Activity> activityCollection,
+    IActivityVisitedPathRepository visitedPathsRepository,
+    IActivityRepository activityRepository,
     UserAuthenticationService userAuthService,
     ShardFeatureClient shardFeatureClient)
 {
@@ -53,69 +54,40 @@ public class GetVisitedPaths(
         }
 
         var tileKeys = SlippyTileCalculator.GetIntersectingTileKeys(z, x, y, shardFeatureClient.CanonicalZoom);
+        var links = (await visitedPathsRepository.GetByUser(user.Id))
+            .Where(link => link.TileX.HasValue && link.TileY.HasValue
+                && tileKeys.Any(tile => tile.x == link.TileX.Value && tile.y == link.TileY.Value))
+            .ToArray();
 
-        List<VisitedPath> visitedPathsList;
-        if (tileKeys.Count == 1)
-        {
-            var (tileX, tileY) = tileKeys[0];
-            visitedPathsList = (await visitedPathsCollection.ExecuteQueryAsync<VisitedPath>(
-                new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId AND c.tileX = @tileX AND c.tileY = @tileY")
-                    .WithParameter("@userId", user.Id)
-                    .WithParameter("@tileX", tileX)
-                    .WithParameter("@tileY", tileY)
-            )).ToList();
-        }
-        else
-        {
-            // Low zoom: collect results from all intersecting z12 tiles
-            var results = new List<VisitedPath>();
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var (tileX, tileY) in tileKeys)
-            {
-                var page = await visitedPathsCollection.ExecuteQueryAsync<VisitedPath>(
-                    new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId AND c.tileX = @tileX AND c.tileY = @tileY")
-                        .WithParameter("@userId", user.Id)
-                        .WithParameter("@tileX", tileX)
-                        .WithParameter("@tileY", tileY)
-                );
-                foreach (var vp in page)
-                    if (seen.Add(vp.Id))
-                        results.Add(vp);
-            }
-            visitedPathsList = results;
-        }
-
-        var allActivityIds = visitedPathsList.SelectMany(vp => vp.ActivityIds).Distinct().ToArray();
+        var allActivityIds = links.Select(link => link.ActivityId).Distinct().ToArray();
         var activitiesById = allActivityIds.Length == 0
             ? new Dictionary<string, Activity>()
-            : (await activityCollection.GetByIdsAsync(allActivityIds)).ToDictionary(a => a.Id, a => a);
+            : (await activityRepository.GetByIds(allActivityIds)).ToDictionary(a => a.Id, a => a);
 
-        var result = visitedPathsList
-            .Select(vp =>
+        var result = links
+            .GroupBy(link => link.OsmHighwayId)
+            .Select(group =>
             {
-                var sortedDates = vp.ActivityIds
+                var activityIds = group.Select(link => link.ActivityId).Distinct().ToArray();
+                var sortedDates = activityIds
                     .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
                         ? activity.StartDateLocal
                         : (DateTime?)null)
-                    .Where(d => d.HasValue)
-                    .Select(d => d!.Value)
-                    .OrderBy(d => d)
-                    .Select(d => d.ToString("O"))
+                    .Where(date => date.HasValue)
+                    .Select(date => date!.Value)
+                    .OrderBy(date => date)
+                    .Select(date => date.ToString("O"))
                     .ToArray();
 
-                var first = sortedDates.FirstOrDefault();
-                var last = sortedDates.LastOrDefault();
-
                 return new VisitedPathDto(
-                    vp.OsmHighwayId,
-                    vp.Name,
-                    vp.Type,
-                    vp.ActivityIds.Count,
-                    first,
-                    last
-                );
+                    group.Key,
+                    group.Select(link => link.Name).FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)),
+                    group.Select(link => link.Type).FirstOrDefault(type => !string.IsNullOrWhiteSpace(type)),
+                    activityIds.Length,
+                    sortedDates.FirstOrDefault(),
+                    sortedDates.LastOrDefault());
             })
-            .OrderByDescending(p => p.TimesVisited)
+            .OrderByDescending(path => path.TimesVisited)
             .ToArray();
 
         response.StatusCode = HttpStatusCode.OK;
@@ -137,6 +109,4 @@ public class GetVisitedPaths(
             && int.TryParse(segments[^2], NumberStyles.None, CultureInfo.InvariantCulture, out x)
             && int.TryParse(segments[^1], NumberStyles.None, CultureInfo.InvariantCulture, out y);
     }
-
 }
-

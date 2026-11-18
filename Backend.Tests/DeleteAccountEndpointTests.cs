@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 using API.Endpoints.User;
 
 namespace Backend.Tests;
@@ -55,42 +56,17 @@ public class DeleteAccountEndpointTests
 
     private static UserAuthenticationService CreateUserAuthenticationService(string? sessionId, Shared.Models.User? user)
     {
-        var loggerFactory = LoggerFactory.Create(builder => builder.AddFilter(_ => false));
+        var sessions = new Mock<ISessionRepository>();
+        sessions
+            .Setup(r => r.GetById(sessionId!, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(sessionId == null ? null : new Session { Id = sessionId, UserId = user?.Id ?? "user-123" });
 
-        var sessionsContainer = new Mock<Container>();
-        if (sessionId == null)
-        {
-            sessionsContainer
-                .Setup(c => c.ReadItemAsync<Session>(It.IsAny<string>(), It.IsAny<PartitionKey>(), null, It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new CosmosException("Not found", HttpStatusCode.NotFound, 0, string.Empty, 0));
-        }
-        else
-        {
-            var session = new Session { Id = sessionId, UserId = user?.Id ?? "user-123" };
-            var sessionResponse = Mock.Of<ItemResponse<Session>>(r => r.Resource == session);
-            sessionsContainer
-                .Setup(c => c.ReadItemAsync<Session>(sessionId, It.IsAny<PartitionKey>(), null, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(sessionResponse);
-        }
+        var users = new Mock<IUserRepository>();
+        users
+            .Setup(r => r.GetById(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(user);
 
-        var usersContainer = new Mock<Container>();
-        if (user == null)
-        {
-            usersContainer
-                .Setup(c => c.ReadItemAsync<Shared.Models.User>(It.IsAny<string>(), It.IsAny<PartitionKey>(), null, It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new CosmosException("Not found", HttpStatusCode.NotFound, 0, string.Empty, 0));
-        }
-        else
-        {
-            var userResponse = Mock.Of<ItemResponse<Shared.Models.User>>(r => r.Resource == user);
-            usersContainer
-                .Setup(c => c.ReadItemAsync<Shared.Models.User>(user.Id, It.IsAny<PartitionKey>(), null, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(userResponse);
-        }
-
-        return new UserAuthenticationService(
-            new CollectionClient<Shared.Models.User>(usersContainer.Object, loggerFactory),
-            new CollectionClient<Session>(sessionsContainer.Object, loggerFactory));
+        return new UserAuthenticationService(users.Object, sessions.Object);
     }
 
     private sealed class TestHttpRequestData : HttpRequestData

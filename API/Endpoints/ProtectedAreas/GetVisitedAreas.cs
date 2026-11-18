@@ -1,17 +1,19 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
 
 namespace API.Endpoints.ProtectedAreas;
 
 public class GetVisitedAreas(
-    CollectionClient<VisitedArea> visitedAreasCollection,
-    CollectionClient<Activity> activityCollection,
+    IActivityVisitedAreaRepository visitedAreasRepository,
+    IProtectedAreaRepository protectedAreasRepository,
+    IActivityRepository activityRepository,
     UserAuthenticationService userAuthService)
 {
     private sealed record VisitedAreaDto(
@@ -49,60 +51,65 @@ public class GetVisitedAreas(
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
-        QueryDefinition query;
-        if (areaTypes is { Length: > 0 })
-        {
-            var predicate = string.Join(" OR ", areaTypes.Select((_, i) => $"LOWER(c.areaType) = @areaType{i}"));
-            var qd = new QueryDefinition($"SELECT * FROM c WHERE c.userId = @userId AND ({predicate})")
-                .WithParameter("@userId", user.Id);
-            for (int i = 0; i < areaTypes.Length; i++)
-                qd = qd.WithParameter($"@areaType{i}", areaTypes[i]);
-            query = qd;
-        }
-        else
-        {
-            query = new QueryDefinition("SELECT * FROM c WHERE c.userId = @userId")
-                .WithParameter("@userId", user.Id);
-        }
+        var links = await visitedAreasRepository.GetByUser(user.Id);
+        var areaIds = links
+            .Select(link => StoredFeature.NormalizeFeatureId(FeatureKinds.ProtectedArea, link.AreaId))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var lookupIds = areaIds
+            .SelectMany(id => new[] { id, StoredFeature.EnsurePrefixedFeatureId(FeatureKinds.ProtectedArea, id) })
+            .Distinct(StringComparer.Ordinal);
+        var areas = await protectedAreasRepository.GetByIds(lookupIds);
+        var areaById = areas.ToDictionary(
+            area => area.LogicalId,
+            area => area,
+            StringComparer.OrdinalIgnoreCase);
 
-        var visitedAreas = await visitedAreasCollection.ExecuteQueryAsync<VisitedArea>(query);
-        var visitedAreasList = visitedAreas.ToList();
-
-        var allActivityIds = visitedAreasList.SelectMany(va => va.ActivityIds).Distinct().ToArray();
+        var allActivityIds = links.Select(link => link.ActivityId).Distinct().ToArray();
         var activitiesById = allActivityIds.Length == 0
             ? []
-            : (await activityCollection.GetByIdsAsync(allActivityIds)).ToDictionary(a => a.Id, a => a);
+            : (await activityRepository.GetByIds(allActivityIds)).ToDictionary(a => a.Id, a => a);
 
-        var result = visitedAreasList
-            .Select(va =>
+        var result = links
+            .GroupBy(link => StoredFeature.NormalizeFeatureId(FeatureKinds.ProtectedArea, link.AreaId))
+            .Where(group => areaById.ContainsKey(group.Key))
+            .Select(group =>
             {
-                var sortedDates = va.ActivityIds
+                var area = areaById[group.Key];
+                var activityIds = group.Select(link => link.ActivityId).Distinct().ToArray();
+                var sortedDates = activityIds
                     .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
                         ? activity.StartDateLocal
                         : (DateTime?)null)
-                    .Where(d => d.HasValue)
-                    .Select(d => d!.Value)
-                    .OrderBy(d => d)
-                    .Select(d => d.ToString("O"))
+                    .Where(date => date.HasValue)
+                    .Select(date => date!.Value)
+                    .OrderBy(date => date)
+                    .Select(date => date.ToString("O"))
                     .ToArray();
 
                 return new VisitedAreaDto(
-                    va.AreaId,
-                    va.Name,
-                    va.AreaType,
-                    va.ActivityIds.Count,
-                    va.ActivityIds.Order().ToArray(),
+                    group.Key,
+                    GetText(area.Properties, "name") ?? string.Empty,
+                    GetText(area.Properties, "areaType") ?? string.Empty,
+                    activityIds.Length,
+                    activityIds.Order().ToArray(),
                     sortedDates,
-                    va.Wikidata,
-                    va.WikimediaCommons
-                );
+                    GetText(area.Properties, "wikidata"),
+                    GetText(area.Properties, "wikimediaCommons"));
             })
-            .OrderByDescending(a => a.TimesVisited)
-            .ThenBy(a => a.Name)
+            .Where(area => areaTypes is not { Length: > 0 }
+                || areaTypes.Contains(area.AreaType.ToLowerInvariant()))
+            .OrderByDescending(area => area.TimesVisited)
+            .ThenBy(area => area.Name)
             .ToArray();
 
         response.StatusCode = HttpStatusCode.OK;
         await response.WriteAsJsonAsync(result);
         return response;
     }
+
+    private static string? GetText(IDictionary<string, dynamic> properties, string key)
+        => properties.TryGetValue(key, out var value) && value is not null
+            ? value.ToString()
+            : null;
 }

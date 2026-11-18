@@ -3,12 +3,16 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
+using Npgsql;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Geo.SummitsCalculator;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
+using Shared.Services.Postgres.Spatial.Ingestion;
 using Shared.Services.Shards;
 using Shared.Services.StravaClient;
 using Shared.Hosting;
@@ -74,6 +78,16 @@ public static class BackendServices
         };
         services.AddSingleton(new CosmosClient(cosmosDbConnectionString, cosmosClientOptions));
 
+        // PostgreSQL + PostGIS data source and repositories. The connection
+        // string is supplied by the deploy environment; the localhost default
+        // keeps local and test hosts startable before Postgres is configured.
+        string postgresConnectionString = configuration.GetValue<string>(DatabaseConfig.PostgresConnectionStringKey)
+            ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava";
+        services.AddSingleton(NpgsqlDataSource.Create(postgresConnectionString));
+        services.AddPostgresCoreRepositories();
+        services.AddPostgresSpatialRepositories();
+        services.AddPostgresOsmIngestion();
+
         new CollectionClientBuilder(services)
             .AddCollection<SummitedPeak>(DatabaseConfig.CosmosDb, DatabaseConfig.SummitedPeaksContainer)
             .AddCollection<Shared.Models.User>(DatabaseConfig.CosmosDb, DatabaseConfig.UsersContainer)
@@ -110,11 +124,9 @@ public static class BackendServices
             return new AuthenticationApi(factory.CreateClient(), configuration);
         });
         services.AddScoped(serviceProvider =>
-        {
-            var usersCollection = serviceProvider.GetRequiredService<CollectionClient<Shared.Models.User>>();
-            var sessionsCollection = serviceProvider.GetRequiredService<CollectionClient<Session>>();
-            return new UserAuthenticationService(usersCollection, sessionsCollection);
-        });
+            new UserAuthenticationService(
+                serviceProvider.GetRequiredService<IUserRepository>(),
+                serviceProvider.GetRequiredService<ISessionRepository>()));
         services.AddScoped<UserSyncStatusService>();
         services.AddScoped<ISummitsCalculator>(_ => new SummitsCalculatorWithBoundingBoxFilter());
         services.AddSingleton<RaceDiscoveryService>();

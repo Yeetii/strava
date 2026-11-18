@@ -1,34 +1,38 @@
 using System.Net;
-using System.Text.Json;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Geo;
 using Shared.Geo.SummitsCalculator;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
+using Shared.Services.Postgres.Spatial.Ingestion;
 
 namespace Backend;
 
 public class RunSummitsForActivity(
     ILogger<RunSummitsForActivity> logger,
-    CollectionClient<Activity> activitiesCollection,
-    CollectionClient<SummitedPeak> summitedPeaksCollection,
-    [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient peaksCollection,
+    IActivityRepository activitiesRepository,
+    IActivitySummitRepository activitySummitRepository,
+    IPeakRepository peaksRepository,
     ISummitsCalculator summitsCalculator,
-    UserSyncStatusService userSyncStatusService)
+    UserSyncStatusService userSyncStatusService,
+    IOsmFeatureIngestionService osmFeatureIngestion)
 {
+    // Matches ISummitsCalculator.FindPointsNearRoute's default threshold.
+    private const int PeakProximityMeters = 50;
+
     [Function(nameof(RunSummitsForActivity))]
     public async Task<HttpResponseData> Run(
         [HttpTrigger(AuthorizationLevel.Function, "post", Route = "debug/summits/{activityId}")] HttpRequestData req,
         string activityId,
         CancellationToken cancellationToken)
     {
-        var activity = (await activitiesCollection.GetByIdsAsync([activityId], cancellationToken)).FirstOrDefault();
+        var activity = await activitiesRepository.GetById(activityId, cancellationToken);
         if (activity == null)
         {
             var notFound = req.CreateResponse(HttpStatusCode.NotFound);
@@ -36,7 +40,7 @@ public class RunSummitsForActivity(
             return notFound;
         }
 
-        var peaks = (await FetchNearbyPeaks([activity], peaksCollection)).ToList();
+        var peaks = (await FetchNearbyPeaks([activity], cancellationToken)).ToList();
 
         if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
         {
@@ -72,8 +76,13 @@ public class RunSummitsForActivity(
         }
 
         logger.LogInformation("Debug summit run: activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
-        var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(summitedPeaksCollection, activity, summits);
-        await summitedPeaksCollection.BulkUpsert(activitySummitedPeaks, cancellationToken: cancellationToken);
+        var links = summits
+            .Select(summit => new SummitLink(
+                activity.Id,
+                activity.UserId,
+                SummitsWorker.NormalizeSummitedPeakId(summit.Id),
+                DateTime.UtcNow));
+        await activitySummitRepository.AddRange(links, cancellationToken);
         await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
 
         var ok = req.CreateResponse(HttpStatusCode.OK);
@@ -99,76 +108,39 @@ public class RunSummitsForActivity(
         return nearbyPeaks.Where(peak => summitedPeakIds.Contains(peak.Id.Value));
     }
 
-    private static async Task<IEnumerable<SummitedPeak>> UpdateSummitedPeaksDocuments(
-        CollectionClient<SummitedPeak> summitedPeaksCollection,
-        Activity activity,
-        IEnumerable<Feature> summitedPeaks)
+    private async Task<IEnumerable<Feature>> FetchNearbyPeaks(
+        IEnumerable<Activity> activities,
+        CancellationToken cancellationToken)
     {
-        var documents = new List<SummitedPeak>();
-        foreach (var peak in summitedPeaks)
+        var decodedRoutes = activities
+            .Select(activity => activity.Polyline ?? activity.SummaryPolyline)
+            .Where(polyline => !string.IsNullOrEmpty(polyline))
+            .Select(polyline => GeoSpatialFunctions.DecodePolyline(polyline!)
+                .DistinctBy(point => (point.Lat, point.Lng))
+                .ToList())
+            .ToList();
+
+        var routePoints = decodedRoutes.SelectMany(points => points).ToList();
+        var ingestion = await osmFeatureIngestion.EnsurePeaksAsync(routePoints, cancellationToken)
+            ?? OsmIngestionResult.Empty;
+        logger.LogInformation(
+            "OSM peak ingestion for {RouteCount} routes: tilesQueried={TilesQueried}, fetched={Fetched}, upserted={Upserted}, failed={Failed}",
+            decodedRoutes.Count,
+            ingestion.TilesQueried,
+            ingestion.FeaturesFetched,
+            ingestion.FeaturesUpserted,
+            ingestion.TilesFailed);
+
+        var peaksById = new Dictionary<string, StoredFeature>(StringComparer.Ordinal);
+        foreach (var points in decodedRoutes)
         {
-            var peakId = SummitsWorker.NormalizeSummitedPeakId(peak.Id);
-            var documentId = SummitsWorker.BuildSummitedPeakDocumentId(activity.UserId, peak.Id);
-            var partitionKey = new PartitionKey(activity.UserId);
-            var summitedPeakDocument = await summitedPeaksCollection.GetByIdMaybe(documentId, partitionKey)
-                ?? new SummitedPeak
-                {
-                    Id = documentId,
-                    Name = peak.Properties.TryGetValue("name", out var peakName) ? peakName?.ToString() ?? "" : "",
-                    UserId = activity.UserId,
-                    PeakId = peakId,
-                    Elevation = TryParseElevation(peak.Properties),
-                    ActivityIds = []
-                };
-
-            summitedPeakDocument.ActivityIds.Add(activity.Id);
-            documents.Add(summitedPeakDocument);
+            foreach (var point in points)
+            {
+                var nearby = await peaksRepository.FindWithinRadius(point, PeakProximityMeters, cancellationToken);
+                foreach (var peak in nearby)
+                    peaksById[peak.Id] = peak;
+            }
         }
-
-        return documents;
-    }
-
-    private static float? TryParseElevation(IDictionary<string, dynamic> properties)
-    {
-        if (!properties.TryGetValue("elevation", out var elevationValue) || elevationValue == null)
-            return null;
-
-        if (elevationValue is float f)
-            return f;
-        if (elevationValue is double d)
-            return (float)d;
-        if (elevationValue is int i)
-            return i;
-        if (elevationValue is long l)
-            return (float)l;
-        if (elevationValue is string s && float.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-            return parsed;
-        if (elevationValue is JsonElement je && je.ValueKind == JsonValueKind.Number)
-        {
-            if (je.TryGetSingle(out var single))
-                return single;
-            if (je.TryGetDouble(out var dbl))
-                return (float)dbl;
-        }
-
-        return null;
-    }
-
-    private static async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities, TiledCollectionClient peaksCollection)
-    {
-        var tileIndices = new HashSet<(int x, int y)>();
-        foreach (var activity in activities)
-        {
-            var polyline = activity.SummaryPolyline;
-            if (string.IsNullOrEmpty(polyline))
-                continue;
-
-            var tiles = SlippyTileCalculator.TileIndicesByLine(GeoSpatialFunctions.DecodePolyline(polyline));
-            foreach (var tile in tiles)
-                tileIndices.Add(tile);
-        }
-
-        var nearbyPeaks = await peaksCollection.FetchByTiles(tileIndices);
-        return nearbyPeaks.Select(x => x.ToFeature());
+        return peaksById.Values.Select(x => x.ToFeature());
     }
 }

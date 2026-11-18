@@ -6,8 +6,8 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.Mvc;
-using Shared.Constants;
 using Shared.Models;
+using Shared.Services.Postgres;
 
 namespace API;
 
@@ -26,7 +26,7 @@ public class Streaks
 }
 
 
-public class GetStreaks(ILoggerFactory loggerFactory)
+public class GetStreaks(ILoggerFactory loggerFactory, IActivityRepository activitiesRepository)
 {
     private readonly ILogger _logger = loggerFactory.CreateLogger<GetStreaks>();
 
@@ -37,14 +37,10 @@ public class GetStreaks(ILoggerFactory loggerFactory)
     [OpenApiSecurity("function_key", SecuritySchemeType.ApiKey, Name = "code", In = OpenApiSecurityLocationType.Query)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(Streaks), Description = "The OK response")]
     [Function("GetStreaks")]
-    public IActionResult Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "{userId}/streaks")] HttpRequestData req, string userId,
-    [CosmosDBInput(
-        databaseName: DatabaseConfig.CosmosDb,
-        containerName: DatabaseConfig.ActivitiesContainer,
-        Connection  = "CosmosDBConnection",
-        SqlQuery = "SELECT * FROM c where c.userId = {userId}"
-        )] IEnumerable<Activity> activities)
+    public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "{userId}/streaks")] HttpRequestData req, string userId)
     {
+        IEnumerable<Activity> activities = await activitiesRepository.GetAllByUser(userId);
+
         var before = req.Query["before"];
         var after = req.Query["after"];
 

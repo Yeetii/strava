@@ -1,22 +1,21 @@
-using System.Collections.Immutable;
 using System.Net;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
-using Microsoft.Extensions.DependencyInjection;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
 
 namespace API
 {
     public class GetAllSummitedPeaks(
-        [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
-        CollectionClient<SummitedPeak> _summitedPeakCollection,
-        CollectionClient<Activity> _activityCollection,
-        UserAuthenticationService _userAuthService)
+        IActivitySummitRepository summitsRepository,
+        IPeakRepository peaksRepository,
+        IActivityRepository activityRepository,
+        UserAuthenticationService userAuthService)
     {
         [OpenApiOperation(tags: ["Peaks"])]
         [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
@@ -28,35 +27,33 @@ namespace API
             var response = req.CreateResponse();
             string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
 
-            var user = await _userAuthService.GetUserFromSessionId(sessionId);
+            var user = await userAuthService.GetUserFromSessionId(sessionId);
             if (user == default)
             {
                 response.StatusCode = HttpStatusCode.Unauthorized;
                 return response;
             }
 
-            var summitedPeaksQuery = new QueryDefinition($"SELECT * FROM c where c.userId = '{user.Id}'");
-            var summitedPeaks = SummitedPeakConsolidator.ConsolidateByPeakId(
-                await _summitedPeakCollection.ExecuteQueryAsync<SummitedPeak>(summitedPeaksQuery)
-            );
-            var summitedPeaksDict = summitedPeaks
-                .ToDictionary(g => g.PeakId, g => g);
-            var summitedPeaksIds = summitedPeaks.Select(x => x.PeakId).ToImmutableHashSet();
-            var activityIds = summitedPeaks
-                .SelectMany(x => x.ActivityIds)
-                .Distinct()
-                .ToArray();
-            var activitiesById = activityIds.Length == 0
+            var links = await summitsRepository.GetByUser(user.Id);
+            var summitGroups = links
+                .GroupBy(link => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, link.PeakId))
+                .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+            var lookupIds = summitGroups.Keys
+                .SelectMany(id => new[] { id, StoredFeature.EnsurePrefixedFeatureId(FeatureKinds.Peak, id) })
+                .Distinct(StringComparer.Ordinal);
+            var peaks = await peaksRepository.GetByIds(lookupIds);
+
+            var allActivityIds = links.Select(link => link.ActivityId).Distinct().ToArray();
+            var activitiesById = allActivityIds.Length == 0
                 ? new Dictionary<string, Activity>()
-                : (await _activityCollection.GetByIdsAsync(activityIds)).ToDictionary(activity => activity.Id, activity => activity);
+                : (await activityRepository.GetByIds(allActivityIds)).ToDictionary(activity => activity.Id, activity => activity);
 
-            var peaks = await _peaksCollection.GetByFeatureIdsAsync(summitedPeaksIds);
-
-            var features = peaks.Select(x =>
+            var features = peaks.Select(peak =>
             {
-                var feature = x.ToFeature();
-                var summitedPeak = summitedPeaksDict[x.LogicalId];
-                var ascentDates = summitedPeak.ActivityIds
+                var feature = peak.ToFeature();
+                summitGroups.TryGetValue(peak.LogicalId, out var summitLinks);
+                var activityIds = summitLinks?.Select(link => link.ActivityId).Distinct().ToArray() ?? [];
+                var ascentDates = activityIds
                     .Select(activityId => activitiesById.TryGetValue(activityId, out var activity)
                         ? activity.StartDateLocal
                         : (DateTime?)null)
@@ -64,9 +61,9 @@ namespace API
                     .Select(date => date!.Value)
                     .OrderBy(date => date)
                     .ToArray();
-                // Add summit-specific properties
+
                 feature.Properties["summited"] = true;
-                feature.Properties["summitsCount"] = summitedPeak.ActivityIds.Count;
+                feature.Properties["summitsCount"] = activityIds.Length;
                 if (ascentDates.Length > 0)
                 {
                     feature.Properties["firstAscent"] = ascentDates.First().ToString("O");

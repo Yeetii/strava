@@ -11,6 +11,7 @@ using Azure.Identity;
 using Azure.Monitor.Query;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
+using Npgsql;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +21,9 @@ using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.GarminClient;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Spatial;
+using Shared.Services.Postgres.Spatial.Ingestion;
 using Shared.Services.Shards;
 using Shared.Services.StravaClient;
 using Shared.Hosting;
@@ -61,6 +65,16 @@ CosmosClientOptions apiCosmosClientOptions = new()
 string apiCosmosDbConnectionString = configuration.GetValue<string>("CosmosDBConnection")
     ?? throw new Exception("No cosmos connection string found");
 builder.Services.AddSingleton(new CosmosClient(apiCosmosDbConnectionString, apiCosmosClientOptions));
+
+// PostgreSQL + PostGIS data source and repositories. The connection string is
+// supplied by the deploy environment; the localhost default keeps local and
+// test hosts startable before Postgres is configured.
+string apiPostgresConnectionString = configuration.GetValue<string>(DatabaseConfig.PostgresConnectionStringKey)
+    ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava";
+builder.Services.AddSingleton(NpgsqlDataSource.Create(apiPostgresConnectionString));
+builder.Services.AddPostgresCoreRepositories();
+builder.Services.AddPostgresSpatialRepositories();
+builder.Services.AddPostgresOsmIngestion();
 
 new CollectionClientBuilder(builder.Services)
     .AddOsmFeatureCaches(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer)
@@ -140,11 +154,9 @@ QueueTransport.AddHangfireStorage(builder.Services, configuration);
 QueueTransport.AddHangfireQueueProducer(builder.Services);
 builder.Services.AddSingleton(new MetricsQueryClient(new DefaultAzureCredential()));
 builder.Services.AddScoped(serviceProvider =>
-{
-    var usersCollection = serviceProvider.GetRequiredService<CollectionClient<Shared.Models.User>>();
-    var sessionsCollection = serviceProvider.GetRequiredService<CollectionClient<Session>>();
-    return new UserAuthenticationService(usersCollection, sessionsCollection);
-});
+    new UserAuthenticationService(
+        serviceProvider.GetRequiredService<IUserRepository>(),
+        serviceProvider.GetRequiredService<ISessionRepository>()));
 builder.Services.AddScoped<UserSyncService>();
 builder.Services.AddScoped<UserSyncStatusService>();
 

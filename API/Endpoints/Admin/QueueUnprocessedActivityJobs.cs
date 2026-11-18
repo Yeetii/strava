@@ -1,19 +1,18 @@
 using System.Net;
-using System.Text;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Shared.Constants;
 using Shared.Services;
+using Shared.Services.Postgres;
 
 namespace API.Endpoints.Admin;
 
 public class QueueUnprocessedActivityJobs(
     QueueClient queueClient,
     UserAuthenticationService userAuthService,
-    CollectionClient<Shared.Models.Activity> activityCollection)
+    IActivityRepository activityRepository)
 {
     private static readonly Dictionary<string, string> JobTypeToQueue = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -62,8 +61,12 @@ public class QueueUnprocessedActivityJobs(
         var startDate = DateTime.TryParse(queryString["startDate"], out var sd) ? sd.ToUniversalTime() : (DateTime?)null;
         var endDate = DateTime.TryParse(queryString["endDate"], out var ed) ? ed.ToUniversalTime() : (DateTime?)null;
 
-        var query = BuildQuery(effectiveUserId, jobType, startDate, endDate);
-        var activityIds = (await activityCollection.ExecuteQueryAsync<string>(query)).ToList();
+        var activityIds = (await activityRepository.GetAllByUser(effectiveUserId))
+            .Where(activity => !IsStageProcessed(activity.ProcessingStatus, jobType))
+            .Where(activity => !startDate.HasValue || activity.StartDate >= startDate.Value)
+            .Where(activity => !endDate.HasValue || activity.StartDate <= endDate.Value)
+            .Select(activity => activity.Id)
+            .ToList();
 
         var sender = queueClient.CreateSender(queueName);
         foreach (var activityId in activityIds)
@@ -74,31 +77,12 @@ public class QueueUnprocessedActivityJobs(
         return response;
     }
 
-    internal static QueryDefinition BuildQuery(string userId, string jobType, DateTime? startDate, DateTime? endDate)
-    {
-        var queryBuilder = new StringBuilder("SELECT VALUE c.id FROM c WHERE c.userId = @userId");
-
-        queryBuilder.Append(jobType.ToLowerInvariant() switch
+    private static bool IsStageProcessed(Shared.Models.ActivityProcessingStatus? status, string jobType)
+        => jobType.ToLowerInvariant() switch
         {
-            "summits" => " AND (NOT IS_DEFINED(c.processingStatus.summitedPeaks) OR c.processingStatus.summitedPeaks = false)",
-            "visitedpaths" => " AND (NOT IS_DEFINED(c.processingStatus.visitedPaths) OR c.processingStatus.visitedPaths = false)",
-            "visitedareas" => " AND (NOT IS_DEFINED(c.processingStatus.visitedAreas) OR c.processingStatus.visitedAreas = false)",
+            "summits" => status?.SummitedPeaks == true,
+            "visitedpaths" => status?.VisitedPaths == true,
+            "visitedareas" => status?.VisitedAreas == true,
             _ => throw new ArgumentException($"Unsupported job type '{jobType}'", nameof(jobType))
-        });
-
-        if (startDate.HasValue)
-            queryBuilder.Append(" AND c.startDate >= @startDate");
-        if (endDate.HasValue)
-            queryBuilder.Append(" AND c.startDate <= @endDate");
-
-        var query = new QueryDefinition(queryBuilder.ToString())
-            .WithParameter("@userId", userId);
-
-        if (startDate.HasValue)
-            query = query.WithParameter("@startDate", startDate.Value.ToString("O"));
-        if (endDate.HasValue)
-            query = query.WithParameter("@endDate", endDate.Value.ToString("O"));
-
-        return query;
-    }
+        };
 }

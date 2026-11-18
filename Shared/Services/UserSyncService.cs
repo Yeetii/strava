@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Microsoft.Azure.Cosmos;
 using Shared.Models;
+using Shared.Services.Postgres;
 
 namespace Shared.Services;
 
@@ -8,7 +8,7 @@ public sealed record UserSyncPayload(IReadOnlyList<UserSyncEntry> Settings, IRea
 
 public sealed record UserSyncEntry(string Key, long UpdatedAt, bool Deleted, JsonElement? Value);
 
-public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
+public class UserSyncService(IUserSyncItemRepository syncItems)
 {
     public async Task<UserSyncPayload> GetSnapshot(string userId, CancellationToken cancellationToken = default)
     {
@@ -28,13 +28,9 @@ public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
 
     private async Task<Dictionary<string, UserSyncItem>> GetItemsByUserId(string userId, CancellationToken cancellationToken)
     {
-        var query = new QueryDefinition(
-            "SELECT * FROM c WHERE c.documentType = @documentType AND c.userId = @userId")
-            .WithParameter("@documentType", UserSyncItem.DocumentTypeValue)
-            .WithParameter("@userId", userId);
-
-        var items = await syncCollection.ExecuteQueryAsync<UserSyncItem>(query, cancellationToken: cancellationToken);
-        return items.ToDictionary(item => item.Id, item => item);
+        var settings = await syncItems.GetByUserAndCategory(userId, UserSyncItem.SettingsCategory, cancellationToken);
+        var files = await syncItems.GetByUserAndCategory(userId, UserSyncItem.FilesCategory, cancellationToken);
+        return settings.Concat(files).ToDictionary(item => item.Id, item => item);
     }
 
     private async Task ApplyCategoryChanges(
@@ -69,7 +65,7 @@ public class UserSyncService(CollectionClient<UserSyncItem> syncCollection)
                 ValueJson = entry.Deleted ? null : ToRawJson(entry.Value)
             };
 
-            await syncCollection.UpsertDocument(updatedItem, cancellationToken: cancellationToken);
+            await syncItems.Upsert(updatedItem, cancellationToken);
             itemsById[itemId] = updatedItem;
         }
     }
