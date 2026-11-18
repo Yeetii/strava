@@ -194,6 +194,16 @@ var app = builder.Build();
 
 FunctionsJson.Options = app.Services.GetRequiredService<IOptions<JsonSerializerOptions>>().Value;
 
+app.Use((context, next) =>
+{
+    if (context.Request.Headers.ContainsKey("Access-Control-Request-Private-Network") ||
+        context.Request.Headers.ContainsKey("Origin"))
+    {
+        context.Response.Headers.Append("Access-Control-Allow-Private-Network", "true");
+    }
+
+    return next(context);
+});
 app.UseCors();
 app.MapOpenApi();
 

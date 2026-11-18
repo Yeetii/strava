@@ -340,6 +340,7 @@ public class PostMcp(
         response.Headers.Add("Access-Control-Allow-Credentials", "true");
         response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, MCP-Protocol-Version, Mcp-Session-Id");
         response.Headers.Add("Access-Control-Allow-Methods", "POST, OPTIONS");
+        response.Headers.Add("Access-Control-Allow-Private-Network", "true");
 
         var origin = req.Headers.TryGetValues("Origin", out var origins)
             ? origins.FirstOrDefault()

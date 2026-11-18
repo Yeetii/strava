@@ -53,6 +53,16 @@ if (string.Equals(role, "api", StringComparison.OrdinalIgnoreCase))
 
     var webApp = app.Build();
     FunctionsJson.Options = webApp.Services.GetRequiredService<IOptions<JsonSerializerOptions>>().Value;
+    webApp.Use((context, next) =>
+    {
+        if (context.Request.Headers.ContainsKey("Access-Control-Request-Private-Network") ||
+            context.Request.Headers.ContainsKey("Origin"))
+        {
+            context.Response.Headers.Append("Access-Control-Allow-Private-Network", "true");
+        }
+
+        return next(context);
+    });
     webApp.UseCors();
     webApp.MapFunctions(typeof(Program).Assembly);
     webApp.MapGet("/health", () => Results.Ok("ok"));

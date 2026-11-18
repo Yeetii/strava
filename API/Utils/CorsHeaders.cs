@@ -8,6 +8,7 @@ public static class CorsHeaders
     {
         response.Headers.Add("Access-Control-Allow-Credentials", "true");
         response.Headers.Add("Access-Control-Allow-Methods", methods);
+        response.Headers.Add("Access-Control-Allow-Private-Network", "true");
 
         var requestedHeaders = req.Headers.TryGetValues("Access-Control-Request-Headers", out var accessControlRequestHeaders)
             ? accessControlRequestHeaders.FirstOrDefault()

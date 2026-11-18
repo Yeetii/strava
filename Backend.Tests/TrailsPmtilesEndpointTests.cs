@@ -96,6 +96,16 @@ public class TrailsPmtilesEndpointTests
             });
 
             var app = builder.Build();
+            app.Use((context, next) =>
+            {
+                if (context.Request.Headers.ContainsKey("Access-Control-Request-Private-Network") ||
+                    context.Request.Headers.ContainsKey("Origin"))
+                {
+                    context.Response.Headers.Append("Access-Control-Allow-Private-Network", "true");
+                }
+
+                return next(context);
+            });
             app.UseCors();
             app.MapGetTrailsPmtiles(app.Configuration);
             app.Urls.Add("http://127.0.0.1:0");
@@ -112,11 +122,13 @@ public class TrailsPmtilesEndpointTests
                 preflight.Headers.Add("Origin", origin);
                 preflight.Headers.Add("Access-Control-Request-Method", "GET");
                 preflight.Headers.Add("Access-Control-Request-Headers", "range");
+                preflight.Headers.Add("Access-Control-Request-Private-Network", "true");
                 var preflightResponse = await client.SendAsync(preflight);
 
                 Assert.Equal(System.Net.HttpStatusCode.NoContent, preflightResponse.StatusCode);
                 Assert.Equal(origin, Assert.Single(preflightResponse.Headers.GetValues("Access-Control-Allow-Origin")));
                 Assert.Equal("true", Assert.Single(preflightResponse.Headers.GetValues("Access-Control-Allow-Credentials")));
+                Assert.Equal("true", Assert.Single(preflightResponse.Headers.GetValues("Access-Control-Allow-Private-Network")));
 
                 // 2. GET request with Range
                 var get = new HttpRequestMessage(HttpMethod.Get, GetTrailsPmtiles.Route);

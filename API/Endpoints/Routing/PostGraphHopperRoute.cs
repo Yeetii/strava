@@ -62,6 +62,7 @@ public class PostGraphHopperRoute(HttpClient httpClient, IConfiguration configur
         response.Headers.Add("Access-Control-Allow-Credentials", "true");
         response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
         response.Headers.Add("Access-Control-Allow-Methods", "POST, OPTIONS");
+        response.Headers.Add("Access-Control-Allow-Private-Network", "true");
 
         var origin = req.Headers.TryGetValues("Origin", out var origins)
             ? origins.FirstOrDefault()
