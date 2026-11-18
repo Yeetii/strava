@@ -133,19 +133,6 @@
         "operationId": "GetAdminBoundariesByGrid_Get"
       }
     },
-    "/connectSignalR": {
-      "get": {
-        "tags": [
-          "API"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "operationId": "get_connectSignalR"
-      }
-    },
     "/garmin/courses": {
       "get": {
         "tags": [

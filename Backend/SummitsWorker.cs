@@ -6,7 +6,6 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Shared.Geo;
 using Shared.Constants;
-using System.Text.Json;
 using System.Globalization;
 using Shared.Geo.SummitsCalculator;
 using BAMCIS.GeoJSON;
@@ -19,12 +18,9 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     CollectionClient<Activity> _activitiesCollection,
     CollectionClient<SummitedPeak> _summitedPeaksCollection,
     [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection,
-    QueueClient queueClient,
     ISummitsCalculator _summitsCalculator,
     UserSyncStatusService _userSyncStatusService)
 {
-    readonly QueueClient _queueClient = queueClient;
-    readonly QueueSender _sbSender = queueClient.CreateSender("activityprocessed");
     private const int MaxDegreeOfParallelism = 4;
 
     private sealed class ActivityLinkedDocumentProjection
@@ -84,7 +80,6 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
             {
                 _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
-                await SendActivityProcessedEvent(activity, []);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
                 await actions.CompleteMessageAsync(job);
                 return;
@@ -93,7 +88,6 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             if (summits.Count == 0)
             {
                 await CleanupStaleSummitedPeaksForActivity(activity, new HashSet<string>(StringComparer.Ordinal), cancellationToken);
-                await SendActivityProcessedEvent(activity, []);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
                 if (QueueMessageGuard.HasLockToken(job))
                     try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
@@ -105,7 +99,6 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             var currentDocumentIds = summits
                 .Select(summit => BuildSummitedPeakDocumentId(activity.UserId, summit.Id))
                 .ToHashSet(StringComparer.Ordinal);
-            await SendActivityProcessedEvent(activity, summits);
             await _summitedPeaksCollection.BulkUpsert(activitySummitedPeaks);
             await CleanupStaleSummitedPeaksForActivity(activity, currentDocumentIds, cancellationToken);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
@@ -118,13 +111,6 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             throw;
 
         }
-    }
-
-    private async Task SendActivityProcessedEvent(Activity activity, IEnumerable<Feature> summitedPeaks)
-    {
-        var processedEvent = new ActivityProcessedEvent(activity.Id, activity.UserId, [.. summitedPeaks.Select(x => x.Id.Value)], [.. summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "")]);
-        var json = JsonSerializer.Serialize(processedEvent);
-        await _sbSender.SendMessageAsync(new QueueMessage(json));
     }
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)

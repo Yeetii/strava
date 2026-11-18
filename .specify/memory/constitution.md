@@ -46,8 +46,6 @@ Data flows through queues, not synchronous call chains:
   enqueue processing jobs; workers write results back
 - Workers MUST be idempotent — re-processing the same
   activity ID produces the same outcome
-- Real-time updates reach the frontend via SignalR, never
-  by polling
 
 Rationale: Decoupled workers scale independently, tolerate
 transient failures, and keep the API layer fast.
@@ -102,7 +100,6 @@ Rationale: A small codebase is easier to evolve than a
 - **Azure Functions v4** (isolated worker) for all compute
 - **Cosmos DB** (SQL API, direct mode) for all persistence
 - **Azure Service Bus** for async job queues
-- **Azure SignalR Service** for real-time push
 - **BAMCIS.GeoJSON** for Feature/FeatureCollection types
 - **Polly** for resilience policies
 - **xUnit + Moq** for testing; BenchmarkDotNet for perf

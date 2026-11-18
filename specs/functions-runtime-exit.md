@@ -3,8 +3,8 @@
 - **Status:** Proposed
 - **Date:** 2026-11-16
 - **Scope:** Remove the Azure Functions runtime from all four containers; remove
-  Azure Service Bus in the same campaign. **Cosmos DB, Blob, Tables, and Azure
-  SignalR stay.**
+  Azure Service Bus and SignalR in the same campaign. **Cosmos DB, Blob and
+  Tables stay.**
 - **Related:** [`docs/adr/0001-staged-azure-exit-in-csharp-with-rust-pilot.md`](../docs/adr/0001-staged-azure-exit-in-csharp-with-rust-pilot.md),
   [`Shared/MIGRATION_PLAN_SELF_HOSTED.md`](../Shared/MIGRATION_PLAN_SELF_HOSTED.md),
   [`deploy/docker-compose.yml`](../deploy/docker-compose.yml)
@@ -21,7 +21,7 @@ Functions programming model:
 | Every container runs the Functions isolated-worker image | `deploy/docker-compose.yml:17-24` (`x-functions-env`) |
 | Roles are split via `AzureFunctionsJobHost__functions__N` env vars, not code | `deploy/docker-compose.yml:77-90, 114-125, 154-168` |
 | Production external traffic still enters through the Azure Function Apps; the home stack is internal-only, warm standby | `deploy/docker-compose.yml:3-9`, `Shared/MIGRATION_PLAN_SELF_HOSTED.md:29-31, 52-59` |
-| Background semantics (queue consumers, change feeds, timers) exist only as Functions triggers | 12 × `ServiceBusTrigger`, 3 × `CosmosDBTrigger`, 12 × `TimerTrigger` (see inventory) |
+| Background semantics (queue consumers, change feeds, timers) exist only as Functions triggers | 11 × `ServiceBusTrigger`, 2 × `CosmosDBTrigger`, 12 × `TimerTrigger` (see inventory) |
 | Queue scaling depends on a custom rescaler reading Azure Monitor | `Backend/ServiceBusRescheduler` via `Backend/Program.cs:205-208` |
 | `host.json` runtime semantics are invisible app behavior | `Backend/host.json:15-23` |
 
@@ -40,10 +40,9 @@ where each phase is independently deployable and rollbackable:
 |---------|-------------|
 | HTTP host (API endpoints + 14 Backend functions) | **ASP.NET Core (Kestrel)** — single merged `api` host, route-identical minimal APIs |
 | Timer triggers (12 weekly crons) | **Hangfire recurring jobs** on Redis (cron strings carry over verbatim) |
-| Service Bus queues (12) | **Hangfire jobs** on Redis (durable, retried, dashboard) |
+| Service Bus queues (11) | **Hangfire jobs** on Redis (durable, retried, dashboard) |
 | Service Bus runtime semantics | Per-queue Hangfire servers (see [Semantics mapping](#semantics-mapping)) |
-| Cosmos change feed (3 triggers) | **Cosmos SDK `ChangeFeedProcessor`** in-process, same lease containers |
-| Azure SignalR | **Stays.** Negotiate endpoint moves to ASP.NET Core; worker-side output is a stub today (`Backend/NewSummitedPeak.cs:24` returns `[]`) |
+| Cosmos change feed (2 triggers) | **Cosmos SDK `ChangeFeedProcessor`** in-process, same lease containers |
 | ServiceBusRescheduler | **Deleted** with Service Bus; worker counts become static config |
 | Functions base images | Plain `mcr.microsoft.com/dotnet/aspnet` runtime images |
 
@@ -92,7 +91,7 @@ Licensing note: Hangfire core is LGPL (fine for personal/self-hosted);
         │  redis          (durable: AOF, noeviction)
         └───────────────┬───────────────┘
                         │ outbound only
-        Cosmos DB · Blob · Tables · Azure SignalR      ← stay (per scope)
+        Cosmos DB · Blob · Tables                     ← stay (per scope)
 ```
 
 Container roles, healthchecks, mem/cpu limits, and the deploy pipeline are
@@ -104,7 +103,7 @@ of the plain hosts).
 
 ## Inventory
 
-### Service Bus queues (12) — cutover units
+### Service Bus queues (11) — cutover units
 
 Queue names from `Shared/Constants/ServiceBusConfig.cs:22-33`; trigger config
 from the worker classes and `Backend/host.json:16-23`.
@@ -116,7 +115,6 @@ from the worker classes and `Backend/host.json:16-23`.
 | `calculateVisitedAreasJobs` | `VisitedAreasWorker` | batch 20 | `QueueActivityJobs`, `QueueAllVisitedAreasJobs`, admin |
 | `activitiesfetchjobs` | `StravaActivitiesFetcher` | single | `PostLogin` (API!), self-chaining |
 | `activityFetchJobs` | `StravaActivityFetcher` | single | `StravaActivitiesFetcher` (chained per activity) |
-| `activityprocessed` | `ActivityEventWorker` | batch 20 | `SummitsWorker:147`, `RunSummitsForActivity:107` |
 | `activityDeleteJobs` | `DeleteActivityWorker` | single | API/Backend call sites |
 | `scrapeRace` | `ScrapeRaceWorker` | batch 20 | `QueueAllScrapeJobs` (timer), `PostRaceEvent` (admin) |
 | `raceDiscoveryJobs` | `RaceDiscoveryWorker` | single | `RaceDiscoveryService` (chunked), `PostRaceDiscovery` (admin) |
@@ -126,15 +124,14 @@ from the worker classes and `Backend/host.json:16-23`.
 
 `ServiceBusConfig.NonTimeCriticalQueues` exists for the rescaler — deleted with it.
 
-### Change feed triggers (3)
+### Change feed triggers (2)
 
 | Function | Container watched | Notes |
 |----------|-------------------|-------|
 | `QueueActivityJobs` | `activities` | fans out to the three calculate queues (`QueueActivityJobs.cs:30-36`) |
 | `OsmFeaturesChangeTrigger` | `osmFeatures` | enqueues enrichment jobs (`OsmFeaturesChangeTrigger.cs:42,77`) |
-| `NewSummitedPeak` | `summitedPeaks` | SignalR output **stub** — returns `[]` (`NewSummitedPeak.cs:24`) |
 
-All three use `CreateLeaseContainerIfNotExists = true` and today share lease
+Both use `CreateLeaseContainerIfNotExists = true` and today share lease
 containers with the Azure-side triggers (`Shared/MIGRATION_PLAN_SELF_HOSTED.md:68-71`).
 
 ### Timers (12 — all weekly crons, verbatim cron strings)
@@ -150,8 +147,6 @@ containers with the Azure-side triggers (`Shared/MIGRATION_PLAN_SELF_HOSTED.md:6
 - Backend HTTP: 14 functions (webhook, token refresh, admin, backfill) now
   hosted in the merged `api` container, including the **Strava webhook** whose
   public URL must not change semantics.
-- SignalR negotiate: `ConnectSignalR` (`API/Endpoints/ConnectSignalR.cs:14-15`,
-  hub `peakshunters`, user from `{headers.session}`).
 
 ---
 
@@ -167,7 +162,7 @@ replacements:
 | `maxAutoLockRenewalDuration: 10 min` | Not needed — jobs run to completion | Net win for long Mistral/race-discovery jobs |
 | `functionTimeout: 00:09:59` | Not needed | **Watch for previously-killed jobs now running longer** |
 | `AutoCompleteMessages = false` + manual complete/abandon/dead-letter | Hangfire automatic retry with attempts + backoff per queue | `ServiceBusCosmosRetryHelper` keeps its Cosmos-side 429 retry logic; its ServiceBus abandon paths are deleted |
-| Change feed with shared lease containers | SDK `ChangeFeedProcessor` reusing the same lease containers | Cutover strategy per feed — see [Change-feed conversion](#change-feed-conversion). `NewSummitedPeak` is a stub, so its feed is trivial |
+| Change feed with shared lease containers | SDK `ChangeFeedProcessor` reusing the same lease containers | Cutover strategy per feed — see [Change-feed conversion](#change-feed-conversion) |
 | Functions invocation logs / App Insights | Hangfire dashboard + existing Beszel + logs | Rescaler's Azure Monitor dependency disappears |
 
 ---
@@ -244,9 +239,6 @@ Per feed:
   harmless (jobs re-run, results overwrite).
 - `OsmFeaturesChangeTrigger`: backfill safety nets already exist
   (`ReEnrichAdminBoundaries`, force-job paths) — lowest stakes.
-- `NewSummitedPeak`: currently a stub (`Backend/NewSummitedPeak.cs:24` returns
-  `[]`) — convert for shape parity or omit until SignalR work resumes; nothing
-  observable changes.
 
 ---
 
@@ -299,10 +291,7 @@ containers: the Azure triggers resume from their own leases.
 1. Convert `api` (59 endpoints) and the 14 Backend HTTP functions to ASP.NET
    Core minimal APIs in one merged host — route-identical; the Backend-only
    services are registered in `API/Program.cs`.
-2. `ConnectSignalR` → standard negotiate endpoint via
-   `AddSignalR().AddAzureSignalR()` (Azure SignalR stays; Trailscope's flow
-   unchanged if the response shape is kept).
-3. Public exposure via Tailscale Funnel: `tailscale funnel` on the host (or a
+2. Public exposure via Tailscale Funnel: `tailscale funnel` on the host (or a
    tailscale sidecar on the compose network) proxying 443 to the api container.
    Public URL becomes `https://<machine>.<tailnet>.ts.net`. Consequences handled
    in this phase:
@@ -314,12 +303,12 @@ containers: the Azure triggers resume from their own leases.
      MVT/PMTiles endpoints are the workload to watch
    - Optionally require auth on requests carrying `Tailscale-Funnel-Request: ?1`
      (Tailscale strips spoofed copies of this header)
-4. OpenAPI: regenerate from ASP.NET Core and diff against the current contract
+3. OpenAPI: regenerate from ASP.NET Core and diff against the current contract
    using the existing `openapi:sync` tooling (`package.json:2-7`) — the Trailscope
    frontend and bruno collection consume this contract.
-5. No DNS cutover: the old `peakshunters.erikmagnusson.com/api` URL stays on the
-   Azure Function App until P3; consumers move to the funnel URL per step 3.
-6. Unify the webhook path from Newtonsoft to System.Text.Json while touching it
+4. No DNS cutover: the old `peakshunters.erikmagnusson.com/api` URL stays on the
+   Azure Function App until P3; consumers move to the funnel URL per step 2.
+5. Unify the webhook path from Newtonsoft to System.Text.Json while touching it
    (the dual-JSON-stack debt flagged in ADR-0001's context).
 
 **Verify:** OpenAPI diff is empty (or explicitly approved); Trailscope smoke
@@ -332,7 +321,7 @@ deployed, still working).
 
 Once production traffic (and therefore all producers) runs in home containers:
 
-1. Per queue from the [inventory](#service-bus-queues-12--cutover-units),
+1. Per queue from the [inventory](#service-bus-queues-11--cutover-units),
    in one deploy: swap every producer call site
    (`SendMessageAsync` → `IBackgroundJobClient.Enqueue`) and the consumer
    (Service Bus processor → Hangfire job class). Job bodies are unchanged —
@@ -356,7 +345,7 @@ deploy (both code paths can coexist behind a per-queue feature flag during P2).
    `host.json`, `local.settings.json` references, `x-functions-env`, and
    `AzureFunctionsJobHost__functions__N` plumbing.
 3. Switch images to plain `aspnet:10.0` runtime images (smaller, faster start).
-4. Azure footprint after this plan: **Cosmos DB, Blob, Tables, Azure SignalR**
+4. Azure footprint after this plan: **Cosmos DB, Blob, Tables**
    — exactly the ADR-0001 boundary.
 
 **Verify:** nothing references Service Bus or Functions packages
@@ -398,13 +387,12 @@ Azure today; the feature is labelled beta.
 
 - Redis **caching** (rest of migration-plan Phase 4) — only queue/timer storage lands here
 - Cosmos → PostgreSQL (migration-plan Phase 5+)
-- Self-hosted SignalR replacing Azure SignalR (needs a Redis backplane + Trailscope client change)
 - Blob/Tables exit
 - `PmtilesJob` Rust pilot — separate spec, per ADR-0001
 
 ## Implementation log
 
-- 2026-11-17 — **Service Bus SDK removed.** All 12 queues now produce and
+- 2026-11-17 — **Service Bus SDK removed.** All 11 queues now produce and
   consume through Hangfire unconditionally; the `HANGFIRE_QUEUES` flag and its
   dual transport are gone. SDK types were replaced by SDK-free look-alikes in
   `Shared.Hosting/QueueAbstractions.cs` (`QueueMessage` keeps a `BinaryData`
@@ -421,11 +409,11 @@ Azure today; the feature is labelled beta.
 ## Checklist
 
 - [ ] P0: Redis durable (AOF, `noeviction`) in compose; exposure decided — Tailscale Funnel
-- [ ] P1a: all 12 queues, 3 feeds, 12 crons have a plain-host home; role-coverage gate green
+- [ ] P1a: all 11 queues, 2 feeds, 12 crons have a plain-host home; role-coverage gate green
 - [ ] P1a: change-feed cutover gaps measured and bounded
 - [ ] P1b: OpenAPI diff empty vs current contract; webhook verified end to end
 - [ ] P1b: production traffic served from home; Azure API app idle
-- [x] P2: all 12 queues on Hangfire; no Service Bus producer or consumer in code (2026-11-17)
+- [x] P2: all 11 queues on Hangfire; no Service Bus producer or consumer in code (2026-11-17)
 - [ ] P2: Cosmos RU/s within P0 baseline (or batcher jobs added where not) — OPERATIONAL
 - [x] P3: no Service Bus SDK references remain (2026-11-17); images are plain runtime images
 - [ ] ADR-0001's execution sequence updated to point at this spec

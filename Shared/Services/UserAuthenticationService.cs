@@ -21,12 +21,4 @@ public class UserAuthenticationService(CollectionClient<Models.User> _usersColle
         var user = await _usersCollection.GetByIdMaybe(session.UserId, new PartitionKey(session.UserId));
         return user;
     }
-
-    public async Task<IEnumerable<string>> GetUsersActiveSessions(string userId)
-    {
-        var sessionsQuery = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.userId = @userId")
-            .WithParameter("@userId", userId);
-
-        return await _sessionsCollection.ExecuteQueryAsync<string>(sessionsQuery);
-    }
 }

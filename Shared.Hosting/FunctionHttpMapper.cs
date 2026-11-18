@@ -106,16 +106,6 @@ public static class FunctionHttpMapper
                 values.Add(ct);
                 continue;
             }
-            if (type == typeof(SignalRConnectionInfo))
-            {
-                // Reproduces the Functions binding UserId = "{headers.session}".
-                var sessionId = request.Cookies.FirstOrDefault(c => c.Name == "session")?.Value ?? string.Empty;
-                var factory = (Func<string, SignalRConnectionInfo>?)services.GetService(
-                    typeof(Func<string, SignalRConnectionInfo>));
-                values.Add(factory?.Invoke(sessionId) ?? new SignalRConnectionInfo());
-                continue;
-            }
-
             var cosmosInput = parameter.GetCustomAttribute<CosmosDBInputAttribute>();
             if (cosmosInput is not null)
             {

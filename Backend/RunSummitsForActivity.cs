@@ -19,12 +19,9 @@ public class RunSummitsForActivity(
     CollectionClient<Activity> activitiesCollection,
     CollectionClient<SummitedPeak> summitedPeaksCollection,
     [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient peaksCollection,
-    QueueClient queueClient,
     ISummitsCalculator summitsCalculator,
     UserSyncStatusService userSyncStatusService)
 {
-    private readonly QueueSender _activityProcessedSender = queueClient.CreateSender(QueueConfig.ActivityProcessed);
-
     [Function(nameof(RunSummitsForActivity))]
     public async Task<HttpResponseData> Run(
         [HttpTrigger(AuthorizationLevel.Function, "post", Route = "debug/summits/{activityId}")] HttpRequestData req,
@@ -44,7 +41,6 @@ public class RunSummitsForActivity(
         if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
         {
             logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
-            await SendActivityProcessedEvent(activity, []);
             await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
 
             var skipped = req.CreateResponse(HttpStatusCode.OK);
@@ -62,7 +58,6 @@ public class RunSummitsForActivity(
         var summits = CalculateSummitedPeaks(activity, peaks, summitsCalculator).ToList();
         if (summits.Count == 0)
         {
-            await SendActivityProcessedEvent(activity, []);
             await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
 
             var okNoSummits = req.CreateResponse(HttpStatusCode.OK);
@@ -78,7 +73,6 @@ public class RunSummitsForActivity(
 
         logger.LogInformation("Debug summit run: activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
         var activitySummitedPeaks = await UpdateSummitedPeaksDocuments(summitedPeaksCollection, activity, summits);
-        await SendActivityProcessedEvent(activity, summits);
         await summitedPeaksCollection.BulkUpsert(activitySummitedPeaks, cancellationToken: cancellationToken);
         await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
 
@@ -92,18 +86,6 @@ public class RunSummitsForActivity(
             summitIds = summits.Select(x => x.Id.Value).ToArray()
         }, cancellationToken);
         return ok;
-    }
-
-    private async Task SendActivityProcessedEvent(Activity activity, IEnumerable<Feature> summitedPeaks)
-    {
-        var processedEvent = new ActivityProcessedEvent(
-            activity.Id,
-            activity.UserId,
-            [.. summitedPeaks.Select(x => x.Id.Value)],
-            [.. summitedPeaks.Select(x => x.Properties.TryGetValue("name", out var peakName) ? peakName : "")]);
-
-        var json = JsonSerializer.Serialize(processedEvent);
-        await _activityProcessedSender.SendMessageAsync(new QueueMessage(json));
     }
 
     private static IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks, ISummitsCalculator summitsCalculator)

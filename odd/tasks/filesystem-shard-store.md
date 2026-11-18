@@ -10,7 +10,7 @@ S2. Acceptance: a filesystem `IShardRepository` preserves the exact current cont
 
 S3. Verification: `dotnet test strava.sln` passes with only pre-existing failures excepted (record them with evidence in Log); `deploy/scripts/verify-role-coverage.sh` is green; grep confirms no `BlobContainerClient`, `BlobStorageConnection`, or dead `BlobServiceClient` registration in the shard path. Test-first: one RED test per requested rule, then GREEN, then refactor. For each existing HTTP route sharing the changed code (highway tile endpoints, `/api/...` refresh), pin current behavior with tests; no unrequested behavior change. No integration harness exists — call this out as the known risk (see Risk).
 
-S4. Out of scope (explicit, from the audit): audit item 3 (flip/remove `BlobOrganizerStore`, `export-organizers-to-blob`, `ExportOrganizersToDisk`), audit item 5 (verify/delete legacy `race-tiles` / `pois-shards` / `buildings-shards` / `shared-dictionaries` containers), Azure Tables (already replaced at HEAD), Cosmos, SignalR, and deleting the Azure Blob resource (destructive, user-owned). ADR/plan Phase 8 step 2 sequences Blob after Tables and before Cosmos.
+S4. Out of scope (explicit, from the audit): audit item 3 (flip/remove `BlobOrganizerStore`, `export-organizers-to-blob`, `ExportOrganizersToDisk`), audit item 5 (verify/delete legacy `race-tiles` / `pois-shards` / `buildings-shards` / `shared-dictionaries` containers), Azure Tables (already replaced at HEAD), Cosmos, and deleting the Azure Blob resource (destructive, user-owned). ADR/plan Phase 8 step 2 sequences Blob after Tables and before Cosmos.
 
 ## Tasks
 
