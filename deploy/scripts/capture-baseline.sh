@@ -19,7 +19,7 @@ if command -v az >/dev/null 2>&1; then
     if [[ -n "${SERVICE_BUS_NAMESPACE:-}" ]]; then
         echo "--- Service Bus queue depths ---"
         for queue in calculateSummitsJobs calculateVisitedPathsJobs calculateVisitedAreasJobs \
-                     activitiesfetchjobs activityFetchJobs activityprocessed activityDeleteJobs \
+                     activitiesfetchjobs activityFetchJobs activityDeleteJobs \
                      scrapeRace raceDiscoveryJobs mistralScrape enrichAdminBoundaryJobs accountDeleteJobs; do
             read -r total active deadletter <<<"$(az servicebus queue show \
                 --resource-group "${AZURE_RESOURCE_GROUP:-}" \

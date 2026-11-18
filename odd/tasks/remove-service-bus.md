@@ -4,7 +4,7 @@ Objective: switch all queues over to Hangfire and remove the Azure.Messaging.Ser
 
 ## Specs
 
-S1. "just switch them all over and remove servicebus sdk" — Authorized scope: all 12 queues are produced and consumed through Hangfire on Redis; the `Azure.Messaging.ServiceBus` package and every SDK type usage (`ServiceBusClient`, `ServiceBusSender`, `ServiceBusMessage`, `ServiceBusReceivedMessage`, `ServiceBusMessageActions`, `ServiceBusTriggerAttribute`) are removed from source; the `HANGFIRE_QUEUES` dual-transport flag and its Service Bus fallback are retired.
+S1. "just switch them all over and remove servicebus sdk" — Authorized scope: all 11 queues are produced and consumed through Hangfire on Redis; the `Azure.Messaging.ServiceBus` package and every SDK type usage (`ServiceBusClient`, `ServiceBusSender`, `ServiceBusMessage`, `ServiceBusReceivedMessage`, `ServiceBusMessageActions`, `ServiceBusTriggerAttribute`) are removed from source; the `HANGFIRE_QUEUES` dual-transport flag and its Service Bus fallback are retired.
 
 S2. Acceptance: worker bodies keep their current logic and payload shapes; queue names, message bodies, retry semantics and the per-role worker split (api / schedule / heavy) are preserved; no Service Bus connection configuration remains in deploy config or docs.
 

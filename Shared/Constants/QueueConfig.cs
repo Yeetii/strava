@@ -13,7 +13,6 @@ namespace Shared.Constants
         public const string CalculateVisitedAreasJobs = "calculateVisitedAreasJobs";
         public const string ActivitiesFetchJobs = "activitiesfetchjobs";
         public const string ActivityFetchJobs = "activityFetchJobs";
-        public const string ActivityProcessed = "activityprocessed";
         public const string ActivityDeleteJobs = "activityDeleteJobs";
         public const string ScrapeRace = "scrapeRace";
         public const string RaceDiscoveryJobs = "raceDiscoveryJobs";

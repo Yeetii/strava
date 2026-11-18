@@ -92,34 +92,6 @@ namespace Microsoft.Azure.Functions.Worker
     [AttributeUsage(AttributeTargets.Property)]
     public sealed class HttpResultAttribute : Attribute;
 
-    [AttributeUsage(AttributeTargets.Method)]
-    public sealed class SignalROutputAttribute : Attribute
-    {
-        public string? HubName { get; set; }
-    }
-
-    [AttributeUsage(AttributeTargets.Parameter)]
-    public sealed class SignalRConnectionInfoInputAttribute : Attribute
-    {
-        public string? HubName { get; set; }
-        public string? UserId { get; set; }
-    }
-
-    public sealed class SignalRConnectionInfo
-    {
-        public string? Url { get; set; }
-        public string? AccessToken { get; set; }
-    }
-
-    public sealed class SignalRMessageAction(string methodName)
-    {
-        public string MethodName { get; } = methodName;
-        public IEnumerable<object>? Arguments { get; set; }
-        public string? UserId { get; set; }
-        public string? GroupName { get; set; }
-        public string? ConnectionId { get; set; }
-    }
-
     /// <summary>Placeholder for the Functions TimerInfo parameter.</summary>
     public sealed class TimerInfo;
 

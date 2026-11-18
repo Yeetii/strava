@@ -7,7 +7,7 @@ name: peakshunters
 # are selected with WORKER_ROLE (api | schedule | heavy) instead of the old
 # per-function whitelist environment entries.
 #
-# Cosmos DB and Azure SignalR stay on Azure. Organizer data, race tiles, highway
+# Cosmos DB stays on Azure. Organizer data, race tiles, highway
 # shards and zoom indexes are all local bind mounts; no Blob connection is used.
 # Service Bus is kept for P1a and removed in P2 (see the Functions Runtime Exit plan).
 

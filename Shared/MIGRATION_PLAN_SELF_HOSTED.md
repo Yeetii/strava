@@ -27,17 +27,18 @@ What still drives cost: Cosmos DB RU pressure, excessive reads/writes, and the r
 | Hosts | Plain .NET 10 (ASP.NET Core Kestrel `api` + Generic Host workers). **No Azure Functions runtime, no `host.json`, no per-function whitelist env vars.** |
 | Containers | `api`, `worker-schedule` (profile `schedules`), `worker-heavy` (profile `workers`), `pmtiles`, `redis`. |
 | Roles | `WORKER_ROLE` = `api` \| `schedule` \| `heavy` (`Shared.Hosting`). |
-| Queues / timers | 12 queues + 12 weekly crons on Hangfire/Redis. **Service Bus SDK removed from source.** |
+| Queues / timers | 11 queues + 12 weekly crons on Hangfire/Redis. **Service Bus SDK removed from source.** |
 | Change feeds | 3 Cosmos feeds in-process via SDK `ChangeFeedProcessor`, same lease containers. |
 | Redis | Durable Hangfire storage: `--appendonly yes`, `--maxmemory-policy noeviction`. Not yet a general read cache. |
 | Public access | Tailscale Funnel → `https://<machine>.<tailnet>.ts.net`; API publishes `127.0.0.1:8080:80`. No Caddy/TLS or DNS cutover. |
 | Race/organizer data | `IOrganizerStore` / `FileSystemOrganizerStore` (`OrganizerStore__Provider=FileSystem`), host dir `/opt/data/strava/races` → `/data/races`. `pmtiles` builds tiles there; API serves `/tiles/trails.pmtiles`. |
 | Geocoding cache | Single `RedisGeocodingCache` used by both Backend and PmtilesJob. |
 | CI / deploy | `.github/workflows/selfhosted-deploy.yml`: builds `api`/`backend`/`pmtiles` → GHCR (SHA + `latest`), joins tailnet as `tag:ci`, rsyncs `deploy/`, runs `deploy.sh` (health-check + auto-rollback). |
-| Guardrail | `deploy/scripts/verify-role-coverage.sh`: 12 queues / 3 feeds / 12 crons each map to one role; legacy function-list env vars rejected. |
+| Guardrail | `deploy/scripts/verify-role-coverage.sh`: 11 queues / 2 feeds / 12 crons each map to one role; legacy function-list env vars rejected. |
 | Monitoring / backups | Beszel. **No automated host backup job in the repo** (`backups/` is gitignored) — adding one is part of adding Postgres. Cosmos/Storage have platform backups. |
 
-**Still on Azure:** Cosmos DB (`activities`, `users`, `userSyncItems`, `sessions`, `visitedPaths`, `visitedAreas`, `peaksGroups`, `summitedPeaks`, `osmFeatures`, `raceOrganizers`), Azure SignalR.
+**Still on Azure:** Cosmos DB (`activities`, `users`, `userSyncItems`, `sessions`, `visitedPaths`, `visitedAreas`, `peaksGroups`, `summitedPeaks`, `osmFeatures`, `raceOrganizers`)
+
 
 **Not done:** Postgres (no `Npgsql`/EF/PostgreSql reference anywhere), general Redis read caching beyond geocoding, and the operational proof listed below.
 
@@ -66,7 +67,7 @@ Still-open proof (do not claim done): worker soak against production traffic; P0
 
 **Phase 7 — final cutover.** Short controlled write freeze per entity: pause/queue writes → final sync → validate counts → switch reads then writes → resume. Keep Cosmos read-only through a validation period.
 
-**Phase 8 — decommission.** Azure Blob Storage and Table Storage have been removed from source. Cosmos remains to be migrated to Postgres. Azure SignalR is explicitly out of scope (separate follow-up).
+**Phase 8 — decommission.** Azure Blob Storage and Table Storage have been removed from source. Cosmos remains to be migrated to Postgres.
 
 ---
 

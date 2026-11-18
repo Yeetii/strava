@@ -19,8 +19,8 @@ public class PlainHostTests
     {
         var registry = FunctionWorkerRegistry.Discover(typeof(BackendServices).Assembly);
 
-        Assert.Equal(12, registry.Queues.Count);
-        Assert.Equal(3, registry.ChangeFeeds.Count);
+        Assert.Equal(11, registry.Queues.Count);
+        Assert.Equal(2, registry.ChangeFeeds.Count);
         Assert.Equal(12, registry.Timers.Count);
     }
 
@@ -42,7 +42,7 @@ public class PlainHostTests
         var builder = WebApplication.CreateBuilder();
         await using var app = builder.Build();
 
-        app.MapFunctions(typeof(API.SignalRNegotiate).Assembly);
+        app.MapFunctions(typeof(API.Endpoints.User.GetActivities).Assembly);
 
         var routes = ((IEndpointRouteBuilder)app).DataSources
             .SelectMany(source => source.Endpoints)
@@ -51,7 +51,7 @@ public class PlainHostTests
             .ToList();
 
         Assert.Contains("/api/activities", routes);
-        Assert.Contains("/api/connectSignalR", routes);
+        Assert.DoesNotContain("/api/connectSignalR", routes);
         Assert.All(routes, route => Assert.StartsWith("/api/", route));
     }
 
@@ -60,7 +60,7 @@ public class PlainHostTests
     {
         foreach (var assembly in new[]
                  {
-                     typeof(API.SignalRNegotiate).Assembly,
+                     typeof(API.Endpoints.User.GetActivities).Assembly,
                      typeof(BackendServices).Assembly,
                  })
         {
@@ -96,7 +96,7 @@ public class PlainHostTests
     {
         var routes = new[]
                      {
-                         typeof(API.SignalRNegotiate).Assembly,
+                         typeof(API.Endpoints.User.GetActivities).Assembly,
                          typeof(BackendServices).Assembly,
                      }
                      .SelectMany(assembly => assembly.GetTypes()

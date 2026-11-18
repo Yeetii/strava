@@ -103,22 +103,6 @@ For architecture, implementation notes, and local-dev gotchas, see `USER_SYNC.md
 
 ---
 
-## SignalR
-
-### `GET /connectSignalR`
-
-Returns connection info for the Azure SignalR hub. Pass the `session` cookie value as the `session` header to authenticate the SignalR connection.
-
-**Response** `200 OK` `application/json`
-```ts
-{
-  url: string
-  accessToken: string
-}
-```
-
----
-
 ## Activities
 
 ### `GET /activities`

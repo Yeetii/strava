@@ -43,7 +43,7 @@ pilot has produced measurable numbers (see [Re-evaluation triggers](#re-evaluati
 - Everything runs as **Azure Functions isolated workers** — including the HTTP API.
 - **Compute is already self-hosted** (`deploy/docker-compose.yml`), but all data
   services remain on Azure: Cosmos DB, Service Bus, Blob Storage, Tables
-  (geocoding cache), Azure SignalR. `PmtilesJob` deploys to Azure Container Apps.
+  (geocoding cache). `PmtilesJob` deploys to Azure Container Apps.
 - The test suite is **unit-only with mocks — no integration tests**. This is the
   safety net (or lack of one) available to any large structural change.
 
@@ -63,7 +63,6 @@ comparing both paths against the goals above.
 | Blob SDK | `azure_storage_blob` 1.x — official, stable |
 | Service Bus SDK | **None (official)** — AMQP would be hand-built via `fe2o3-amqp` |
 | Tables SDK | **None (official)** |
-| SignalR server | **None** — raw WebSockets + frontend client rewrite |
 
 ### Performance evidence (Nov 2026, external benchmarks)
 
@@ -87,7 +86,7 @@ comparing both paths against the goals above.
 |---|---|---|---|
 | API performance | Language parity; DB still remote unless also migrated | Local Postgres removes cloud round-trips | Same as B |
 | Worker architecture | `axum` + `apalis` — clean, but all Functions trigger semantics rebuilt by hand | Functions → explicit app + worker topology (plan Phase 2) | B's topology + pilot as standalone Rust worker |
-| Azure transition | **Big bang**: no official Rust SDKs for Service Bus, Tables, SignalR; change-feed, lock renewal, dead-lettering hand-built before anything can be turned off | Gradual: feature flags, dual-write, per-workload cutover, rollback at every step | Gradual in C#; pilot fully decoupled from the API |
+| Azure transition | **Big bang**: no official Rust SDKs for Service Bus and Tables; change-feed, lock renewal, dead-lettering hand-built before anything can be turned off | Gradual: feature flags, dual-write, per-workload cutover, rollback at every step | Gradual in C#; pilot fully decoupled from the API |
 | Code quality | Great eventually; degraded for months during rewrite, with a mock-only test net | Keeps tested, layered code; sheds the Functions model | Risk contained to 1,667 LOC |
 | Effort | ~44k LOC + trigger semantics — realistically a year of part-time work | The plan, as written | Plan + bounded pilot |
 | Learning Rust | Immediate, sink-or-swim | None | On a contained, CPU-bound surface where Rust genuinely wins |
@@ -110,10 +109,7 @@ comparing both paths against the goals above.
    timers) working while stores are swapped one at a time behind the existing
    abstractions in `Shared`. Rust would force the hardest infrastructure work
    (queues, change feed, realtime) **first**, turning the "transition period"
-   into a big-bang cutover. SignalR alone: in C#, leaving Azure SignalR is
-   removing one line (self-hosted ASP.NET Core SignalR is built in); in Rust,
-   no server implementation exists, so realtime means raw WebSockets **and** a
-   Trailscope client rewrite.
+   into a big-bang cutover.
 
 ---
 
