@@ -1,8 +1,10 @@
 using System.Text;
 using API.Endpoints.Tiles;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.DependencyInjection;
+using Shared.Constants;
 
 namespace Backend.Tests;
 
@@ -63,5 +65,87 @@ public class TrailsPmtilesEndpointTests
         await result.ExecuteAsync(context);
 
         Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("https://stigar.erikmagnusson.com")]
+    [InlineData("https://peakshunters.erikmagnusson.com")]
+    [InlineData("http://localhost:5173")]
+    public async Task GetTrailsPmtiles_SupportsCorsPreflightAndExposedHeaders(string origin)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "trails-cors-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var pmtilesPath = Path.Combine(root, "trails.pmtiles");
+            File.WriteAllBytes(pmtilesPath, Encoding.UTF8.GetBytes("PMTiles test file"));
+
+            var builder = WebApplication.CreateBuilder();
+            builder.Configuration[AppConfig.RaceTilesOutputPath] = pmtilesPath;
+
+            builder.Services.AddCors(options =>
+            {
+                options.AddPolicy(GetTrailsPmtiles.CorsPolicy, policy =>
+                {
+                    policy.SetIsOriginAllowed(_ => true)
+                        .AllowAnyHeader()
+                        .WithMethods("GET", "HEAD", "OPTIONS")
+                        .AllowCredentials()
+                        .WithExposedHeaders("Content-Range", "Content-Length", "ETag", "Accept-Ranges");
+                });
+            });
+
+            var app = builder.Build();
+            app.UseCors();
+            app.MapGetTrailsPmtiles(app.Configuration);
+            app.Urls.Add("http://127.0.0.1:0");
+            await app.StartAsync();
+
+            try
+            {
+                var addresses = app.Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>()
+                    .Features.Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()!.Addresses;
+                using var client = new HttpClient { BaseAddress = new Uri(addresses.Single()) };
+
+                // 1. Preflight OPTIONS
+                var preflight = new HttpRequestMessage(HttpMethod.Options, GetTrailsPmtiles.Route);
+                preflight.Headers.Add("Origin", origin);
+                preflight.Headers.Add("Access-Control-Request-Method", "GET");
+                preflight.Headers.Add("Access-Control-Request-Headers", "range");
+                var preflightResponse = await client.SendAsync(preflight);
+
+                Assert.Equal(System.Net.HttpStatusCode.NoContent, preflightResponse.StatusCode);
+                Assert.Equal(origin, Assert.Single(preflightResponse.Headers.GetValues("Access-Control-Allow-Origin")));
+                Assert.Equal("true", Assert.Single(preflightResponse.Headers.GetValues("Access-Control-Allow-Credentials")));
+
+                // 2. GET request with Range
+                var get = new HttpRequestMessage(HttpMethod.Get, GetTrailsPmtiles.Route);
+                get.Headers.Add("Origin", origin);
+                get.Headers.Add("Range", "bytes=0-3");
+                var getResponse = await client.SendAsync(get);
+
+                Assert.Equal(System.Net.HttpStatusCode.PartialContent, getResponse.StatusCode);
+                Assert.Equal(origin, Assert.Single(getResponse.Headers.GetValues("Access-Control-Allow-Origin")));
+                var exposeHeaders = Assert.Single(getResponse.Headers.GetValues("Access-Control-Expose-Headers"));
+                Assert.Contains("Content-Range", exposeHeaders);
+                Assert.Contains("Accept-Ranges", exposeHeaders);
+
+                // 3. HEAD request
+                var head = new HttpRequestMessage(HttpMethod.Head, GetTrailsPmtiles.Route);
+                head.Headers.Add("Origin", origin);
+                var headResponse = await client.SendAsync(head);
+                Assert.Equal(System.Net.HttpStatusCode.OK, headResponse.StatusCode);
+                Assert.Equal(origin, Assert.Single(headResponse.Headers.GetValues("Access-Control-Allow-Origin")));
+            }
+            finally
+            {
+                await app.DisposeAsync();
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
     }
 }
