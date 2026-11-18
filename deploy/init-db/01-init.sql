@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS activities (
     start_date           TIMESTAMPTZ NOT NULL,
     start_date_local     TIMESTAMPTZ NOT NULL,
     timezone             TEXT,
+    start_lat_lng        REAL[],
+    end_lat_lng          REAL[],
     distance             REAL,
     moving_time          REAL,
     elapsed_time         REAL,

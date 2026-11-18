@@ -12,6 +12,11 @@ namespace CosmosBulkDelete
     {
         static async Task<int> Main(string[] args)
         {
+            if (args.Length > 0 && string.Equals(args[0], "migrate-to-postgres", StringComparison.OrdinalIgnoreCase))
+            {
+                return await RunMigrationAsync(args.Skip(1).ToArray());
+            }
+
             if (args.Length < 2)
             {
                 Console.WriteLine("Usage: dotnet run <container> <query> [partitionKeyProperty]");
@@ -45,20 +50,13 @@ namespace CosmosBulkDelete
             string query = $"SELECT {selectClause} FROM c {(string.IsNullOrWhiteSpace(filter) ? "" : filter.Trim().StartsWith("WHERE", StringComparison.OrdinalIgnoreCase) ? filter : "WHERE " + filter)}";
 
             // Read local settings from the API project first, then fall back to Backend/local.settings.json.
-            string settingsPath = "../API/local.settings.json";
-            if (!File.Exists(settingsPath))
+            var valuesOpt = LoadLocalSettingsValues();
+            if (valuesOpt == null)
             {
-                settingsPath = "../Backend/local.settings.json";
-            }
-
-            if (!File.Exists(settingsPath))
-            {
-                Console.WriteLine("Could not find ../API/local.settings.json or ../Backend/local.settings.json");
                 return 0;
             }
+            var values = valuesOpt.Value;
 
-            var json = JsonDocument.Parse(File.ReadAllText(settingsPath));
-            var values = json.RootElement.GetProperty("Values");
             var cosmosConnElement = values.GetProperty("CosmosDBConnection");
             string cosmosConn;
             if (cosmosConnElement.ValueKind == JsonValueKind.String)
@@ -81,15 +79,7 @@ namespace CosmosBulkDelete
             }
 
             // Parse endpoint and key from connection string
-            string endpoint = null, key = null;
-            foreach (var part in cosmosConn.Split(';'))
-            {
-                var trimmed = part.Trim();
-                if (string.IsNullOrWhiteSpace(trimmed)) continue;
-                if (trimmed.StartsWith("AccountEndpoint=")) endpoint = trimmed.Substring("AccountEndpoint=".Length);
-                if (trimmed.StartsWith("AccountKey=")) key = trimmed.Substring("AccountKey=".Length);
-            }
-            if (endpoint == null || key == null)
+            if (!TryParseCosmosEndpointKey(cosmosConn, out string endpoint, out string key))
             {
                 Console.WriteLine("Could not parse Cosmos endpoint/key from connection string");
                 return 0;
@@ -223,6 +213,121 @@ namespace CosmosBulkDelete
 
             Console.WriteLine($"Deleted {patched} documents.");
             return 0;
+        }
+
+        /// <summary>
+        /// Loads the "Values" object from ../API/local.settings.json (preferred) or
+        /// ../Backend/local.settings.json. Returns null when neither file exists.
+        /// The returned element is cloned so it outlives the underlying JsonDocument.
+        /// </summary>
+        internal static JsonElement? LoadLocalSettingsValues(bool printMissingError = true)
+        {
+            string settingsPath = "../API/local.settings.json";
+            if (!File.Exists(settingsPath))
+            {
+                settingsPath = "../Backend/local.settings.json";
+            }
+
+            if (!File.Exists(settingsPath))
+            {
+                if (printMissingError)
+                {
+                    Console.WriteLine("Could not find ../API/local.settings.json or ../Backend/local.settings.json");
+                }
+                return null;
+            }
+
+            using var json = JsonDocument.Parse(File.ReadAllText(settingsPath));
+            return json.RootElement.GetProperty("Values").Clone();
+        }
+
+        /// <summary>
+        /// Parses AccountEndpoint and AccountKey out of a Cosmos connection string.
+        /// Shared by the bulk-delete and migrate-to-postgres commands.
+        /// </summary>
+        internal static bool TryParseCosmosEndpointKey(string cosmosConn, out string endpoint, out string key)
+        {
+            endpoint = null!;
+            key = null!;
+            foreach (var part in cosmosConn.Split(';'))
+            {
+                var trimmed = part.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed)) continue;
+                if (trimmed.StartsWith("AccountEndpoint=")) endpoint = trimmed.Substring("AccountEndpoint=".Length);
+                if (trimmed.StartsWith("AccountKey=")) key = trimmed.Substring("AccountKey=".Length);
+            }
+            return endpoint != null && key != null;
+        }
+
+        private static async Task<int> RunMigrationAsync(string[] args)
+        {
+            var options = CosmosToPostgresMigrator.ParseOptions(args);
+            if (options == null)
+            {
+                return 1;
+            }
+            if (options.ShowHelp)
+            {
+                return 0;
+            }
+
+            // Resolve the Cosmos connection string: explicit option, local settings, then environment.
+            string? cosmosConn = options.CosmosConnectionString;
+            JsonElement? values = LoadLocalSettingsValues(printMissingError: false);
+            if (string.IsNullOrWhiteSpace(cosmosConn) && values != null &&
+                values.Value.TryGetProperty("CosmosDBConnection", out var connEl) &&
+                connEl.ValueKind == JsonValueKind.String)
+            {
+                cosmosConn = connEl.GetString();
+            }
+            if (string.IsNullOrWhiteSpace(cosmosConn))
+            {
+                cosmosConn = Environment.GetEnvironmentVariable("CosmosDBConnection")
+                          ?? Environment.GetEnvironmentVariable("CosmosDBConnectionString");
+            }
+            if (string.IsNullOrWhiteSpace(cosmosConn))
+            {
+                Console.WriteLine("ERROR: No Cosmos connection string found. Pass --cosmos-conn, set the " +
+                    "CosmosDBConnection environment variable, or add CosmosDBConnection to local.settings.json.");
+                return 1;
+            }
+
+            if (!TryParseCosmosEndpointKey(cosmosConn, out string endpoint, out string key))
+            {
+                Console.WriteLine("ERROR: Could not parse Cosmos endpoint/key from the connection string. " +
+                    "Expected 'AccountEndpoint=...;AccountKey=...'.");
+                return 1;
+            }
+
+            string databaseId = "db";
+            if (values != null && values.Value.TryGetProperty("CosmosDb", out var dbProp) &&
+                dbProp.ValueKind == JsonValueKind.String)
+            {
+                var dbValue = dbProp.GetString();
+                if (!string.IsNullOrEmpty(dbValue))
+                {
+                    databaseId = dbValue;
+                }
+            }
+
+            string pgConn = options.PostgresConnectionString
+                ?? Environment.GetEnvironmentVariable("PostgresConnectionString")
+                ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava";
+
+            CosmosClient cosmosClient;
+            try
+            {
+                cosmosClient = new CosmosClient(endpoint, key);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR: Could not create a Cosmos client from the connection string: {ex.Message}");
+                return 1;
+            }
+            using (cosmosClient)
+            {
+                return await CosmosToPostgresMigrator.RunAsync(cosmosClient, databaseId, pgConn, options);
+            }
         }
 
         private static bool HasUnbalancedQuotes(string text)
