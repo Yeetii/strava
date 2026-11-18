@@ -3,15 +3,16 @@ using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
-using Shared.Services;
+using Shared.Geo;
+using Shared.Services.Postgres.Spatial;
 using API.Utils;
 
 namespace API.Endpoints.Peaks
 {
-    public class GetPeaksByGrid([FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection)
+    public class GetPeaksByGrid(IPeakRepository _peaks)
     {
+        // Peaks are stored at zoom 11; the optional zoom selects a view over those tiles.
         const int DefaultZoom = 11;
 
         [OpenApiOperation(tags: ["Peaks"])]
@@ -26,9 +27,28 @@ namespace API.Endpoints.Peaks
             try
             {
                 int zoom = ParseZoom(req);
-                var peaks = await _peaksCollection.FetchByTiles([(x, y)], zoom, cancellationToken: cancellationToken);
+                IEnumerable<Feature> features;
+                if (zoom == DefaultZoom)
+                {
+                    var peaks = await _peaks.GetByTile(x, y, cancellationToken);
+                    features = peaks.Select(p => p.ToFeature()).ToList();
+                }
+                else
+                {
+                    // Map a non-canonical tile onto the zoom-11 storage tiles, then filter
+                    // on the centroid exactly as the legacy FetchByTiles path did.
+                    var storageKeys = SlippyTileCalculator.GetIntersectingTileKeys(zoom, x, y, DefaultZoom);
+                    var matched = new List<Feature>();
+                    foreach (var (storageX, storageY) in storageKeys)
+                    {
+                        var peaks = await _peaks.GetByTile(storageX, storageY, cancellationToken);
+                        matched.AddRange(peaks
+                            .Where(p => SlippyTileCalculator.WGS84ToTileIndex(p.ResolvedCentroid, zoom) == (x, y))
+                            .Select(p => p.ToFeature()));
+                    }
+                    features = matched;
+                }
 
-                var features = peaks.Select(p => p.ToFeature()).ToList();
                 var featureCollection = new FeatureCollection(features);
 
                 var response = req.CreateResponse(HttpStatusCode.OK);

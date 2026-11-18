@@ -3,10 +3,11 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
+using Shared.Services.Postgres;
 
 namespace Backend
 {
-    public class StoreCuratedPeaksGroups(ILogger<StoreCuratedPeaksGroups> _logger)
+    public class StoreCuratedPeaksGroups(ILogger<StoreCuratedPeaksGroups> _logger, IPeaksGroupRepository peaksGroupRepository)
     {
         private sealed record RefinedPeak(
             string name,
@@ -16,7 +17,6 @@ namespace Backend
         );
 
 
-        [CosmosDBOutput("db", "peaksGroups", Connection = "CosmosDBConnection")]
         [Function(nameof(StoreCuratedPeaksGroups))]
         public async Task<IEnumerable<PeaksGroup>?> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "peaks/refine")] HttpRequestData req)
         {
@@ -62,6 +62,12 @@ namespace Backend
                 };
                 groups.Add(group);
             });
+
+            // Replace the implicit CosmosDBOutput write: persist the parent first, then each child
+            // with its ParentId through the peaks_groups repository.
+            foreach (var group in groups)
+                await peaksGroupRepository.Upsert(group);
+
             return groups;
         }
     }

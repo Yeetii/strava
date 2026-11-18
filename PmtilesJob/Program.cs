@@ -3,10 +3,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Hangfire;
-using Microsoft.Azure.Cosmos;
+using Npgsql;
 using PmtilesJob;
+using Shared.Constants;
 using Shared.Hosting;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Admin;
+using Shared.Services.Postgres.Spatial;
 using System.Net.Http.Headers;
 
 var builder = Host.CreateDefaultBuilder(args)
@@ -68,11 +72,11 @@ var builder = Host.CreateDefaultBuilder(args)
 
         if (command.Command is PmtilesCommandKind.BuildAdminAreas)
         {
-            var cosmosConnection = configuration.GetConnectionString("CosmosDBConnection")
-                ?? configuration["CosmosDBConnection"]
-                ?? throw new InvalidOperationException("CosmosDBConnection is not configured.");
-
-            services.AddSingleton(new CosmosClient(cosmosConnection));
+            string postgresConnectionString = configuration.GetValue<string>(DatabaseConfig.PostgresConnectionStringKey)
+                ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava";
+            services.AddSingleton(NpgsqlDataSource.Create(postgresConnectionString));
+            services.AddPostgresSpatialRepositories();
+            services.AddPostgresAdminQueries();
             services.AddSingleton<AdminAreaPmtilesBuildService>();
         }
     })

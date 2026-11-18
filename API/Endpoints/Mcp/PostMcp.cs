@@ -6,16 +6,15 @@ using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Shared.Models;
-using Shared.Services;
+using Shared.Services.Postgres.Spatial;
 
 namespace API.Endpoints.Mcp;
 
 public class PostMcp(
     HttpClient httpClient,
     IConfiguration configuration,
-    [FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient peaksCollection)
+    IPeakRepository peaksRepository)
 {
     private const int MinPeakRadiusMetres = (int)10E3;
     private const int MaxPeakRadiusMetres = (int)100E3;
@@ -125,7 +124,7 @@ public class PostMcp(
 
         if (string.Equals(toolName, "get_peaks", StringComparison.Ordinal))
         {
-            return await HandleGetPeaksToolAsync(id, paramsElement, peaksCollection);
+            return await HandleGetPeaksToolAsync(id, paramsElement, peaksRepository);
         }
 
         return CreateJsonRpcError(id, -32601, $"Unknown tool: {toolName}");
@@ -169,7 +168,7 @@ public class PostMcp(
         return CreateToolResult(id, responseBody, !upstreamResponse.IsSuccessStatusCode);
     }
 
-    private async Task<object> HandleGetPeaksToolAsync(object? id, JsonElement paramsElement, TiledCollectionClient peaksCollection)
+    private async Task<object> HandleGetPeaksToolAsync(object? id, JsonElement paramsElement, IPeakRepository peaksRepository)
     {
         if (!paramsElement.TryGetProperty("arguments", out var argumentsElement))
         {
@@ -196,7 +195,7 @@ public class PostMcp(
             return CreateJsonRpcError(id, -32602, validationError);
         }
 
-        var peaks = await peaksCollection.GeoSpatialFetch(center, radius, CancellationToken.None);
+        var peaks = await peaksRepository.FindWithinRadius(center, radius, CancellationToken.None);
         var featureCollection = new FeatureCollection(peaks.Select(x => x.ToFeature()).ToList());
         var responseBody = JsonSerializer.Serialize(featureCollection, JsonOptions);
 

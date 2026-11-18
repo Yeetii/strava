@@ -3,15 +3,14 @@ using BAMCIS.GeoJSON;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
-using Shared.Services;
+using Shared.Services.Postgres.Spatial;
 using API.Utils;
 
 namespace API
 {
-    public class GetPeaks([FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection)
+    public class GetPeaks(IPeakRepository _peaks)
     {
         const int MinRadiusMetres = (int)40E3;
         const int MaxRadiusMetres = (int)100E3;
@@ -35,7 +34,7 @@ namespace API
                 }
                 int radius = ParseRadius(req);
 
-                var peaks = await _peaksCollection.GeoSpatialFetch(center, radius, cancellationToken);
+                var peaks = await _peaks.FindWithinRadius(center, radius, cancellationToken);
                 var features = peaks.Select(x => x.ToFeature()).ToList();
                 var featureCollection = new FeatureCollection(features);
 

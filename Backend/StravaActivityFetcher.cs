@@ -3,6 +3,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 using Shared.Services.StravaClient;
 
 namespace Backend
@@ -13,7 +14,7 @@ namespace Backend
         public required string ActivityId { get; set; }
     }
 
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, CollectionClient<Activity> _activitiesCollection, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, IActivityRepository _activityRepository, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
     {
         private readonly QueueClient _queueClient = queueClient;
         readonly HttpClient _backendApiClient = httpClientFactory.CreateClient("backendApiClient");
@@ -60,7 +61,7 @@ namespace Backend
                 }
 
                 var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
-                existingActivity = await _activitiesCollection.GetByIdMaybe(fetchJob.ActivityId, new Microsoft.Azure.Cosmos.PartitionKey(fetchJob.UserId), cancellationToken);
+                existingActivity = await _activityRepository.GetById(fetchJob.ActivityId, cancellationToken);
                 var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
                 if (activity is null)
                 {
@@ -69,9 +70,8 @@ namespace Backend
                     return;
                 }
 
-                await _activitiesCollection.UpsertDocument(
+                await _activityRepository.Upsert(
                     ActivityMapper.MapDetailedActivity(activity, existingActivity),
-                    priority: CosmosWritePriority.High,
                     cancellationToken: cancellationToken);
                 if (existingActivity == null)
                 {

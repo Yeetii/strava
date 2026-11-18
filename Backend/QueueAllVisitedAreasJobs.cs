@@ -3,17 +3,20 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Admin;
 
 namespace Backend
 {
-    public class QueueAllVisitedAreasJobs(CollectionClient<Activity> _cosmosClient, QueueClient queueClient)
+    public class QueueAllVisitedAreasJobs(IBackendAdminQueries queries, IActivityRepository activities, QueueClient queueClient)
     {
         [Function(nameof(QueueAllVisitedAreasJobs))]
         public async Task Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequestData req)
         {
             await QueueActivityCollectionJobs.QueueActivitiesExcludingTypesAsync(
-                _cosmosClient,
+                queries,
+                activities,
                 queueClient,
                 QueueConfig.CalculateVisitedAreasJobs,
                 ActivityTypeFilters.ExcludedFromAreas,

@@ -1,20 +1,16 @@
 using System.Text.Json;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 
 namespace Backend;
 
 public class DeleteActivityWorker(
-    ILogger<DeleteActivityWorker> _logger,
-    CollectionClient<Activity> _activitiesCollection,
-    CollectionClient<SummitedPeak> _summitedPeaksCollection,
-    CollectionClient<VisitedPath> _visitedPathsCollection,
-    CollectionClient<VisitedArea> _visitedAreasCollection,
-    QueueClient _queueClient)
+    ILogger<DeleteActivityWorker> logger,
+    IActivityRepository activities)
 {
     [Function(nameof(DeleteActivityWorker))]
     public async Task Run(
@@ -26,94 +22,25 @@ public class DeleteActivityWorker(
         if (deleteJob == null)
             throw new InvalidOperationException("Activity delete job payload is invalid.");
 
-
-        try
-        {
-            await RemoveActivityFromLinkedDocuments(_summitedPeaksCollection, deleteJob.UserId, deleteJob.ActivityId, cancellationToken);
-            await RemoveActivityFromLinkedDocuments(_visitedPathsCollection, deleteJob.UserId, deleteJob.ActivityId, cancellationToken);
-            await RemoveActivityFromLinkedDocuments(_visitedAreasCollection, deleteJob.UserId, deleteJob.ActivityId, cancellationToken);
-            await DeleteActivityIfPresent(deleteJob, cancellationToken);
-
-            await actions.CompleteMessageAsync(message, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            throw;
-        }
+        // activity_summits, activity_visited_paths and activity_visited_areas all have
+        // activity_id FKs with ON DELETE CASCADE, so deleting the activity removes every
+        // linked row. The old "find linked documents, then delete/patch each" walk is obsolete.
+        await DeleteActivityIfPresent(deleteJob, cancellationToken);
+        await actions.CompleteMessageAsync(message, cancellationToken);
     }
 
     private async Task DeleteActivityIfPresent(ActivityDeleteJob deleteJob, CancellationToken cancellationToken)
     {
-        try
-        {
-            await _activitiesCollection.DeleteDocument(deleteJob.ActivityId, new PartitionKey(deleteJob.UserId), cancellationToken);
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            _logger.LogInformation(
-                "Activity {ActivityId} for user {UserId} was already deleted or not found.",
-                deleteJob.ActivityId,
-                deleteJob.UserId);
-        }
+        // Delete is idempotent in PostgreSQL: a missing row affects zero rows.
+        await activities.Delete(deleteJob.ActivityId, cancellationToken);
+        logger.LogInformation(
+            "Deleted activity {ActivityId} for user {UserId}",
+            deleteJob.ActivityId,
+            deleteJob.UserId);
     }
 
-    private static async Task RemoveActivityFromLinkedDocuments<T>(
-        CollectionClient<T> collection,
-        string userId,
-        string activityId,
-        CancellationToken cancellationToken)
-        where T : IDocument
-    {
-        var partitionKey = new PartitionKey(userId);
-        var linkedDocs = await GetActivityLinkedDocuments(collection, userId, activityId, cancellationToken);
-        var cleanupPlan = BuildCleanupPlan(linkedDocs, activityId);
-
-        foreach (var docId in cleanupPlan.DocumentIdsToDelete)
-        {
-            await DeleteLinkedDocumentIfPresent(collection, docId, partitionKey, cancellationToken);
-        }
-
-        foreach (var patch in cleanupPlan.Patches)
-        {
-            await PatchLinkedDocumentIfPresent(collection, patch, partitionKey, cancellationToken);
-        }
-    }
-
-    private static async Task DeleteLinkedDocumentIfPresent<T>(
-        CollectionClient<T> collection,
-        string documentId,
-        PartitionKey partitionKey,
-        CancellationToken cancellationToken)
-        where T : IDocument
-    {
-        try
-        {
-            await collection.DeleteDocument(documentId, partitionKey, cancellationToken);
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-        }
-    }
-
-    private static async Task PatchLinkedDocumentIfPresent<T>(
-        CollectionClient<T> collection,
-        ActivityIdsPatch patch,
-        PartitionKey partitionKey,
-        CancellationToken cancellationToken)
-        where T : IDocument
-    {
-        try
-        {
-            await collection.PatchDocument(
-                patch.DocumentId,
-                partitionKey,
-                [PatchOperation.Set("/activityIds", patch.RemainingActivityIds)],
-                cancellationToken: cancellationToken);
-        }
-        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-        }
-    }
+    // The plan helpers below are kept because they are part of the type's public/internal contract
+    // (and covered by tests). They are no longer used by the cascade-based delete path above.
 
     internal static CleanupPlan BuildCleanupPlan(
         IEnumerable<ActivityLinkedDocumentProjection> linkedDocs,
@@ -139,24 +66,6 @@ public class DeleteActivityWorker(
         }
 
         return new CleanupPlan(documentIdsToDelete, patches);
-    }
-
-    private static async Task<List<ActivityLinkedDocumentProjection>> GetActivityLinkedDocuments<T>(
-        CollectionClient<T> collection,
-        string userId,
-        string activityId,
-        CancellationToken cancellationToken)
-        where T : IDocument
-    {
-        var query = new QueryDefinition(@"
-SELECT c.id, c.activityIds
-FROM c
-WHERE c.userId = @userId
-  AND ARRAY_CONTAINS(c.activityIds, @activityId)")
-            .WithParameter("@userId", userId)
-            .WithParameter("@activityId", activityId);
-
-        return (await collection.ExecuteQueryAsync<ActivityLinkedDocumentProjection>(query, cancellationToken: cancellationToken)).ToList();
     }
 
     internal sealed class ActivityLinkedDocumentProjection

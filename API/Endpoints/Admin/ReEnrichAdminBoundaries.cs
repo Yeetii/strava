@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
@@ -8,11 +7,12 @@ using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Shared.Constants;
 using Shared.Services;
+using Shared.Services.Postgres.Admin;
 
 namespace API.Endpoints.Admin;
 
 public class ReEnrichAdminBoundaries(
-    CosmosClient cosmosClient,
+    IOsmFeatureAdminQueries adminQueries,
     QueueClient queueClient,
     IConfiguration configuration,
     ILogger<ReEnrichAdminBoundaries> logger)
@@ -22,7 +22,7 @@ public class ReEnrichAdminBoundaries(
     [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(int),
-        Description = "Number of admin boundary documents queued for re-enrichment.")]
+        Description = "Number of admin boundary rows queued for re-enrichment.")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
     [Function(nameof(ReEnrichAdminBoundaries))]
     public async Task<HttpResponseData> Run(
@@ -31,21 +31,7 @@ public class ReEnrichAdminBoundaries(
         if (!IsAuthorized(req))
             return req.CreateResponse(HttpStatusCode.Unauthorized);
 
-        var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
-
-        var queryDefinition = new QueryDefinition(
-            "SELECT c.id FROM c WHERE c.kind = @kind AND NOT STARTSWITH(c.id, 'empty-') AND NOT STARTSWITH(c.id, 'pointer:')")
-            .WithParameter("@kind", FeatureKinds.AdminBoundary);
-
-        var ids = new List<string>();
-        using (var feedIterator = container.GetItemQueryIterator<IdOnly>(queryDefinition))
-        {
-            while (feedIterator.HasMoreResults)
-            {
-                var page = await feedIterator.ReadNextAsync();
-                ids.AddRange(page.Select(i => i.Id));
-            }
-        }
+        var ids = await adminQueries.GetAllAdminBoundaryIdsAsync();
 
         logger.LogInformation("Queuing {Count} admin boundary enrichment jobs", ids.Count);
 
@@ -70,6 +56,4 @@ public class ReEnrichAdminBoundaries(
         return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
             && providedKeys.FirstOrDefault() == adminKey;
     }
-
-    private record IdOnly(string Id);
 }

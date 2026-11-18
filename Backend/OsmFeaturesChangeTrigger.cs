@@ -3,78 +3,23 @@ using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres.Admin;
 
 namespace Backend;
 
-public class OsmFeaturesChangeTrigger(
-    QueueClient queueClient,
-    AdminBoundariesCollectionClient adminBoundaries,
-    ILogger<OsmFeaturesChangeTrigger> logger)
+/// <summary>
+/// Static helpers retained from the old OSM-features Cosmos change-feed trigger. The trigger
+/// handler itself was removed: PostgreSQL has no change-feed equivalent, so
+/// <see cref="AdminBoundaryMetricsPollingJob"/> polls stale admin boundaries instead.
+/// </summary>
+public static class OsmFeaturesChangeTrigger
 {
-    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.EnrichAdminBoundaryJobs);
-
     /// <summary>
-    /// Service Bus message application property set when enrichment is triggered by new feature data
-    /// rather than a schema version change. The worker bypasses the version check when this is present.
+    /// Service Bus message application property set when enrichment was triggered by new feature
+    /// data rather than a schema version change. Kept for the worker's force-enrich handling;
+    /// the new polling job only enqueues plain version-stale messages.
     /// </summary>
     internal const string ForceEnrichProperty = "ForceEnrich";
-
-    [Function(nameof(OsmFeaturesChangeTrigger))]
-    public async Task Run(
-        [CosmosDBTrigger(
-            databaseName: DatabaseConfig.CosmosDb,
-            containerName: DatabaseConfig.OsmFeaturesContainer,
-            Connection = "CosmosDBConnection",
-            LeaseContainerPrefix = "adminBoundaryMetrics",
-            CreateLeaseContainerIfNotExists = true)] IReadOnlyList<StoredFeature> changedDocuments,
-        CancellationToken cancellationToken)
-    {
-        // Admin boundaries: enqueue for enrichment when their metrics version is stale.
-        var adminBoundaryJobs = changedDocuments
-            .Where(ShouldEnrich)
-            .Select(d => new QueueMessage(d.Id))
-            .ToList();
-
-        if (adminBoundaryJobs.Count > 0)
-        {
-            logger.LogInformation("Queuing {Count} admin boundary enrichment jobs", adminBoundaryJobs.Count);
-            await _sender.SendMessagesAsync(adminBoundaryJobs, cancellationToken);
-        }
-
-        // Peaks / protected areas: find containing admin boundaries and force re-enrichment.
-        var newFeatures = changedDocuments
-            .Where(ShouldTriggerEnrichment)
-            .ToList();
-
-        if (newFeatures.Count == 0)
-            return;
-
-        var centroids = newFeatures
-            .Select(f => f.Centroid!)
-            .ToList();
-
-        var containingBoundaries = (await adminBoundaries.FindBoundarySummariesContainingAnyPoint(centroids, cancellationToken))
-            .DistinctBy(b => b.Id)
-            .ToList();
-
-        if (containingBoundaries.Count == 0)
-            return;
-
-            logger.LogInformation(
-            "Queuing {BoundaryCount} admin boundary re-enrichment jobs triggered by {FeatureCount} new features",
-            containingBoundaries.Count, newFeatures.Count);
-
-        var forceJobs = containingBoundaries
-            .Select(b =>
-            {
-                var msg = new QueueMessage(b.Id);
-                msg.ApplicationProperties[ForceEnrichProperty] = true;
-                return msg;
-            })
-            .ToList();
-
-        await _sender.SendMessagesAsync(forceJobs, cancellationToken);
-    }
 
     internal static bool ShouldEnrich(StoredFeature document)
     {
@@ -87,10 +32,14 @@ public class OsmFeaturesChangeTrigger(
         if (StoredFeature.IsPointerDocument(document))
             return false;
 
-        if (document.Properties.TryGetValue("adminBoundaryMetricsVersion", out var version))
+        // Cosmos stored the version in properties; PostGIS maps the metrics_version column onto
+        // "metricsVersion". Accept either so both representations are handled.
+        foreach (var key in new[] { "adminBoundaryMetricsVersion", "metricsVersion" })
         {
-            var versionText = version?.ToString();
-            if (int.TryParse(versionText, out int parsedVersion)
+            if (!document.Properties.TryGetValue(key, out var version))
+                continue;
+
+            if (int.TryParse(version?.ToString(), out int parsedVersion)
                 && parsedVersion >= AdminBoundaryMetricsEnricher.MetricsVersion)
             {
                 return false;
@@ -111,7 +60,58 @@ public class OsmFeaturesChangeTrigger(
         if (StoredFeature.IsPointerDocument(document))
             return false;
 
-        // Centroid is required by the enricher — skip documents that haven't been backfilled yet.
         return document.Centroid != null;
+    }
+}
+
+/// <summary>
+/// Hangfire recurring polling job that replaces the OSM-features Cosmos change feed. Polls
+/// <c>admin_boundaries</c> for rows whose <c>metrics_version</c> is behind the current version
+/// and enqueues <c>EnrichAdminBoundaryJobs</c> messages in batches of 100.
+/// </summary>
+public sealed class AdminBoundaryMetricsPollingJob(
+    IBackendAdminQueries queries,
+    QueueClient queueClient,
+    ILogger<AdminBoundaryMetricsPollingJob> logger)
+{
+    public const string RecurringJobId = "poll-admin-boundary-enrichment";
+    public const string CronExpression = "*/5 * * * *";
+    private const int BatchSize = 100;
+
+    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.EnrichAdminBoundaryJobs);
+
+    public async Task RunAsync(CancellationToken cancellationToken = default)
+    {
+        string? afterId = null;
+        var totalQueued = 0;
+
+        while (true)
+        {
+            var ids = await queries.GetStaleAdminBoundaryIds(
+                AdminBoundaryMetricsEnricher.MetricsVersion,
+                afterId,
+                BatchSize,
+                cancellationToken);
+
+            if (ids.Count == 0)
+                break;
+
+            // Same application properties as the old admin-boundary change-feed branch: none.
+            var messages = ids.Select(id => new QueueMessage(id)).ToList();
+            await _sender.SendMessagesAsync(messages, cancellationToken);
+            totalQueued += messages.Count;
+
+            logger.LogInformation(
+                "Queuing {Count} admin boundary enrichment jobs from stale metrics poll (after={AfterId})",
+                messages.Count, afterId ?? "<start>");
+
+            if (ids.Count < BatchSize)
+                break;
+
+            afterId = ids[^1];
+        }
+
+        if (totalQueued == 0)
+            logger.LogInformation("No stale admin boundaries found during metrics poll");
     }
 }

@@ -1,17 +1,15 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.OpenApi.Models;
-using Shared.Constants;
-using Shared.Services;
+using Shared.Services.Postgres.Admin;
 
 namespace API.Endpoints.Admin;
 
 public class GetCountries(
-    CosmosClient cosmosClient,
+    IOsmFeatureAdminQueries adminQueries,
     IConfiguration configuration)
 {
     // ISO 3166-1 alpha-2 codes for all UN member states + a few widely-recognised territories.
@@ -39,7 +37,7 @@ public class GetCountries(
     [OpenApiOperation(tags: ["Admin"])]
     [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(CountriesResponse),
-        Description = "All stored admin_level=2 country documents plus a list of ISO codes not yet stored.")]
+        Description = "All stored admin_level=2 country rows plus a list of ISO codes not yet stored.")]
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
     [Function(nameof(GetCountries))]
     public async Task<HttpResponseData> Run(
@@ -48,23 +46,10 @@ public class GetCountries(
         if (!IsAuthorized(req))
             return req.CreateResponse(HttpStatusCode.Unauthorized);
 
-        var container = cosmosClient.GetContainer(DatabaseConfig.CosmosDb, DatabaseConfig.OsmFeaturesContainer);
-
-        var query = new QueryDefinition(
-            "SELECT c.id, c.properties.name, c.properties.countryCode FROM c" +
-            " WHERE c.kind = @kind" +
-            " AND c.properties.adminLevel = '2'" +
-            " AND NOT STARTSWITH(c.id, 'empty-')" +
-            " AND NOT STARTSWITH(c.id, 'pointer:')")
-            .WithParameter("@kind", FeatureKinds.AdminBoundary);
-
-        var countries = new List<CountryEntry>();
-        using var feed = container.GetItemQueryIterator<CountryEntry>(query);
-        while (feed.HasMoreResults)
-        {
-            var page = await feed.ReadNextAsync();
-            countries.AddRange(page);
-        }
+        var stored = await adminQueries.GetCountriesAsync();
+        var countries = stored
+            .Select(c => new CountryEntry(c.Id, c.Name, c.CountryCode))
+            .ToList();
 
         countries.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
 

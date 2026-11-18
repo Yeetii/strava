@@ -1,18 +1,14 @@
 using System.Net;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
-using Shared.Services;
+using Shared.Services.Postgres.Admin;
 
 namespace Backend;
 
 public class CleanupExcludedActivityTypes(
-    CollectionClient<Activity> activitiesCollection,
-    CollectionClient<VisitedPath> visitedPathsCollection,
-    CollectionClient<VisitedArea> visitedAreasCollection,
-    CollectionClient<SummitedPeak> summitedPeaksCollection,
+    IBackendAdminQueries queries,
     ILogger<CleanupExcludedActivityTypes> logger)
 {
     [Function(nameof(CleanupExcludedActivityTypes))]
@@ -28,23 +24,8 @@ public class CleanupExcludedActivityTypes(
         var includePeaks = featureParam is "all" or "peaks";
         var includeAreas = featureParam is "all" or "areas";
 
-        // Project id + userId + sportType. Scope to single partition when userId is provided.
-        QueryDefinition activityQuery;
-        QueryRequestOptions? activityQueryOptions;
-        if (!string.IsNullOrWhiteSpace(userId))
-        {
-            activityQuery = new QueryDefinition("SELECT c.id, c.userId, c.sportType FROM c WHERE c.userId = @userId")
-                .WithParameter("@userId", userId);
-            activityQueryOptions = new QueryRequestOptions { PartitionKey = new PartitionKey(userId) };
-        }
-        else
-        {
-            activityQuery = new QueryDefinition("SELECT c.id, c.userId, c.sportType FROM c");
-            activityQueryOptions = null;
-        }
-
-        var activities = await activitiesCollection.ExecuteQueryAsync<ActivityIdProjection>(
-            activityQuery, activityQueryOptions, cancellationToken: cancellationToken);
+        // Project id + userId + sportType. Scope to a single user when requested.
+        var activities = await queries.GetActivityProjections(userId, cancellationToken);
 
         // Build activityId → userId maps for each feature's excluded set.
         var excludedFromPaths = activities
@@ -64,23 +45,19 @@ public class CleanupExcludedActivityTypes(
         int areasDeleted = 0, areasPatched = 0;
 
         if (includePaths && excludedFromPaths.Count > 0)
-        {
-            (pathsDeleted, pathsPatched) = await CleanupContainerAsync(
-                visitedPathsCollection, userId, excludedFromPaths, dryRun, cancellationToken);
-        }
+            pathsDeleted = await queries.RemoveExcludedActivityLinks(
+                BackendLinkFeature.Paths, excludedFromPaths.Keys, dryRun, cancellationToken);
 
         if (includePeaks && excludedFromPeaks.Count > 0)
-        {
-            (peaksDeleted, peaksPatched) = await CleanupContainerAsync(
-                summitedPeaksCollection, userId, excludedFromPeaks, dryRun, cancellationToken);
-        }
+            peaksDeleted = await queries.RemoveExcludedActivityLinks(
+                BackendLinkFeature.Peaks, excludedFromPeaks.Keys, dryRun, cancellationToken);
 
         if (includeAreas && excludedFromAreas.Count > 0)
-        {
-            (areasDeleted, areasPatched) = await CleanupContainerAsync(
-                visitedAreasCollection, userId, excludedFromAreas, dryRun, cancellationToken);
-        }
+            areasDeleted = await queries.RemoveExcludedActivityLinks(
+                BackendLinkFeature.Areas, excludedFromAreas.Keys, dryRun, cancellationToken);
 
+        // Junction rows are per-activity, so removing an excluded activity always deletes a row;
+        // there is no shared document left to "patch" (kept in the response for compatibility).
         logger.LogInformation(
             "CleanupExcludedActivityTypes for {Scope} (dryRun={DryRun}): " +
             "paths deleted={PathsDeleted} patched={PathsPatched}; " +
@@ -107,89 +84,5 @@ public class CleanupExcludedActivityTypes(
             areas = new { deleted = areasDeleted, patched = areasPatched },
         }, cancellationToken);
         return response;
-    }
-
-    /// <summary>
-    /// Removes contributions from excluded activities in a feature container.
-    /// When <paramref name="userId"/> is provided the container query is scoped to that
-    /// partition; otherwise all partitions are scanned.
-    /// </summary>
-    private async Task<(int Deleted, int Patched)> CleanupContainerAsync<T>(
-        CollectionClient<T> collection,
-        string? userId,
-        Dictionary<string, string> excludedActivityIdToUserId,
-        bool dryRun,
-        CancellationToken cancellationToken)
-        where T : IDocument
-    {
-        QueryDefinition query;
-        QueryRequestOptions? queryOptions;
-        if (!string.IsNullOrWhiteSpace(userId))
-        {
-            query = new QueryDefinition("SELECT c.id, c.userId, c.activityIds FROM c WHERE c.userId = @userId")
-                .WithParameter("@userId", userId);
-            queryOptions = new QueryRequestOptions { PartitionKey = new PartitionKey(userId) };
-        }
-        else
-        {
-            query = new QueryDefinition("SELECT c.id, c.userId, c.activityIds FROM c");
-            queryOptions = null;
-        }
-
-        var projections = await collection.ExecuteQueryAsync<ActivityLinkedProjection>(
-            query, queryOptions, cancellationToken: cancellationToken);
-
-        int deleted = 0, patched = 0;
-        foreach (var proj in projections)
-        {
-            if (proj.ActivityIds == null || proj.ActivityIds.Count == 0)
-                continue;
-
-            var remaining = proj.ActivityIds
-                .Where(id => !excludedActivityIdToUserId.ContainsKey(id))
-                .ToList();
-
-            if (remaining.Count == proj.ActivityIds.Count)
-                continue;
-
-            var docPartitionKey = new PartitionKey(proj.UserId);
-
-            if (dryRun)
-            {
-                if (remaining.Count == 0) deleted++;
-                else patched++;
-                continue;
-            }
-
-            if (remaining.Count == 0)
-            {
-                await collection.DeleteDocument(proj.Id, docPartitionKey, cancellationToken);
-                deleted++;
-            }
-            else
-            {
-                await collection.PatchDocument(
-                    proj.Id,
-                    docPartitionKey,
-                    [PatchOperation.Set("/activityIds", remaining)],
-                    cancellationToken: cancellationToken);
-                patched++;
-            }
-        }
-        return (deleted, patched);
-    }
-
-    private sealed class ActivityIdProjection
-    {
-        public required string Id { get; init; }
-        public required string UserId { get; init; }
-        public string? SportType { get; init; }
-    }
-
-    private sealed class ActivityLinkedProjection
-    {
-        public required string Id { get; init; }
-        public required string UserId { get; init; }
-        public List<string>? ActivityIds { get; init; }
     }
 }

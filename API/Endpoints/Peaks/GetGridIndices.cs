@@ -2,14 +2,14 @@ using System.Net;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres.Spatial;
 
 namespace API.Endpoints.Peaks
 {
-    public class GetGridIndices([FromKeyedServices(FeatureKinds.Peak)] TiledCollectionClient _peaksCollection)
+    public class GetGridIndices(IPeakRepository _peaks)
     {
         [OpenApiOperation(tags: ["Peaks"])]
         [OpenApiParameter(name: "peakIds", In = ParameterLocation.Query, Type = typeof(IEnumerable<string>), Required = true)]
@@ -26,7 +26,18 @@ namespace API.Endpoints.Peaks
                 return badResponse;
             }
             var peakIds = peakIdsString.Split(',');
-            var peaks = await _peaksCollection.GetByFeatureIdsAsync(peakIds);
+            // Match the legacy GetByFeatureIdsAsync lookup: normalise each id and try both
+            // the raw and the kind-prefixed form before reading the peaks table.
+            var normalizedIds = peakIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, id))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var candidateIds = normalizedIds
+                .SelectMany(id => new[] { id, StoredFeature.EnsurePrefixedFeatureId(FeatureKinds.Peak, id) })
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var peaks = await _peaks.GetByIds(candidateIds);
 
             var grids = peaks.Select(x => x.X + "," + x.Y).Distinct();
 

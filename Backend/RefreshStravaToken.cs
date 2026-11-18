@@ -1,22 +1,22 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using Shared.Services.Postgres;
 using Shared.Services.StravaClient;
 
 
 namespace Backend
 {
-    public class RefreshStravaToken(AuthenticationApi _authApi, CollectionClient<User> _userCollection, ILogger<RefreshStravaToken> _logger)
+    public class RefreshStravaToken(AuthenticationApi _authApi, IUserRepository _userRepository, ILogger<RefreshStravaToken> _logger)
     {
 
         [Function("RefreshStravaToken")]
         public async Task<HttpResponseData> Run(
             [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{userId}/accessToken")] HttpRequestData req, string userId)
         {
-            var user = await _userCollection.GetByIdMaybe(userId, new Microsoft.Azure.Cosmos.PartitionKey(userId));
+            var user = await _userRepository.GetById(userId);
 
             if (user == default || user.RefreshToken == null)
             {
@@ -46,7 +46,7 @@ namespace Backend
             user.AccessToken = tokenResponse.AccessToken;
             user.TokenExpiresAt = tokenResponse.ExpiresAt;
             user.StravaScope = tokenResponse.Scope ?? user.StravaScope;
-            await _userCollection.UpsertDocument(user);
+            await _userRepository.Upsert(user);
 
             var result = req.CreateResponse(System.Net.HttpStatusCode.OK);
             await result.WriteStringAsync(tokenResponse.AccessToken);
