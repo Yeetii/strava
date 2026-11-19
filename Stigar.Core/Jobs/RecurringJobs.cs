@@ -29,9 +29,12 @@ public sealed class RecurringJobRegistrationHostedService(
         {
             var jobType = job.GetType();
             var method = jobType.GetMethod(nameof(IRecurringJob.ExecuteAsync))!;
+            // ExecuteAsync takes a CancellationToken. Hangfire serializes it as a
+            // job argument (same value used by the expression-based registrations),
+            // so the argument count must match the method signature exactly.
             recurringJobs.AddOrUpdate(
                 job.JobId,
-                new Job(jobType, method, []),
+                new Job(jobType, method, [CancellationToken.None]),
                 job.Cron,
                 new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
         }
