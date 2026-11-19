@@ -50,7 +50,16 @@ public sealed class FileSystemOrganizerStore(string root, ILoggerFactory loggerF
         try
         {
             var resolved = await ResolveOrganizerKeyAsync(organizerKey, cancellationToken);
-            var path = OrganizerJsonPath(resolved);
+
+            // Resolve the key against the directories that actually exist under
+            // the trusted root. The caller's value is only used for comparison;
+            // the file path comes from the enumeration result, never from the
+            // user-provided key.
+            var directory = FindOrganizerDirectory(resolved);
+            if (directory is null)
+                return null;
+
+            var path = Path.Combine(directory, OrganizerFileName);
             if (!File.Exists(path))
                 return null;
 
@@ -60,6 +69,25 @@ public sealed class FileSystemOrganizerStore(string root, ILoggerFactory loggerF
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Finds an existing organizer directory by key. The returned path originates
+    /// from <see cref="Directory.EnumerateDirectories(string)"/> under the store
+    /// root, so no caller-controlled string is used to build a file path.
+    /// </summary>
+    private string? FindOrganizerDirectory(string organizerKey)
+    {
+        if (!Directory.Exists(_root))
+            return null;
+
+        foreach (var directory in Directory.EnumerateDirectories(_root))
+        {
+            if (string.Equals(Path.GetFileName(directory), organizerKey, StringComparison.OrdinalIgnoreCase))
+                return directory;
+        }
+
+        return null;
     }
 
     // ── Write ────────────────────────────────────────────────────────────
