@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Stigar.Core.Logging;
 using Stigar.Core.Models;
 using Stigar.Core.Services;
 
@@ -178,7 +179,7 @@ public sealed class BfsScraper(ILogger logger)
             {
                 logger.LogInformation(
                     "BFS: {Url} — collapsed {Before} GPX-backed route candidates to {After} final routes after name/distance dedupe",
-                    startUrl,
+                    LogInput.Sanitize(startUrl.ToString()),
                     preDedupRouteCount,
                     routes.Count);
             }
@@ -363,7 +364,7 @@ public sealed class BfsScraper(ILogger logger)
 
             logger.LogDebug("BFS depth {Depth}: fetching {Count} pages", depth, pagesToFetch.Count);
             foreach (var p in pagesToFetch)
-                logger.LogDebug("BFS depth {Depth}: {Url}", depth, p.Url);
+                logger.LogDebug("BFS depth {Depth}: {Url}", depth, LogInput.Sanitize(p.Url.ToString()));
 
             var fetchTasks = pagesToFetch.Select(e => TryFetchStringAsync(httpClient, e.Url, deadlineUtc, cancellationToken));
             var htmlResults = await Task.WhenAll(fetchTasks);
@@ -698,7 +699,7 @@ public sealed class BfsScraper(ILogger logger)
 
         logger.LogInformation(
             "BFS: {Url} — visited {Pages} pages, {GpxFound} GPX parsed, {Routes} unique GPX-backed route candidates",
-            startUrl,
+            LogInput.Sanitize(startUrl.ToString()),
             visitedPages.Count,
             parsedCount,
             routes.Count);
@@ -842,7 +843,7 @@ public sealed class BfsScraper(ILogger logger)
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "BfsScraper: could not fetch {Url}", fetchUri);
+            logger.LogDebug(ex, "BfsScraper: could not fetch {Url}", LogInput.Sanitize(fetchUri.ToString()));
             return null;
         }
     }

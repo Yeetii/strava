@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using Stigar.Core.Services;
 using System.Net;
 using Microsoft.Extensions.Logging;
+using Stigar.Core.Logging;
 using Stigar.Core.Models;
 using Stigar.Core.Services.Postgres.Admin;
 
@@ -68,7 +69,7 @@ public class CleanupExcludedActivityTypes(
             "paths deleted={PathsDeleted} patched={PathsPatched}; " +
             "peaks deleted={PeaksDeleted} patched={PeaksPatched}; " +
             "areas deleted={AreasDeleted} patched={AreasPatched}",
-            string.IsNullOrWhiteSpace(userId) ? "all users" : $"user {userId}", dryRun,
+            string.IsNullOrWhiteSpace(userId) ? "all users" : $"user {LogInput.Sanitize(userId)}", dryRun,
             pathsDeleted, pathsPatched,
             peaksDeleted, peaksPatched,
             areasDeleted, areasPatched);

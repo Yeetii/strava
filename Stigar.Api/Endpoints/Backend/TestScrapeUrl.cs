@@ -1,3 +1,4 @@
+using Stigar.Core.Logging;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -26,7 +27,7 @@ public class TestScrapeUrl(
             return TypedResults.BadRequest("Missing or invalid 'url' query parameter");
         }
 
-        logger.LogInformation("TestScrapeUrl: BFS-scraping {Url}", url);
+        logger.LogInformation("TestScrapeUrl: BFS-scraping {Url}", LogInput.Sanitize(url));
 
         var scraper = new BfsScraper(logger);
         var httpClient = httpClientFactory.CreateClient();

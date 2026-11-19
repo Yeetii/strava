@@ -1,5 +1,6 @@
 using Stigar.Core.Jobs;
 using Microsoft.Extensions.Logging;
+using Stigar.Core.Logging;
 using Stigar.Core.Constants;
 using Stigar.Core.Models;
 using Stigar.Core.Services;
@@ -25,8 +26,8 @@ public class DeleteActivityWorker(
         await activities.Delete(deleteJob.ActivityId, cancellationToken);
         logger.LogInformation(
             "Deleted activity {ActivityId} for user {UserId}",
-            deleteJob.ActivityId,
-            deleteJob.UserId);
+            LogInput.Sanitize(deleteJob.ActivityId),
+            LogInput.Sanitize(deleteJob.UserId));
     }
 
     // The plan helpers below are kept because they are part of the type's public/internal contract

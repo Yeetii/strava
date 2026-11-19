@@ -30,6 +30,30 @@ public class FileSystemOrganizerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task GetByIdAsync_TraversalKey_DoesNotReadOutsideRoot()
+    {
+        var outside = Path.Combine(Path.GetTempPath(), nameof(FileSystemOrganizerStoreTests), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(outside, "organizer.json"),
+                """{"id":"secret","url":"https://secret.example/"}""");
+
+            // A traversal attempt must resolve to a directory under the store root,
+            // never to the sibling directory outside it.
+            var relative = Path.GetRelativePath(_root, outside).Replace(Path.DirectorySeparatorChar, '/');
+            var loaded = await _store.GetByIdAsync($"{relative}/..");
+
+            Assert.Null(loaded);
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task WriteAsync_And_GetByIdAsync_RoundTrip()
     {
         var doc = new RaceOrganizerDocument { Id = "example.com", Url = "https://example.com/" };

@@ -579,7 +579,33 @@ public sealed class FileSystemOrganizerStore(string root, ILoggerFactory loggerF
     private string OrganizerDirectory(string organizerKey)
     {
         ValidateOrganizerKey(organizerKey);
-        return Path.Combine(_root, organizerKey);
+
+        // Sanitize each segment with Path.GetFileName (a recognized path
+        // sanitizer) before combining, then confirm the result stays under the
+        // configured root. This keeps multi-segment keys intact while making
+        // traversal impossible even if validation ever changes.
+        var segments = organizerKey
+            .Split(['/', '\\', Path.DirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries)
+            .Select(segment => Path.GetFileName(segment))
+            .Where(segment => segment.Length > 0 && segment != "." && segment != "..")
+            .ToArray();
+        var directory = Path.GetFullPath(Path.Combine([_root, .. segments]));
+        EnsureUnderRoot(directory, organizerKey);
+        return directory;
+    }
+
+    private void EnsureUnderRoot(string fullPath, string originalValue)
+    {
+        var rootPrefix = _root.EndsWith(Path.DirectorySeparatorChar)
+            ? _root
+            : _root + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(rootPrefix, StringComparison.Ordinal)
+            && !string.Equals(fullPath, _root, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"Path for '{originalValue}' escapes the organizer store root.",
+                nameof(originalValue));
+        }
     }
 
     private string OrganizerJsonPath(string organizerKey)
