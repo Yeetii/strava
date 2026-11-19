@@ -37,6 +37,19 @@ public class PostGraphHopperRouteTests
         Assert.Equal(1, handler.CallCount);
     }
 
+    [Fact]
+    public async Task Handle_ValidUpstreamJson_ReturnsJsonResultWithNoSniff()
+    {
+        var handler = new RecordingHandler { ResponseBody = "{\"paths\":[]}" };
+        var endpoint = new PostGraphHopperRoute(new HttpClient(handler), CreateConfiguration());
+        var context = CreateContext("{\"points\":[]}");
+
+        var result = await endpoint.Handle(context, CancellationToken.None);
+
+        Assert.IsType<JsonHttpResult<System.Text.Json.JsonElement>>(result);
+        Assert.Equal("nosniff", context.Response.Headers["X-Content-Type-Options"].ToString());
+    }
+
     private static IConfiguration CreateConfiguration() =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>

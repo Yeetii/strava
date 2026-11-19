@@ -1,4 +1,4 @@
-using System.Text;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -28,12 +28,13 @@ public class PostGraphHopperRoute(HttpClient httpClient, IConfiguration configur
         if (string.IsNullOrWhiteSpace(body))
             return TypedResults.BadRequest("Request body is required.");
 
-        // Only forward well-formed JSON, and never echo the raw request body into
-        // a response. Both ends are parsed so caller-controlled bytes cannot be
-        // rendered as HTML/JavaScript by a downstream client.
+        // Parse the caller's bytes into structured JSON before forwarding them.
+        // No raw request string ever reaches a response or an HTML/JS sink.
+        JsonElement requestJson;
         try
         {
-            using var requestJson = JsonDocument.Parse(body);
+            using var document = JsonDocument.Parse(body);
+            requestJson = document.RootElement.Clone();
         }
         catch (JsonException)
         {
@@ -42,24 +43,24 @@ public class PostGraphHopperRoute(HttpClient httpClient, IConfiguration configur
 
         using var upstreamRequest = new HttpRequestMessage(HttpMethod.Post, _graphHopperRouteUrl)
         {
-            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            Content = JsonContent.Create(requestJson),
         };
 
         using var upstreamResponse = await httpClient.SendAsync(upstreamRequest, cancellationToken);
-        var responseBody = await upstreamResponse.Content.ReadAsStringAsync(cancellationToken);
         var statusCode = (int)upstreamResponse.StatusCode;
-
         context.Response.Headers["X-Content-Type-Options"] = "nosniff";
 
+        JsonElement responseJson;
         try
         {
-            using var responseJson = JsonDocument.Parse(responseBody);
-            return TypedResults.Json(responseJson.RootElement.Clone(), statusCode: statusCode);
+            responseJson = await upstreamResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
             // Upstream returned a non-JSON error page: do not relay it verbatim.
             return TypedResults.StatusCode(statusCode >= 400 ? statusCode : StatusCodes.Status502BadGateway);
         }
+
+        return TypedResults.Json(responseJson, statusCode: statusCode);
     }
 }
