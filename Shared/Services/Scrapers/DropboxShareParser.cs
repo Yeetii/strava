@@ -1,7 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 /// <summary>
 /// Dropbox shared-link handling: <c>dl=1</c> on folders yields a zip; single-file links need <c>dl=1</c> for raw download.

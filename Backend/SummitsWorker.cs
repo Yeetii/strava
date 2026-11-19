@@ -137,10 +137,10 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     }
 
     internal static string BuildSummitedPeakDocumentId(string userId, FeatureId peakId)
-        => $"{userId}-{NormalizeSummitedPeakId(peakId)}";
+        => PeakIdRules.BuildSummitedPeakDocumentId(userId, peakId);
 
     internal static string NormalizeSummitedPeakId(FeatureId peakId)
-        => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, peakId.Value);
+        => PeakIdRules.Normalize(peakId);
 
     private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities, CancellationToken cancellationToken)
     {

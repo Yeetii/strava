@@ -20,35 +20,10 @@ public static class OsmFeaturesChangeTrigger
     /// data rather than a schema version change. Kept for the worker's force-enrich handling;
     /// the new polling job only enqueues plain version-stale messages.
     /// </summary>
-    internal const string ForceEnrichProperty = "ForceEnrich";
+    internal const string ForceEnrichProperty = AdminBoundaryEnrichmentRules.ForceEnrichProperty;
 
     internal static bool ShouldEnrich(StoredFeature document)
-    {
-        if (!string.Equals(document.Kind, FeatureKinds.AdminBoundary, StringComparison.Ordinal))
-            return false;
-
-        if (document.Id.StartsWith("empty-", StringComparison.Ordinal))
-            return false;
-
-        if (StoredFeature.IsPointerDocument(document))
-            return false;
-
-        // Cosmos stored the version in properties; PostGIS maps the metrics_version column onto
-        // "metricsVersion". Accept either so both representations are handled.
-        foreach (var key in new[] { "adminBoundaryMetricsVersion", "metricsVersion" })
-        {
-            if (!document.Properties.TryGetValue(key, out var version))
-                continue;
-
-            if (int.TryParse(version?.ToString(), out int parsedVersion)
-                && parsedVersion >= AdminBoundaryMetricsEnricher.MetricsVersion)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+        => AdminBoundaryEnrichmentRules.ShouldEnrich(document);
 
     internal static bool ShouldTriggerEnrichment(StoredFeature document)
     {

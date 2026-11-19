@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
 
-namespace Backend;
+namespace Shared.Services;
 
 public static partial class SkyrunningDiscoveryAgent
 {

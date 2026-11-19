@@ -3,7 +3,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using Shared.Services;
 
-namespace Backend;
+namespace Shared.Services;
 
 public static partial class MittloppDiscoveryAgent
 {

@@ -1,3 +1,5 @@
+using Hangfire;
+using Shared.Services;
 using System.Net;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -9,7 +11,7 @@ namespace Backend;
 
 public class BackfillVisitedPathOsmHighwayIds(
     IBackendAdminQueries queries,
-    QueueClient queueClient,
+    IBackgroundJobClient jobs,
     ILogger<BackfillVisitedPathOsmHighwayIds> logger)
 {
     private const int DefaultBatchSize = 200;
@@ -112,9 +114,9 @@ public class BackfillVisitedPathOsmHighwayIds(
 
         var queuedActivities = await QueueActivityCollectionJobs.QueueActivityIdsAsync(
             activityIds,
-            queueClient,
+            jobs,
             QueueConfig.CalculateVisitedPathsJobs,
-            TimeSpan.Zero);
+            cancellationToken);
 
         var nextContinuationToken = activityIds.Count == batchSize ? activityIds[^1] : null;
         return (activityIds.Count, queuedActivities, nextContinuationToken);

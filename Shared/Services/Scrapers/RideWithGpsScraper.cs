@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services;
 
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 /// <summary>
 /// Scrapes race routes from RideWithGPS embedded iframes.

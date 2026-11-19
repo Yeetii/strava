@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Shared.Services;
 
-namespace Backend;
+namespace Shared.Services;
 
 public static partial class RaceScrapeDiscovery
 {

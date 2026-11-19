@@ -1,8 +1,8 @@
 using Shared.Services.StravaClient.Model;
 
-namespace Backend;
+namespace Shared.Services;
 
-internal static class ActivityTypeFilters
+public static class ActivityTypeFilters
 {
     private static readonly HashSet<string> CommonExclusions = new(StringComparer.Ordinal)
     {

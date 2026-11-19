@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
 
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 /// <summary>
 /// Scrapes race routes from a <see href="https://racedaymap.com"/> embed.

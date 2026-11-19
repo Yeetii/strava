@@ -1,3 +1,4 @@
+using Shared.Services;
 using Shared.Jobs;
 using Microsoft.Azure.Functions.Worker;
 using Backend;
@@ -7,50 +8,45 @@ namespace Backend.Tests;
 public class RaceDiscoveryMessageTests
 {
     [Fact]
-    public void BuildDiscoveryQueueMessage_WritesJsonMessage()
+    public void DiscoveryJob_SerializesTypedPayload()
     {
-        var message = RaceDiscoveryService.BuildDiscoveryQueueMessage(new RaceDiscoveryMessage("duv", 3));
+        var message = new RaceDiscoveryMessage("duv", 3);
 
-        Assert.Equal("application/json", message.ContentType);
-        Assert.Equal("discovery:duv:3", message.MessageId);
-        Assert.Contains("\"agent\":\"duv\"", message.Body.ToString(), StringComparison.Ordinal);
-        Assert.Contains("\"page\":3", message.Body.ToString(), StringComparison.Ordinal);
+        var json = System.Text.Json.JsonSerializer.Serialize(message, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+
+        Assert.Contains("\"agent\":\"duv\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"page\":3", json, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void BuildDiscoveryQueueMessage_WritesMetadataProperties()
+    public void DiscoveryJob_SerializesPaginationMetadata()
     {
-        var message = RaceDiscoveryService.BuildDiscoveryQueueMessage(
-            new RaceDiscoveryMessage("itra", 2, Country: "AF", CountryIndex: 0, CountryPage: 2, CountryPageCount: 3, RacesOnPage: 50));
+        var message = new RaceDiscoveryMessage("itra", 2, Country: "AF", CountryIndex: 0, CountryPage: 2, CountryPageCount: 3, RacesOnPage: 50);
 
-        Assert.Equal("AF", message.ApplicationProperties["country"]);
-        Assert.Equal(0, message.ApplicationProperties["countryIndex"]);
-        Assert.Equal(2, message.ApplicationProperties["countryPage"]);
-        Assert.Equal(3, message.ApplicationProperties["countryPageCount"]);
-        Assert.Equal(50, message.ApplicationProperties["racesOnPage"]);
-        Assert.Contains("\"country\":\"AF\"", message.Body.ToString(), StringComparison.Ordinal);
-        Assert.Contains("\"racesOnPage\":50", message.Body.ToString(), StringComparison.Ordinal);
+        var json = System.Text.Json.JsonSerializer.Serialize(message, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+
+        Assert.Contains("\"country\":\"AF\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"racesOnPage\":50", json, StringComparison.Ordinal);
+        Assert.Equal("discovery:itra:2", RaceDiscoveryService.BuildDiscoveryJobId(message));
     }
 
     [Fact]
-    public void BuildDiscoveryQueueMessage_UsesStableIdAcrossRetriesForSamePage()
+    public void DiscoveryJobId_IsStableAcrossRetriesForSamePage()
     {
-        var first = RaceDiscoveryService.BuildDiscoveryQueueMessage(
-            new RaceDiscoveryMessage("itra", 7, Country: "US", CountryIndex: 226, CountryPage: 3, CountryPageCount: 4, RacesOnPage: 40));
-        var second = RaceDiscoveryService.BuildDiscoveryQueueMessage(
-            new RaceDiscoveryMessage("itra", 7, Country: "US", CountryIndex: 226, CountryPage: 3, CountryPageCount: 4, RacesOnPage: 40));
+        var first = new RaceDiscoveryMessage("itra", 7, Country: "US", CountryIndex: 226, CountryPage: 3, CountryPageCount: 4, RacesOnPage: 40);
+        var second = new RaceDiscoveryMessage("itra", 7, Country: "US", CountryIndex: 226, CountryPage: 3, CountryPageCount: 4, RacesOnPage: 40);
 
-        Assert.Equal("discovery:itra:7", first.MessageId);
-        Assert.Equal(first.MessageId, second.MessageId);
+        Assert.Equal(RaceDiscoveryService.BuildDiscoveryJobId(first), RaceDiscoveryService.BuildDiscoveryJobId(second));
+        Assert.Equal("discovery:itra:7", RaceDiscoveryService.BuildDiscoveryJobId(first));
     }
 
     [Fact]
-    public void BuildDiscoveryQueueMessage_UsesDifferentIdForDifferentPages()
+    public void DiscoveryJobId_DiffersForDifferentPages()
     {
-        var first = RaceDiscoveryService.BuildDiscoveryQueueMessage(new RaceDiscoveryMessage("itra", 7));
-        var second = RaceDiscoveryService.BuildDiscoveryQueueMessage(new RaceDiscoveryMessage("itra", 8));
+        var first = new RaceDiscoveryMessage("itra", 7);
+        var second = new RaceDiscoveryMessage("itra", 8);
 
-        Assert.NotEqual(first.MessageId, second.MessageId);
+        Assert.NotEqual(RaceDiscoveryService.BuildDiscoveryJobId(first), RaceDiscoveryService.BuildDiscoveryJobId(second));
     }
 
     [Fact]

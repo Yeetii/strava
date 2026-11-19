@@ -2,9 +2,9 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using Shared.Services;
-using static Backend.RaceScrapeDiscovery;
+using static Shared.Services.RaceScrapeDiscovery;
 
-namespace Backend;
+namespace Shared.Services;
 
 public static partial class ItraDiscoveryAgent
 {

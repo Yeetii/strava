@@ -1,10 +1,10 @@
 using Microsoft.Extensions.Logging;
 using Shared.Services;
 
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 // Fetches the UTMB race HTML page, extracts .gpx hrefs, downloads each file, and returns the parsed routes.
-internal sealed class UtmbScraper(ILogger logger) : IRaceScraper
+public sealed class UtmbScraper(ILogger logger) : IRaceScraper
 {
     public bool CanHandle(ScrapeJob job) => job.UtmbUrl is not null;
 

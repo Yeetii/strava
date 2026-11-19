@@ -1,5 +1,5 @@
 using Shared.Jobs;
-using Backend.Scrapers;
+using Shared.Services.Scrapers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;

@@ -1,4 +1,5 @@
-using Backend.Scrapers;
+using Shared.Services;
+using Shared.Services.Scrapers;
 using Microsoft.Extensions.Logging;
 using Moq;
 

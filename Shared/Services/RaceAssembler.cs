@@ -23,7 +23,7 @@ public static partial class RaceAssembler
     // Scraper key priority (highest → lowest).
     public static readonly string[] ScraperPriority = ["utmb", "itra", "mistral", "bfs"];
 
-    // Property name constants — keep in sync with Backend.RaceScrapeDiscovery.Prop*
+    // Property name constants — keep in sync with RaceScrapeDiscovery.Prop*
     internal const string PropName = "name";
     internal const string PropDate = "date";
     internal const string PropWebsite = "website";

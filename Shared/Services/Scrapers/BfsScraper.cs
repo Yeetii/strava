@@ -2,11 +2,11 @@ using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services;
 
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 // Performs a breadth-first search from a race website URL to discover GPX route files.
 // Depth 3 / bounded by a total crawl budget.
-internal sealed class BfsScraper(ILogger logger)
+public sealed class BfsScraper(ILogger logger)
 {
     private readonly RaceDayMapScraper _raceDayMap = new(logger);
     private readonly RideWithGpsScraper _rideWithGps = new(logger);

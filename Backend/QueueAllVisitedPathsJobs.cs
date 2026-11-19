@@ -1,3 +1,4 @@
+using Hangfire;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Constants;
@@ -8,7 +9,7 @@ using Shared.Services.Postgres.Admin;
 
 namespace Backend
 {
-    public class QueueAllVisitedPathsJobs(IBackendAdminQueries queries, IActivityRepository activities, QueueClient queueClient)
+    public class QueueAllVisitedPathsJobs(IBackendAdminQueries queries, IActivityRepository activities, IBackgroundJobClient jobs)
     {
         [Function(nameof(QueueAllVisitedPathsJobs))]
         public async Task Run(
@@ -17,7 +18,7 @@ namespace Backend
             await QueueActivityCollectionJobs.QueueActivitiesExcludingTypesAsync(
                 queries,
                 activities,
-                queueClient,
+                jobs,
                 QueueConfig.CalculateVisitedPathsJobs,
                 ActivityTypeFilters.ExcludedFromPaths,
                 ActivitySyncStage.VisitedPaths,

@@ -1,3 +1,4 @@
+using Shared.Services;
 using System.Text.RegularExpressions;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;

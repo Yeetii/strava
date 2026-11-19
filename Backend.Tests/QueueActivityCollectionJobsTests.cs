@@ -1,3 +1,4 @@
+using Shared.Services;
 namespace Backend.Tests;
 
 public class QueueActivityCollectionJobsTests

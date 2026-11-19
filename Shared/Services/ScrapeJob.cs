@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Shared.Services;
 
-namespace Backend;
+namespace Shared.Services;
 
 // Flat message enqueued onto the unified scrapeRace service bus queue.
 // Each source has its own typed URL field; the worker tries scrapers in priority order

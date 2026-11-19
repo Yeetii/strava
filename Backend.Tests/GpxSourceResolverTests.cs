@@ -1,4 +1,4 @@
-using Backend.Scrapers;
+using Shared.Services.Scrapers;
 
 namespace Backend.Tests;
 

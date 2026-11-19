@@ -1,6 +1,7 @@
+using Shared.Services;
 using System.Net;
 using System.Text.Json;
-using Backend.Scrapers;
+using Shared.Services.Scrapers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;

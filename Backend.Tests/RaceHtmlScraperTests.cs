@@ -1,3 +1,4 @@
+using Shared.Services;
 using Backend;
 
 namespace Backend.Tests;

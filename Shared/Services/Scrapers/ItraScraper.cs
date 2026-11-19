@@ -2,11 +2,11 @@ using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
 
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 // Fetches the ITRA JSON endpoint for a TraceDeTrail trace, converts Mercator points to WGS84,
 // and returns the route as a single ScrapedRoute with elevation metadata.
-internal sealed class ItraScraper(ILogger logger) : IRaceScraper
+public sealed class ItraScraper(ILogger logger) : IRaceScraper
 {
     public bool CanHandle(ScrapeJob job) => job.TraceDeTrailItraUrls?.Any(IsTraceItraUrl) == true;
 

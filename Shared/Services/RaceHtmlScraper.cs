@@ -1,10 +1,10 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Backend.Scrapers;
+using Shared.Services.Scrapers;
 using Shared.Services;
 
-namespace Backend;
+namespace Shared.Services;
 
 // Stateless helpers for extracting structured data from scraped HTML pages and
 // for parsing HTTP API responses that are only consumed by ScrapeRaceWorker.

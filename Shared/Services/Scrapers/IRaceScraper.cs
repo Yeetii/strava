@@ -1,4 +1,4 @@
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 // Abstraction for a single race-data source.
 // Each implementation handles one kind of URL (or set of URLs) in ScrapeJob and returns

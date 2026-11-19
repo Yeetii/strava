@@ -1,6 +1,6 @@
 using System.IO.Compression;
 using System.Text;
-using Backend.Scrapers;
+using Shared.Services.Scrapers;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests;

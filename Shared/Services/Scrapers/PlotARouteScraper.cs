@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services;
 
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 /// <summary>
 /// Scrapes PlotARoute routes from public route URLs and organizer pages linking to them.

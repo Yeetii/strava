@@ -1,6 +1,6 @@
 using Shared.Models;
 
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 // The data returned by a successful IRaceScraper run.
 // One ScrapedRoute is created per discovered GPX route.

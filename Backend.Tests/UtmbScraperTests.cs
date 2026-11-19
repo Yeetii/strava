@@ -1,6 +1,7 @@
+using Shared.Services;
 using System.Net;
 using System.Text;
-using Backend.Scrapers;
+using Shared.Services.Scrapers;
 using Microsoft.Extensions.Logging;
 
 namespace Backend.Tests;

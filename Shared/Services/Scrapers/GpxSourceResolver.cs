@@ -1,4 +1,4 @@
-namespace Backend.Scrapers;
+namespace Shared.Services.Scrapers;
 
 /// <summary>Allowed <see cref="ScrapedRoute.GpxSource"/> values written to <see cref="Shared.Models.ScrapedRouteOutput"/>.</summary>
 public static class GpxSourceKind

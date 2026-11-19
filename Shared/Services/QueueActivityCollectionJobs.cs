@@ -1,48 +1,39 @@
-using Microsoft.Azure.Functions.Worker;
-using Shared.Models;
-using Shared.Services;
-using Shared.Services.Postgres;
-using Shared.Services.Postgres.Admin;
 using System.Security.Cryptography;
 using System.Text;
+using Hangfire;
+using Shared.Jobs;
+using Shared.Models;
+using Shared.Services.Postgres;
+using Shared.Services.Postgres.Admin;
 
-namespace Backend;
+namespace Shared.Services;
 
-internal static class QueueActivityCollectionJobs
+/// <summary>
+/// Enqueues per-activity enrichment jobs as typed Hangfire calls. Shared by the
+/// API's manual backfill endpoints and the Workers host.
+/// </summary>
+public static class QueueActivityCollectionJobs
 {
-    private static readonly TimeSpan MessageSpacing = TimeSpan.FromSeconds(5);
-
-    public static async Task<int> QueueActivityIdsAsync(
+    public static Task<int> QueueActivityIdsAsync(
         IEnumerable<string> activityIds,
-        QueueClient queueClient,
+        IBackgroundJobClient jobs,
         string queueName,
-        TimeSpan? messageSpacing = null)
+        CancellationToken cancellationToken = default)
     {
         var ids = activityIds
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (ids.Count == 0)
-            return 0;
+        foreach (var id in ids)
+            EnqueueForQueue(jobs, queueName, ActivityIdJob.From(id));
 
-        var spacing = messageSpacing ?? MessageSpacing;
-        var sender = queueClient.CreateSender(queueName);
-        for (var index = 0; index < ids.Count; index++)
-        {
-            await sender.SendMessageAsync(new QueueMessage(ids[index])
-            {
-                MessageId = BuildQueueAllMessageId(queueName, ids[index]),
-                // ScheduledEnqueueTime = DateTimeOffset.UtcNow.Add(spacing * index)
-            });
-        }
-
-        return ids.Count;
+        return Task.FromResult(ids.Count);
     }
 
     public static async Task QueueAllActivitiesAsync(
         IActivityRepository activities,
-        QueueClient queueClient,
+        IBackgroundJobClient jobs,
         string queueName,
         string? userId = null,
         CancellationToken cancellationToken = default)
@@ -51,13 +42,13 @@ internal static class QueueActivityCollectionJobs
             ? await activities.GetAllIds(cancellationToken)
             : (await activities.GetAllByUser(userId, cancellationToken)).Select(a => a.Id).ToList();
 
-        await QueueActivityIdsAsync(activityIds, queueClient, queueName);
+        await QueueActivityIdsAsync(activityIds, jobs, queueName, cancellationToken);
     }
 
     public static async Task QueueActivitiesExcludingTypesAsync(
         IBackendAdminQueries queries,
         IActivityRepository activities,
-        QueueClient queueClient,
+        IBackgroundJobClient jobs,
         string queueName,
         IReadOnlySet<string> excludedSportTypes,
         ActivitySyncStage stage,
@@ -76,8 +67,39 @@ internal static class QueueActivityCollectionJobs
                 excluded.Add(p);
         }
 
-        await QueueActivityIdsAsync(included, queueClient, queueName);
+        await QueueActivityIdsAsync(included, jobs, queueName, cancellationToken);
         await MarkExcludedActivitiesAsync(activities, excluded, stage, cancellationToken);
+    }
+
+    private static void EnqueueForQueue(IBackgroundJobClient jobs, string queueName, ActivityIdJob job)
+    {
+        switch (queueName)
+        {
+            case Constants.QueueConfig.CalculateSummitsJobs:
+                jobs.EnqueueSummits(job);
+                break;
+            case Constants.QueueConfig.CalculateVisitedPathsJobs:
+                jobs.EnqueueVisitedPaths(job);
+                break;
+            case Constants.QueueConfig.CalculateVisitedAreasJobs:
+                jobs.EnqueueVisitedAreas(job);
+                break;
+            default:
+                throw new InvalidOperationException($"No typed job registered for queue '{queueName}'");
+        }
+    }
+
+    internal static string BuildQueueAllMessageId(string queueName, string activityId)
+    {
+        var normalizedQueueName = string.IsNullOrWhiteSpace(queueName)
+            ? "unknown-queue"
+            : queueName.Trim().ToLowerInvariant();
+        var normalizedActivityId = string.IsNullOrWhiteSpace(activityId)
+            ? "empty"
+            : activityId.Trim();
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"queue-all|{normalizedQueueName}|{normalizedActivityId}"));
+        var hash = Convert.ToHexString(bytes[..12]).ToLowerInvariant();
+        return $"queue-all:{normalizedQueueName}:{hash}";
     }
 
     private static async Task MarkExcludedActivitiesAsync(
@@ -129,19 +151,5 @@ internal static class QueueActivityCollectionJobs
             }
             await activities.UpdateProcessingStatus(p.Id, next, cancellationToken);
         }
-    }
-
-    internal static string BuildQueueAllMessageId(string queueName, string activityId)
-    {
-        var normalizedQueueName = string.IsNullOrWhiteSpace(queueName)
-            ? "unknown-queue"
-            : queueName.Trim().ToLowerInvariant();
-        var normalizedActivityId = string.IsNullOrWhiteSpace(activityId)
-            ? "empty"
-            : activityId.Trim();
-
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"queue-all|{normalizedQueueName}|{normalizedActivityId}"));
-        var hash = Convert.ToHexString(bytes[..12]).ToLowerInvariant();
-        return $"queue-all:{normalizedQueueName}:{hash}";
     }
 }
