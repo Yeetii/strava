@@ -63,7 +63,7 @@ var builder = Host.CreateDefaultBuilder(args)
             // shared store.
             services.AddHangfireServer(options =>
             {
-                options.WorkerCount = 1;
+                options.WorkerCount = HangfireInfrastructure.GetWorkerCount(context.Configuration);
                 options.Queues = [Stigar.Core.Constants.AppConfig.RaceTilesQueueName];
             });
             services.AddSingleton<IRaceTilesBuildJob, RaceTilesSchedulerJob>();

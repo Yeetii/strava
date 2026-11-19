@@ -36,7 +36,7 @@ var queues = QueueConfig.AllQueues.Select(JobEnqueueExtensions.NormalizeQueue).D
 
 builder.Services.AddHangfireServer(options =>
 {
-    options.WorkerCount = 1;
+    options.WorkerCount = HangfireInfrastructure.GetWorkerCount(builder.Configuration);
     options.Queues = isHeavy
         ? [.. queues, AppConfig.BackendPollingQueueName]
         : [AppConfig.BackendPollingQueueName];
