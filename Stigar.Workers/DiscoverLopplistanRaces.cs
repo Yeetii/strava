@@ -1,5 +1,5 @@
-using Stigar.Core.Services;
 using Stigar.Core.Jobs;
+using Stigar.Core.Services;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 

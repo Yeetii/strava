@@ -1,6 +1,6 @@
+using Stigar.Core.Jobs;
 using Microsoft.Extensions.Logging;
 using Stigar.Core.Services;
-using Stigar.Core.Jobs;
 
 namespace Stigar.Workers;
 

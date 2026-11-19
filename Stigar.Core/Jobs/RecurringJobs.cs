@@ -1,5 +1,6 @@
 using Hangfire;
 using Hangfire.Common;
+using Stigar.Core.Constants;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -17,6 +18,18 @@ public interface IRecurringJob
     Task ExecuteAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// The Hangfire-facing target for every native recurring job. It lives in the
+/// shared assembly so any host reading the store can deserialize the job, while
+/// the dispatcher implementation stays in the host that executes it. The job id
+/// is an argument, so one target serves all crons without a per-job interface.
+/// </summary>
+public interface IRecurringJobDispatcher
+{
+    [JobConsoleServerFilter]
+    Task RunAsync(string jobId);
+}
+
 /// <summary>Registers every IRecurringJob in DI as a Hangfire recurring job.</summary>
 public sealed class RecurringJobRegistrationHostedService(
     IEnumerable<IRecurringJob> jobs,
@@ -25,17 +38,17 @@ public sealed class RecurringJobRegistrationHostedService(
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        var method = typeof(IRecurringJobDispatcher).GetMethod(nameof(IRecurringJobDispatcher.RunAsync))!;
+
         foreach (var job in jobs)
         {
-            var jobType = job.GetType();
-            var method = jobType.GetMethod(nameof(IRecurringJob.ExecuteAsync))!;
-            // ExecuteAsync takes a CancellationToken. Hangfire serializes it as a
-            // job argument (same value used by the expression-based registrations),
-            // so the argument count must match the method signature exactly.
-            recurringJobs.AddOrUpdate(
-                job.JobId,
-                new Job(jobType, method, [CancellationToken.None]),
-                job.Cron,
+            // Target the shared interface, never the concrete implementation: the
+            // API dashboard and the pmtiles scheduler do not load Stigar.Workers.
+            // The queue is set on the job so it survives into every invocation;
+            // otherwise Hangfire uses "default", which no worker here serves.
+            var hangfireJob = new Job(
+                typeof(IRecurringJobDispatcher), method, [job.JobId], AppConfig.RecurringJobsQueueName);
+            recurringJobs.AddOrUpdate(job.JobId, hangfireJob, job.Cron,
                 new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
         }
 

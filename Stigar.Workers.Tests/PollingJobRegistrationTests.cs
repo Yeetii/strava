@@ -9,8 +9,8 @@ namespace Stigar.Workers.Tests;
 /// <summary>
 /// Pins the Hangfire-facing contract of the two Backend polling jobs. Their
 /// targets must be resolvable by every host sharing the Hangfire store (the API
-/// dashboard and the pmtiles scheduler do not load Stigar.Workers.dll), and they must
-/// run only on the heavy worker's dedicated queue.
+/// dashboard and the pmtiles scheduler do not load Stigar.Workers.dll). Both worker
+/// roles consume the backend-polling queue, so either one must be able to activate them.
 /// </summary>
 public class PollingJobRegistrationTests
 {

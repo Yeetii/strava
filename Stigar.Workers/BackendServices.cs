@@ -117,6 +117,17 @@ public static class BackendServices
         services.AddSingleton<DiscoverLopplistanRaces>();
         services.AddSingleton<DiscoverMittloppRaces>();
 
+        // Hangfire targets this shared interface; the concrete IRecurringJob
+        // implementations stay here in the executing host.
+        services.AddSingleton<IRecurringJobDispatcher, RecurringJobDispatcher>();
+
+        // Both worker roles consume the backend-polling queue, so the activity
+        // polling contract must be resolvable on either one. Hangfire resolves
+        // the target interface from DI before invoking the job.
+        services.AddSingleton<QueueActivityJobs>();
+        services.AddSingleton<IQueueActivityJobs>(sp =>
+            sp.GetRequiredService<QueueActivityJobs>());
+
         // Hangfire storage is registered by each host entry point, not here.
 
     }

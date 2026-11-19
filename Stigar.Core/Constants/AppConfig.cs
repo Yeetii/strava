@@ -34,6 +34,10 @@ public static class AppConfig
     // heavy worker serves it, so other hosts sharing the store cannot activate
     // jobs whose implementations are registered only in the Backend assembly.
     public const string BackendPollingQueueName = "backend-polling";
+
+    // Dedicated queue for native IRecurringJob cron invocations. Without an
+    // explicit queue Hangfire sends them to "default", which no worker serves.
+    public const string RecurringJobsQueueName = "recurring-jobs";
 }
 
 public static class OrganizerStoreProviders

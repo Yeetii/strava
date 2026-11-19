@@ -37,9 +37,11 @@ var queues = QueueConfig.AllQueues.Select(JobEnqueueExtensions.NormalizeQueue).D
 builder.Services.AddHangfireServer(options =>
 {
     options.WorkerCount = HangfireInfrastructure.GetWorkerCount(builder.Configuration);
+    // Both roles register the native IRecurringJob crons, so both must be able
+    // to serve their queue (a stack running only one profile still works).
     options.Queues = isHeavy
-        ? [.. queues, AppConfig.BackendPollingQueueName]
-        : [AppConfig.BackendPollingQueueName];
+        ? [.. queues, AppConfig.BackendPollingQueueName, AppConfig.RecurringJobsQueueName]
+        : [AppConfig.BackendPollingQueueName, AppConfig.RecurringJobsQueueName];
 });
 
 if (isHeavy)
@@ -47,9 +49,6 @@ if (isHeavy)
     builder.Services.AddSingleton<AdminBoundaryMetricsPollingJob>();
     builder.Services.AddSingleton<IAdminBoundaryMetricsPollingJob>(sp =>
         sp.GetRequiredService<AdminBoundaryMetricsPollingJob>());
-    builder.Services.AddSingleton<QueueActivityJobs>();
-    builder.Services.AddSingleton<IQueueActivityJobs>(sp =>
-        sp.GetRequiredService<QueueActivityJobs>());
     builder.Services.AddSingleton<IHostedService, PollingJobRegistrationHostedService>();
 }
 
