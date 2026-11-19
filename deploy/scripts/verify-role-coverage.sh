@@ -8,6 +8,7 @@ set -euo pipefail
 #   2. every worker container declares exactly one valid WORKER_ROLE
 #   3. every typed job contract has exactly one implementation in Workers
 #   4. every recurring job declares a non-empty cron and job id
+#   5. compose image names match the names the deploy workflow publishes
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -62,7 +63,15 @@ for f in $(grep -rl ': IRecurringJob\b' "${WORKERS_DIR}" --include='*.cs'); do
     grep -q 'public string Cron =>' "${f}" || fail "recurring job ${f} has no Cron"
 done
 
+# 5. Every stigar-* image referenced by compose must be built by the workflow.
+WORKFLOW_FILE="${ROOT_DIR}/.github/workflows/selfhosted-deploy.yml"
+for image in $(grep -oE 'stigar-[a-z]+' "${COMPOSE_FILE}" | sort -u); do
+    name="${image#stigar-}"
+    grep -qE "name: ${name}$" "${WORKFLOW_FILE}" \
+        || fail "compose references image '${image}' but the deploy workflow builds no '${name}' image"
+done
+
 if [[ "${status}" -eq 0 ]]; then
-    echo "Native architecture OK: ${recurring} recurring jobs, typed job contracts implemented once, no Functions envelope."
+    echo "Native architecture OK: ${recurring} recurring jobs, typed job contracts implemented once, no Functions envelope, compose images match the build matrix."
 fi
 exit "${status}"

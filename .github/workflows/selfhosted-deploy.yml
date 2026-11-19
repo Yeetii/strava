@@ -51,7 +51,7 @@ jobs:
           - name: api
             project: Stigar.Api
             dockerfile: deploy/docker/plain-host.Dockerfile
-          - name: backend
+          - name: workers
             project: Stigar.Workers
             dockerfile: deploy/docker/plain-host.Dockerfile
           - name: pmtiles
