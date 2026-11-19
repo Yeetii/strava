@@ -64,7 +64,7 @@ public static class BackendServices
         // string is supplied by the deploy environment; the localhost default
         // keeps local and test hosts startable before Postgres is configured.
         string postgresConnectionString = configuration.GetValue<string>(DatabaseConfig.PostgresConnectionStringKey)
-            ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava";
+            ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava;GSS Encryption Mode=Disable";
         services.AddSingleton(NpgsqlDataSource.Create(postgresConnectionString));
         services.AddPostgresCoreRepositories();
         services.AddPostgresSpatialRepositories();
@@ -97,6 +97,7 @@ public static class BackendServices
             var factory = serviceProvider.GetRequiredService<IHttpClientFactory>();
             return new AuthenticationApi(factory.CreateClient(), configuration);
         });
+        services.AddScoped<StravaTokenService>();
         services.AddScoped(serviceProvider =>
             new UserAuthenticationService(
                 serviceProvider.GetRequiredService<IUserRepository>(),

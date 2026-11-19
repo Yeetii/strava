@@ -40,6 +40,13 @@ public static class PeakIdRules
     public static string Normalize(BAMCIS.GeoJSON.FeatureId peakId)
         => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, peakId.Value);
 
+    /// <summary>
+    /// The peaks table is keyed by the kind-prefixed stored id (for example <c>peak:11908635</c>).
+    /// Junction rows that reference it must use that exact format or the FK rejects them.
+    /// </summary>
+    public static string ToStoredPeakId(BAMCIS.GeoJSON.FeatureId peakId)
+        => StoredFeature.EnsurePrefixedFeatureId(FeatureKinds.Peak, Normalize(peakId));
+
     public static string BuildSummitedPeakDocumentId(string userId, BAMCIS.GeoJSON.FeatureId peakId)
         => $"{userId}-{Normalize(peakId)}";
 }

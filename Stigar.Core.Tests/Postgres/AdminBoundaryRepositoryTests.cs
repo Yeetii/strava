@@ -1,5 +1,6 @@
 using BAMCIS.GeoJSON;
 using Stigar.Core.Models;
+using Stigar.Core.Services;
 using Stigar.Core.Services.Postgres.Spatial;
 using Xunit;
 
@@ -73,6 +74,35 @@ public sealed class AdminBoundaryRepositoryTests(PostgisFixture fixture)
         Assert.NotNull(summary.Centroid);
         Assert.Equal(8.0, summary.Centroid!.Lng, 1);
         Assert.Equal(46.9, summary.Centroid.Lat, 1);
+    }
+
+    [SkippableFact]
+    public async Task BulkUpsert_StoresPropertiesAsJsonb()
+    {
+        await fixture.ResetAsync();
+        var boundary = new StoredFeature
+        {
+            Id = "admin:bulk",
+            FeatureId = "bulk",
+            Kind = FeatureKinds.AdminBoundary,
+            X = 0,
+            Y = 0,
+            Zoom = 6,
+            Geometry = Geometry.FromJson(Polygon),
+            Properties = new Dictionary<string, dynamic>
+            {
+                ["adminLevel"] = "4",
+                ["name"] = "Bulk",
+                ["population"] = 12345
+            }
+        };
+
+        var repository = new AdminBoundaryRepository(fixture.DataSource);
+        await repository.BulkUpsert([boundary]);
+
+        var stored = await repository.GetById("admin:bulk");
+        Assert.NotNull(stored);
+        Assert.Equal("12345", stored!.Properties["population"]!.ToString());
     }
 
     private Task InsertBoundaryAsync(

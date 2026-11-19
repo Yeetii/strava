@@ -32,16 +32,26 @@ public class SummitsWorkerTests
     }
 
     [Fact]
+    public void ToStoredPeakId_UsesTheIdFormatStoredInThePeaksTable()
+    {
+        Assert.Equal("peak:11908635", PeakIdRules.ToStoredPeakId(new FeatureId("11908635")));
+        Assert.Equal("peak:11908635", PeakIdRules.ToStoredPeakId(new FeatureId("peak:11908635")));
+    }
+
+    [Fact]
     public async Task Run_WritesSummitLinksUsingPostgresRepositories()
     {
         const string userId = "user-1";
         const string activityId = "activity-1";
         const string peakId = "11908635";
+        // Ingestion stores peaks with a kind-prefixed Id; the FK on activity_summits.peak_id
+        // requires the summit link to use that exact stored id, not the normalized feature id.
+        const string storedPeakId = "peak:11908635";
 
         var activity = CreateActivity(activityId, userId, hasGeodata: true);
         var peak = new StoredFeature
         {
-            Id = peakId,
+            Id = storedPeakId,
             FeatureId = peakId,
             Kind = FeatureKinds.Peak,
             X = 0,
@@ -100,7 +110,7 @@ public class SummitsWorkerTests
                 It.Is<IEnumerable<SummitLink>>(links => links.Count() == 1
                     && links.First().ActivityId == activityId
                     && links.First().UserId == userId
-                    && links.First().PeakId == peakId),
+                    && links.First().PeakId == storedPeakId),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }

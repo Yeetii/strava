@@ -73,7 +73,7 @@ var builder = Host.CreateDefaultBuilder(args)
         if (command.Command is PmtilesCommandKind.BuildAdminAreas)
         {
             string postgresConnectionString = configuration.GetValue<string>(DatabaseConfig.PostgresConnectionStringKey)
-                ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava";
+                ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava;GSS Encryption Mode=Disable";
             services.AddSingleton(NpgsqlDataSource.Create(postgresConnectionString));
             services.AddPostgresSpatialRepositories();
             services.AddPostgresAdminQueries();

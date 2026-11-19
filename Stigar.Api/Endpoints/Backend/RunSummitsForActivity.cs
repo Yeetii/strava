@@ -75,7 +75,7 @@ public class RunSummitsForActivity(
             .Select(summit => new SummitLink(
                 activity.Id,
                 activity.UserId,
-                PeakIdRules.Normalize(summit.Id),
+                PeakIdRules.ToStoredPeakId(summit.Id),
                 DateTime.UtcNow))
             .ToList();
         await activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);

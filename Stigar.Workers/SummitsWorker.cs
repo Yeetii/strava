@@ -67,7 +67,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
             .Select(summit => new SummitLink(
                 activity.Id,
                 activity.UserId,
-                NormalizeSummitedPeakId(summit.Id),
+                ToStoredPeakId(summit.Id),
                 DateTime.UtcNow))
             .ToList();
 
@@ -94,8 +94,8 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     internal static string BuildSummitedPeakDocumentId(string userId, FeatureId peakId)
         => PeakIdRules.BuildSummitedPeakDocumentId(userId, peakId);
 
-    internal static string NormalizeSummitedPeakId(FeatureId peakId)
-        => PeakIdRules.Normalize(peakId);
+    internal static string ToStoredPeakId(FeatureId peakId)
+        => PeakIdRules.ToStoredPeakId(peakId);
 
     private async Task<IEnumerable<Feature>> FetchNearbyPeaks(IEnumerable<Activity> activities, CancellationToken cancellationToken)
     {

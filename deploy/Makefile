@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: up down logs ps pull deploy verify smoke config
+.PHONY: up down logs ps pull migrate deploy verify smoke config
 
 up:
 	$(COMPOSE) up -d --remove-orphans
@@ -17,6 +17,9 @@ ps:
 
 pull:
 	$(COMPOSE) pull
+
+migrate:
+	./scripts/migrate.sh
 
 deploy:
 	@test -n "$(TAG)" || (echo "Usage: make deploy TAG=<sha>" && exit 2)

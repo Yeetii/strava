@@ -19,7 +19,7 @@ x-logging: &default-logging
 x-plain-env: &plain-env
   DOTNET_ENVIRONMENT: Production
   RedisConnectionString: ${REDIS_CONNECTION_STRING:-redis:6379,abortConnect=false}
-  PostgresConnectionString: ${POSTGRES_CONNECTION_STRING:-Host=postgres;Database=strava;Username=strava;Password=${POSTGRES_PASSWORD:-strava}}
+  PostgresConnectionString: ${POSTGRES_CONNECTION_STRING:-Host=postgres;Database=strava;Username=strava;Password=${POSTGRES_PASSWORD:-strava};GSS Encryption Mode=Disable}
 
 x-service: &service
   restart: unless-stopped

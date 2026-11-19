@@ -241,7 +241,7 @@ public sealed class AdminBoundaryRepository(NpgsqlDataSource dataSource) : IAdmi
         parameters.AddValue("admin_level", SpatialRowMapping.GetInt(properties, "adminLevel") ?? 0);
         parameters.AddValue("name", SpatialRowMapping.GetText(properties, "name") ?? string.Empty);
         parameters.AddValue("wikidata", SpatialRowMapping.GetText(properties, "wikidata"));
-        parameters.AddValue("properties", SpatialRowMapping.PropertiesToJson(properties));
+        parameters.AddJsonb("properties", SpatialRowMapping.PropertiesToJson(properties));
         parameters.AddValue("metrics_version", SpatialRowMapping.GetInt(properties, "adminBoundaryMetricsVersion") ?? 0);
         SpatialRowMapping.AddGeometry(parameters, "geom", boundary.Geometry);
     }

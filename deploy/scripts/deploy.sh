@@ -38,6 +38,9 @@ echo "==> Pulling image tag ${TAG}"
 export IMAGE_TAG="${TAG}"
 docker compose pull
 
+echo "==> Applying database migrations"
+./scripts/migrate.sh
+
 if grep -qE '^IMAGE_TAG=' .env; then
     sed -i.bak "s|^IMAGE_TAG=.*|IMAGE_TAG=${TAG}|" .env
     rm -f .env.bak

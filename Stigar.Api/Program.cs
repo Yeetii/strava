@@ -7,6 +7,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Npgsql;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -48,7 +49,7 @@ var configuration = builder.Configuration;
 // supplied by the deploy environment; the localhost default keeps local and
 // test hosts startable before Postgres is configured.
 string apiPostgresConnectionString = configuration.GetValue<string>(DatabaseConfig.PostgresConnectionStringKey)
-    ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava";
+    ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava;GSS Encryption Mode=Disable";
 builder.Services.AddSingleton(NpgsqlDataSource.Create(apiPostgresConnectionString));
 builder.Services.AddPostgresCoreRepositories();
 builder.Services.AddPostgresSpatialRepositories();
@@ -118,6 +119,11 @@ builder.Services.AddHttpClient<OverpassClient>(client =>
     client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
     client.Timeout = TimeSpan.FromMinutes(10);
 });
+// Hangfire's dashboard reads every submitted form value in one shot when a
+// batch command (e.g. retry/delete many jobs) is dispatched. ASP.NET Core's
+// default ValueCountLimit of 1024 turns that into an unhandled 500.
+builder.Services.Configure<FormOptions>(options => options.ValueCountLimit = 10000);
+
 // All queues run on Hangfire/Redis. Storage is registered once per host;
 // producers enqueue strongly-typed jobs via IBackgroundJobClient.
 HangfireInfrastructure.AddHangfireStorage(builder.Services, configuration);
