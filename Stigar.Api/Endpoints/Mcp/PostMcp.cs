@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Stigar.Core.Models;
+using Stigar.Core.Services;
 using Stigar.Core.Services.Postgres.Spatial;
 
 namespace Stigar.Api.Endpoints.Mcp;
@@ -21,11 +22,14 @@ public class PostMcp(
     private const int MinPeakRadiusMetres = (int)10E3;
     private const int MaxPeakRadiusMetres = (int)100E3;
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+    private static JsonSerializerOptions CreateJsonOptions()
     {
-        PropertyNameCaseInsensitive = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
+        var options = GeoJsonJsonOptions.Create();
+        options.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        return options;
+    }
 
     private readonly string _graphHopperRouteUrl =
         configuration.GetValue<string>("GraphHopperRouteUrl")

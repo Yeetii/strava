@@ -4,8 +4,6 @@ using Stigar.Api.Utils;
 using Stigar.Core.Geo.SummitsCalculator;
 using Hangfire;
 using System.Net.Http.Headers;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Npgsql;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Configuration;
@@ -30,14 +28,10 @@ using Stigar.Core.Jobs;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.Configure<JsonSerializerOptions>(options =>
-{
-    options.PropertyNameCaseInsensitive = true;
-    options.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-    options.Converters.Add(new GeometrySystemTextJsonConverter());
-    options.Converters.Add(new JsonStringEnumConverter());
-    options.Converters.Add(new FeatureIdJsonConverter());
-});
+// Minimal API results (TypedResults.Ok / Results.Json) serialize with these options.
+// Without them GeoJSON enums become numbers, FeatureId becomes an object and geometry
+// coordinates are omitted, so a Configure<JsonSerializerOptions> call is not enough.
+builder.Services.ConfigureHttpJsonOptions(options => GeoJsonJsonOptions.Configure(options.SerializerOptions));
 
 var socketsHttpHandler = new SocketsHttpHandler();
 builder.Services.AddSingleton(socketsHttpHandler);
