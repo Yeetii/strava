@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -433,7 +434,7 @@ public class ScrapeRaceMistralWorker
         };
     }
 
-    private sealed record ManualMistralScrapeJob(string Url, string? Name = null);
+
 
     private sealed class MistralAgentResponse
     {

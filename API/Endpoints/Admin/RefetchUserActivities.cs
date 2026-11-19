@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;

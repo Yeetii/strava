@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using System.Linq;
 using System.Net;
 using System.Net.Http.Json;
@@ -61,7 +62,7 @@ public class PostManualMistralScrape(
 
         var organizerKey = OrganizerUrlRules.DeriveOrganizerKey(parsedUrl);
 
-        var requestMessage = new QueueMessage(JsonSerializer.Serialize(new ManualMistralScrapeQueueMessage(parsedUrl.AbsoluteUri, body.Name), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))
+        var requestMessage = new QueueMessage(JsonSerializer.Serialize(new ManualMistralScrapeJob(parsedUrl.AbsoluteUri, body.Name), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))
         {
             ContentType = "application/json"
         };
@@ -88,4 +89,4 @@ public class PostManualMistralScrape(
 
 public record PostManualMistralScrapeRequest(string Url, string? Name = null);
 public record PostManualMistralScrapeResponse(string EventKey, string CanonicalUrl);
-public record ManualMistralScrapeQueueMessage(string Url, string? Name = null);
+

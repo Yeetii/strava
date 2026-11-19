@@ -97,8 +97,6 @@ services:
     environment:
       <<: *plain-env
       WORKER_ROLE: schedule
-      ApiUrl: http://api/api/
-      BackendApiUrl: http://api/api/
       OrganizerStore__Provider: FileSystem
       OrganizerStore__RaceDataDir: /data/races
       ShardStore__Provider: FileSystem
@@ -128,8 +126,6 @@ services:
     environment:
       <<: *plain-env
       WORKER_ROLE: heavy
-      ApiUrl: http://api/api/
-      BackendApiUrl: http://api/api/
       OrganizerStore__Provider: FileSystem
       OrganizerStore__RaceDataDir: /data/races
       ShardStore__Provider: FileSystem

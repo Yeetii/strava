@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using Backend.Scrapers;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;

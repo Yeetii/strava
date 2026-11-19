@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;

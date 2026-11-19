@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
@@ -117,16 +118,4 @@ public class RaceDiscoveryService(QueueClient queueClient, IOrganizerStore organ
         => $"discovery:{message.Agent.Trim().ToLowerInvariant()}:{message.CurrentPage}";
 }
 
-public sealed record RaceDiscoveryMessage(
-    string Agent,
-    int? Page = null,
-    string? Country = null,
-    int? CountryIndex = null,
-    int? CountryPage = null,
-    int? CountryPageCount = null,
-    int? RacesOnPage = null)
-{
-    public int CurrentPage => Page.GetValueOrDefault(1);
-}
 
-public sealed record ScrapeRaceMessage(string OrganizerKey, bool IsUrgent = false);

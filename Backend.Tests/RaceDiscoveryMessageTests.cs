@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using Microsoft.Azure.Functions.Worker;
 using Backend;
 

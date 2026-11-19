@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using System.Net;
 using Shared.Models;
 using Microsoft.Azure.Functions.Worker;

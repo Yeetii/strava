@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using Shared.Jobs;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
@@ -8,16 +9,9 @@ using Shared.Services.StravaClient;
 
 namespace Backend
 {
-    public class ActivityFetchJob
-    {
-        public required string UserId { get; set; }
-        public required string ActivityId { get; set; }
-    }
-
-    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, IActivityRepository _activityRepository, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
+    public class StravaActivityFetcher(ILogger<StravaActivityFetcher> _logger, ActivitiesApi _activitiesApi, IActivityRepository _activityRepository, IUserRepository _userRepository, StravaTokenService _stravaTokenService, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
     {
         private readonly QueueClient _queueClient = queueClient;
-        readonly HttpClient _backendApiClient = httpClientFactory.CreateClient("backendApiClient");
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
         [Function(nameof(StravaActivityFetcher))]
@@ -51,16 +45,16 @@ namespace Backend
 
                     return;
                 }
-                var accessTokenResponse = await _backendApiClient.GetAsync($"{fetchJob.UserId}/accessToken");
-
-                if (!accessTokenResponse.IsSuccessStatusCode)
+                var user = await _userRepository.GetById(fetchJob.UserId, cancellationToken);
+                var accessToken = user is null
+                    ? null
+                    : await _stravaTokenService.GetValidAccessToken(user);
+                if (string.IsNullOrWhiteSpace(accessToken))
                 {
-                    var responseBody = await accessTokenResponse.Content.ReadAsStringAsync();
                     throw new InvalidOperationException(
-                        $"Failed to get access token for user {fetchJob.UserId}, activity {fetchJob.ActivityId}: {(int)accessTokenResponse.StatusCode} {accessTokenResponse.ReasonPhrase}. Response body: {responseBody}");
+                        $"Failed to get a valid Strava access token for user {fetchJob.UserId}, activity {fetchJob.ActivityId}.");
                 }
 
-                var accessToken = await accessTokenResponse.Content.ReadAsStringAsync();
                 existingActivity = await _activityRepository.GetById(fetchJob.ActivityId, cancellationToken);
                 var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
                 if (activity is null)

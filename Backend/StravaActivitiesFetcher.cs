@@ -1,3 +1,4 @@
+using Shared.Jobs;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
@@ -8,11 +9,9 @@ using System.Text.Json;
 
 namespace Backend
 {
-public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, IHttpClientFactory httpClientFactory, ActivitiesApi _activitiesApi, IActivityRepository _activityRepository, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
+public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, ActivitiesApi _activitiesApi, IActivityRepository _activityRepository, IUserRepository _userRepository, StravaTokenService _stravaTokenService, QueueClient queueClient, UserSyncStatusService _userSyncStatusService)
 {
-        private const int MaxAccessTokenRequestAttempts = 3;
         private readonly QueueClient _queueClient = queueClient;
-        readonly HttpClient _apiClient = httpClientFactory.CreateClient("backendApiClient");
         readonly QueueSender _activitiesFetchSender = queueClient.CreateSender(Shared.Constants.QueueConfig.ActivitiesFetchJobs);
 
         [Function(nameof(StravaActivitiesFetcher))]
@@ -45,15 +44,23 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
                     return;
                 }
 
-                string accessToken;
+                string? accessToken;
                 try
                 {
-                    accessToken = await GetAccessTokenWithRetryAsync(fetchJob.UserId, cancellationToken);
+                    var user = await _userRepository.GetById(fetchJob.UserId, cancellationToken);
+                    accessToken = user is null
+                        ? null
+                        : await _stravaTokenService.GetValidAccessToken(user);
+                    if (string.IsNullOrWhiteSpace(accessToken))
+                    {
+                        throw new InvalidOperationException(
+                            $"No valid Strava access token available for user {fetchJob.UserId}.");
+                    }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex,
-                        "Failed while fetching access token for user {UserId}. MessageId={MessageId}, Page={Page}, Before={Before}, After={After}",
+                        "Failed while resolving Strava access token for user {UserId}. MessageId={MessageId}, Page={Page}, Before={Before}, After={After}",
                         fetchJob.UserId,
                         message.MessageId,
                         fetchJob.Page,
@@ -185,62 +192,5 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, I
             return body.Length <= maxLength ? body : body[..maxLength] + "...";
         }
 
-        private async Task<string> GetAccessTokenWithRetryAsync(string userId, CancellationToken cancellationToken)
-        {
-            Exception? lastTransientException = null;
-
-            for (var attempt = 1; attempt <= MaxAccessTokenRequestAttempts; attempt++)
-            {
-                try
-                {
-                    using var response = await _apiClient.GetAsync($"{userId}/accessToken", cancellationToken);
-                    var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        throw new InvalidOperationException(
-                            $"Failed to get access token for user {userId}: {(int)response.StatusCode} {response.ReasonPhrase}. Response body: {responseBody}");
-                    }
-
-                    return responseBody;
-                }
-                catch (Exception ex) when (attempt < MaxAccessTokenRequestAttempts && IsTransientConnectionError(ex))
-                {
-                    lastTransientException = ex;
-                    await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
-                }
-            }
-
-            throw lastTransientException ?? new InvalidOperationException($"Unreachable retry state for access token request for user {userId}.");
-        }
-
-        private static bool IsTransientConnectionError(Exception ex)
-        {
-            if (ex is HttpRequestException httpRequestException
-                && (HasTransientConnectionCause(httpRequestException) || IsTransientHttpRequestMessage(httpRequestException)))
-                return true;
-            if (ex is IOException or System.Net.Sockets.SocketException or System.Security.Authentication.AuthenticationException)
-                return true;
-
-            return false;
-        }
-
-        private static bool HasTransientConnectionCause(Exception ex)
-        {
-            for (Exception? current = ex; current is not null; current = current.InnerException)
-            {
-                if (current is IOException or System.Net.Sockets.SocketException or System.Security.Authentication.AuthenticationException)
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static bool IsTransientHttpRequestMessage(HttpRequestException ex)
-        {
-            return ex.Message.Contains("Error while copying content to a stream", StringComparison.Ordinal)
-                || ex.Message.Contains("The response ended prematurely", StringComparison.Ordinal)
-                || ex.Message.Contains("The SSL connection could not be established", StringComparison.Ordinal);
-        }
     }
 }

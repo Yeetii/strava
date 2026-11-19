@@ -40,12 +40,6 @@ public static class BackendServices
 
         var socketsHttpHandler = new SocketsHttpHandler();
         services.AddSingleton(socketsHttpHandler);
-        services.AddHttpClient("apiClient", client =>
-            client.BaseAddress = new Uri(configuration.GetValue<string>("ApiUrl")
-                ?? throw new InvalidOperationException("No API Url found in config")));
-        services.AddHttpClient("backendApiClient", client =>
-            client.BaseAddress = new Uri(configuration.GetValue<string>("BackendApiUrl")
-                ?? throw new InvalidOperationException("No Backend API Url found in config")));
         services.AddHttpClient("stravaClient", client =>
             client.BaseAddress = new Uri("https://www.strava.com/api/v3/"));
         services.AddSingleton(serviceProvider =>
