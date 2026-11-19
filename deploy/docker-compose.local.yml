@@ -3,31 +3,29 @@
 
 services:
   api:
-    image: peakshunters-api:local
+    image: stigar-api:local
     build:
       context: ..
       dockerfile: deploy/docker/plain-host.Dockerfile
       args:
-        PROJECT: API
-    environment:
-      WORKER_ROLE: api
+        PROJECT: Stigar.Api
 
   worker-schedule:
-    image: peakshunters-backend:local
+    image: stigar-workers:local
     build:
       context: ..
       dockerfile: deploy/docker/plain-host.Dockerfile
       args:
-        PROJECT: Backend
+        PROJECT: Stigar.Workers
     environment:
       WORKER_ROLE: schedule
 
   worker-heavy:
-    image: peakshunters-backend:local
+    image: stigar-workers:local
     build:
       context: ..
       dockerfile: deploy/docker/plain-host.Dockerfile
       args:
-        PROJECT: Backend
+        PROJECT: Stigar.Workers
     environment:
       WORKER_ROLE: heavy

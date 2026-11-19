@@ -71,7 +71,7 @@ consumers.
 | `SHARD_DATA_DIR` | Compose | Host highway-shard directory, default `/opt/data/strava/shards`, mounted at `/data/shards` |
 
 There is no per-function whitelist and no selectable cloud provider. Queues,
-timers and polling jobs are discovered by the plain hosts (`Shared.Hosting`) and
+timers and polling jobs are native Hangfire handlers in `Stigar.Workers` and
 assigned to a role by `WORKER_ROLE`; stores are filesystem/Postgres only.
 
 ## Container / role split

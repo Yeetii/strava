@@ -1,15 +1,14 @@
-name: Deploy self-hosted backend
+name: Deploy self-hosted Stigar
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'API/**'
-      - 'Backend/**'
-      - 'PmtilesJob/**'
-      - 'Shared/**'
-      - 'Shared.Hosting/**'
+      - 'Stigar.Api/**'
+      - 'Stigar.Workers/**'
+      - 'Stigar.Workers.Pmtiles/**'
+      - 'Stigar.Core/**'
       - 'Directory.Build.props'
       - 'deploy/**'
       - '.github/workflows/selfhosted-deploy.yml'
@@ -35,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify every Backend function is assigned to a container
+      - name: Verify the native API/Workers architecture
         run: ./deploy/scripts/verify-role-coverage.sh
 
   build:
@@ -50,14 +49,14 @@ jobs:
       matrix:
         include:
           - name: api
-            project: API
+            project: Stigar.Api
             dockerfile: deploy/docker/plain-host.Dockerfile
           - name: backend
-            project: Backend
+            project: Stigar.Workers
             dockerfile: deploy/docker/plain-host.Dockerfile
           - name: pmtiles
-            project: PmtilesJob
-            dockerfile: PmtilesJob/Dockerfile
+            project: Stigar.Workers.Pmtiles
+            dockerfile: Stigar.Workers.Pmtiles/Dockerfile
 
     steps:
       - uses: actions/checkout@v4
@@ -85,8 +84,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/peakshunters-${{ matrix.name }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/peakshunters-${{ matrix.name }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/stigar-${{ matrix.name }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/stigar-${{ matrix.name }}:latest
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 

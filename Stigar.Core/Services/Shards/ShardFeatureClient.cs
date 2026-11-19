@@ -1,0 +1,407 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using BAMCIS.GeoJSON;
+using Microsoft.Extensions.Logging;
+using Stigar.Core.Models;
+
+namespace Stigar.Core.Services.Shards;
+
+public class ShardFeatureClient(IShardRepository shardRepository, ILogger<ShardFeatureClient> logger, int canonicalZoom = 12)
+{
+    private const int MaxConcurrentShardLoads = 12;
+    private readonly IShardRepository _shardRepository = shardRepository;
+    private readonly ILogger<ShardFeatureClient> _logger = logger;
+    private readonly int _canonicalZoom = canonicalZoom;
+    public int CanonicalZoom => _canonicalZoom;
+
+    private const int ShardCacheMaxSize = 500;
+    private readonly ConcurrentDictionary<string, (Shard Shard, long LastAccessTicks)> _shardCache = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _shardLocks = new();
+    private readonly object _evictionLock = new();
+    private static readonly string[] RenderValues =
+    [
+        "yes",
+        "no",
+        "private",
+        "designated",
+        "permissive",
+        "official",
+        "1",
+        "-1",
+        "reversible",
+        "alternating",
+        "motorway",
+        "motorway_link",
+        "trunk",
+        "trunk_link",
+        "primary",
+        "primary_link",
+        "secondary",
+        "secondary_link",
+        "tertiary",
+        "tertiary_link",
+        "residential",
+        "living_street",
+        "unclassified",
+        "road",
+        "escape",
+        "busway",
+        "bus_guideway",
+        "path",
+        "footway",
+        "track",
+        "service",
+        "services",
+        "rest_area",
+        "raceway",
+        "cycleway",
+        "bridleway",
+        "steps",
+        "pedestrian",
+        "corridor",
+        "informal",
+        "construction",
+        "proposed",
+        "sidewalk",
+        "crossing",
+        "link",
+        "unpaved",
+        "paved",
+        "asphalt",
+        "concrete",
+        "paving_stones",
+        "sett",
+        "cobblestone",
+        "compacted",
+        "fine_gravel",
+        "gravel",
+        "pebblestone",
+        "rock",
+        "stones",
+        "ground",
+        "dirt",
+        "earth",
+        "mud",
+        "sand",
+        "grass",
+        "grass_paver",
+        "woodchips",
+        "boardwalk",
+        "wood",
+        "excellent",
+        "good",
+        "intermediate",
+        "bad",
+        "very_bad",
+        "horrible",
+        "very_horrible",
+        "impassable",
+        "hiking",
+        "mountain_hiking",
+        "demanding_mountain_hiking",
+        "alpine_hiking",
+        "demanding_alpine_hiking",
+        "difficult_alpine_hiking",
+        "true",
+        "false",
+        "bridge",
+        "boardwalk",
+        "tunnel"
+    ];
+
+    private static readonly string[] WidthCandidates =
+    [
+        "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9",
+        "1", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9",
+        "2", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9",
+        "3", "3.0", "3.5", "4", "4.0", "4.5", "5", "5.0", "6", "6.0"
+    ];
+
+    private static readonly Dictionary<uint, string> RenderPropertyKeys = CreateRenderPropertyKeys();
+    private static readonly Dictionary<uint, string> RenderPropertyValues = CreateRenderPropertyValues();
+
+    public virtual async Task<IReadOnlyList<Feature>> GetFeaturesForShards(
+        IEnumerable<(int x, int y)> shardKeys,
+        CancellationToken cancellationToken = default)
+        => await GetFeaturesForShardsInternal(shardKeys, null, null, cancellationToken);
+
+    public virtual async Task<IReadOnlyList<Feature>> GetFeaturesForShards(
+        IEnumerable<(int x, int y)> shardKeys,
+        int zoom,
+        HighwayTileZoomProfile profile,
+        CancellationToken cancellationToken = default)
+        => await GetFeaturesForShardsInternal(shardKeys, zoom, profile, cancellationToken);
+
+    private async Task<IReadOnlyList<Feature>> GetFeaturesForShardsInternal(
+        IEnumerable<(int x, int y)> shardKeys,
+        int? zoom,
+        HighwayTileZoomProfile? profile,
+        CancellationToken cancellationToken)
+    {
+        var keys = shardKeys.Distinct().ToList();
+        if (keys.Count == 0)
+            return [];
+
+        var stopwatch = Stopwatch.StartNew();
+        var cacheHitCount = keys.Count(key => _shardCache.ContainsKey($"{key.x}/{key.y}"));
+
+        // Bound shard-load concurrency. Low-zoom tiles can fan out to hundreds of canonical shards;
+        // loading all of them at once can overwhelm blob storage and produce very long tail latencies.
+        var shardResults = new Shard?[keys.Count];
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, keys.Count),
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = MaxConcurrentShardLoads,
+                CancellationToken = cancellationToken,
+            },
+            async (index, ct) =>
+            {
+                try
+                {
+                    shardResults[index] = await GetShardWithContext(keys[index], ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to load a highway shard; features from that tile will be missing for this batch.");
+                    shardResults[index] = null;
+                }
+            });
+
+        var features = new List<Feature>();
+        var seen = new HashSet<ulong>();
+
+        foreach (var shard in shardResults)
+        {
+            if (shard is null)
+                continue;
+            foreach (var owned in shard.Owned)
+            {
+                if (zoom.HasValue && profile is not null && !HighwayZoomRules.ShouldKeepFeature(owned, zoom.Value, profile))
+                    continue;
+                if (!seen.Add(owned.Id))
+                    continue;
+                features.Add(ToFeature(owned));
+            }
+        }
+
+        _logger.LogInformation(
+            "Loaded highway shard features (requestedShardCount={RequestedShardCount}, cacheHitCount={CacheHitCount}, blobLoadCount={BlobLoadCount}, loadedShardCount={LoadedShardCount}, zoom={Zoom}, maxConcurrentShardLoads={MaxConcurrentShardLoads}, featureCount={FeatureCount}, elapsedMs={ElapsedMs})",
+            keys.Count,
+            cacheHitCount,
+            Math.Max(0, keys.Count - cacheHitCount),
+            shardResults.Count(result => result is not null),
+            zoom,
+            MaxConcurrentShardLoads,
+            features.Count,
+            stopwatch.ElapsedMilliseconds);
+
+        return features;
+    }
+
+    public virtual async Task RefreshShards(IEnumerable<(int x, int y)> shardKeys, CancellationToken cancellationToken = default)
+    {
+        var keys = shardKeys.Distinct().ToList();
+        var rebuildTasks = keys.Select(key => RebuildShardWithContext(key, cancellationToken)).ToList();
+        await Task.WhenAll(rebuildTasks);
+    }
+
+    public virtual Task<DateTimeOffset?> GetShardLastModifiedAsync(
+        (int x, int y) key,
+        CancellationToken cancellationToken = default)
+    {
+        return _shardRepository.TryGetShardLastModifiedAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+    }
+
+    private async Task<Shard> GetShardWithContext((int x, int y) key, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{key.x}/{key.y}";
+        if (_shardCache.TryGetValue(cacheKey, out var cached))
+        {
+            _shardCache[cacheKey] = (cached.Shard, DateTime.UtcNow.Ticks);
+            return cached.Shard;
+        }
+
+        var shardLock = _shardLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await shardLock.WaitAsync(cancellationToken);
+
+        Shard shard;
+        try
+        {
+            if (_shardCache.TryGetValue(cacheKey, out cached))
+            {
+                _shardCache[cacheKey] = (cached.Shard, DateTime.UtcNow.Ticks);
+                return cached.Shard;
+            }
+
+            shard = await _shardRepository.GetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new OperationCanceledException($"Cancelled while loading shard z{_canonicalZoom}/{key.x}/{key.y}.", ex, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to load shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
+        }
+        finally
+        {
+            shardLock.Release();
+        }
+
+        _shardCache[cacheKey] = (shard, DateTime.UtcNow.Ticks);
+        EvictIfOverCapacity();
+        return shard;
+    }
+
+    private void EvictIfOverCapacity()
+    {
+        if (_shardCache.Count <= ShardCacheMaxSize)
+            return;
+
+        lock (_evictionLock)
+        {
+            if (_shardCache.Count <= ShardCacheMaxSize)
+                return;
+
+            var snapshot = _shardCache.ToArray();
+            var removalCount = snapshot.Length - ShardCacheMaxSize / 2;
+            if (removalCount <= 0)
+                return;
+
+            var toRemove = snapshot
+                .OrderBy(kvp => kvp.Value.LastAccessTicks)
+                .Take(removalCount)
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var k in toRemove)
+                _shardCache.TryRemove(k, out _);
+        }
+    }
+
+    private async Task DeleteShardWithContext((int x, int y) key, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{key.x}/{key.y}";
+        var shardLock = _shardLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await shardLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            _shardCache.TryRemove(cacheKey, out _);
+            await _shardRepository.DeleteShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new OperationCanceledException($"Cancelled while deleting shard z{_canonicalZoom}/{key.x}/{key.y}.", ex, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to delete shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
+        }
+        finally
+        {
+            shardLock.Release();
+        }
+    }
+
+    private async Task RebuildShardWithContext((int x, int y) key, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{key.x}/{key.y}";
+        var shardLock = _shardLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await shardLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            _shardCache.TryRemove(cacheKey, out _);
+            await _shardRepository.RebuildShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new OperationCanceledException($"Cancelled while rebuilding shard z{_canonicalZoom}/{key.x}/{key.y}.", ex, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to rebuild shard z{_canonicalZoom}/{key.x}/{key.y}.", ex);
+        }
+        finally
+        {
+            shardLock.Release();
+        }
+    }
+
+    private static Feature ToFeature(ShardFeature feature)
+    {
+        var geometry = PackedGeometryCodec.Decode(feature.Type, feature.Geometry);
+        var properties = new Dictionary<string, dynamic>();
+
+        if (!string.IsNullOrWhiteSpace(feature.OsmId))
+            properties["osmId"] = feature.OsmId;
+        if (!string.IsNullOrWhiteSpace(feature.Name))
+            properties["name"] = feature.Name;
+
+        foreach (var tag in feature.Tags)
+        {
+            if (!RenderPropertyKeys.TryGetValue(tag.KeyId, out var key))
+                continue;
+
+            if (TryDecodeTagValue(key, tag.ValueId, out var value))
+                properties[key] = value;
+        }
+
+        return new Feature(geometry, properties, null, new FeatureId(feature.Id.ToString()));
+    }
+
+    private static bool TryDecodeTagValue(string key, uint valueId, out string value)
+    {
+        if (RenderPropertyValues.TryGetValue(valueId, out value!))
+            return true;
+
+        if (key == "width")
+            return TryDecodeWidth(valueId, out value);
+
+        value = string.Empty;
+        return false;
+    }
+
+    private static bool TryDecodeWidth(uint valueId, out string value)
+    {
+        foreach (var candidate in WidthCandidates)
+        {
+            if (ShardEncodingIds.TagIdFromString(candidate) == valueId)
+            {
+                value = candidate;
+                return true;
+            }
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    private static Dictionary<uint, string> CreateRenderPropertyKeys()
+        => new()
+        {
+            [ShardEncodingIds.TagIdFromString("highway")] = "highway",
+            [ShardEncodingIds.TagIdFromString("oneway")] = "oneway",
+            [ShardEncodingIds.TagIdFromString("bridge")] = "bridge",
+            [ShardEncodingIds.TagIdFromString("brunnel")] = "brunnel",
+            [ShardEncodingIds.TagIdFromString("tunnel")] = "tunnel",
+            [ShardEncodingIds.TagIdFromString("footway")] = "footway",
+            [ShardEncodingIds.TagIdFromString("informal")] = "informal",
+            [ShardEncodingIds.TagIdFromString("foot")] = "foot",
+            [ShardEncodingIds.TagIdFromString("bicycle")] = "bicycle",
+            [ShardEncodingIds.TagIdFromString("access")] = "access",
+            [ShardEncodingIds.TagIdFromString("snowmobile")] = "snowmobile",
+            [ShardEncodingIds.TagIdFromString("surface")] = "surface",
+            [ShardEncodingIds.TagIdFromString("width")] = "width",
+            [ShardEncodingIds.TagIdFromString("smoothness")] = "smoothness",
+            [ShardEncodingIds.TagIdFromString("trail_visibility")] = "trail_visibility",
+            [ShardEncodingIds.TagIdFromString("sac_scale")] = "sac_scale"
+        };
+
+    private static Dictionary<uint, string> CreateRenderPropertyValues()
+        => RenderValues
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(ShardEncodingIds.TagIdFromString, value => value);
+}

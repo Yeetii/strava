@@ -4,7 +4,7 @@ name: peakshunters
 # (see docs/tailscale-funnel-runbook.md), not by published ports.
 #
 # All containers run plain .NET 10 hosts. Roles are selected with WORKER_ROLE
-# (api | schedule | heavy) instead of the old per-function whitelist entries.
+# (schedule | heavy) instead of the old per-function whitelist entries.
 #
 # All Azure services are decommissioned. Structured data lives in PostgreSQL;
 # organizer data, race tiles, highway shards and zoom indexes are local bind
@@ -53,10 +53,9 @@ services:
   # ---------------------------------------------------------------------------
   api:
     <<: *app-service
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-api:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/stigar-api:${IMAGE_TAG:-latest}
     environment:
       <<: *plain-env
-      WORKER_ROLE: api
       # All non-queue organizer wiring uses the shared local store, so admin
       # writes and the weekly build see the same data.
       OrganizerStore__Provider: FileSystem
@@ -92,7 +91,7 @@ services:
   # ---------------------------------------------------------------------------
   worker-schedule:
     <<: *app-service
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-backend:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/stigar-workers:${IMAGE_TAG:-latest}
     profiles: ["schedules"]
     environment:
       <<: *plain-env
@@ -121,7 +120,7 @@ services:
   # ---------------------------------------------------------------------------
   worker-heavy:
     <<: *app-service
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-backend:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/stigar-workers:${IMAGE_TAG:-latest}
     profiles: ["workers"]
     environment:
       <<: *plain-env
@@ -154,7 +153,7 @@ services:
   # ---------------------------------------------------------------------------
   pmtiles:
     <<: *app-service
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/peakshunters-pmtiles:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE:?IMAGE_NAMESPACE must be set}/stigar-pmtiles:${IMAGE_TAG:-latest}
     # The image has no CMD; explicitly start the weekly Hangfire scheduler.
     # `docker compose run --rm pmtiles build-race-tiles-from-organizers`
     # overrides this for a one-shot build.

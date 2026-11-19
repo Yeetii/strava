@@ -208,8 +208,8 @@ automatically whenever `API/`, `Backend/`, `PmtilesJob/`, `Shared/`, `deploy/`,
 or `Directory.Build.props` change. The workflow:
 
 1. Verifies every Backend function is assigned to a container
-2. Builds and pushes the `peakshunters-api`, `peakshunters-backend` and
-   `peakshunters-pmtiles` images to GHCR tagged with the commit SHA
+2. Builds and pushes the `stigar-api`, `stigar-workers` and
+   `stigar-pmtiles` images to GHCR tagged with the commit SHA
 3. Connects the runner to the tailnet and rsyncs `deploy/` to the server over
    Tailscale SSH (without touching `.env`)
 4. Pulls the new images and restarts the stack with a 5-minute health-check
