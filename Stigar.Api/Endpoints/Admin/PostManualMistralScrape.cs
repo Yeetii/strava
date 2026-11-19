@@ -50,7 +50,7 @@ public class PostManualMistralScrape(
         var organizerKey = OrganizerUrlRules.DeriveOrganizerKey(parsedUrl);
 
         jobs.EnqueueManualMistralScrape(new ManualMistralScrapeJob(parsedUrl.AbsoluteUri, body.Name));
-        logger.LogInformation("Enqueued manual mistral scrape job for {OrganizerKey}", organizerKey);
+        logger.LogInformation("Enqueued manual mistral scrape job for {OrganizerKey}", Stigar.Core.Logging.LogInput.Sanitize(organizerKey));
 
         return TypedResults.Ok(new PostManualMistralScrapeResponse(organizerKey, parsedUrl.AbsoluteUri));
     }

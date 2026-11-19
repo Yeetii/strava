@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Stigar.Core.Services;
 using Stigar.Core.Services.Postgres.Admin;
 using Stigar.Api.Http;
+using Stigar.Core.Logging;
 
 namespace Stigar.Api.Endpoints.Admin;
 
@@ -34,13 +35,14 @@ public class WipeOsmFeaturesByKind(
         if (!context.IsAdminAuthorized(configuration))
             return TypedResults.Unauthorized();
 
+        var safeKind = LogInput.Sanitize(kind);
         if (!ValidKinds.Contains(kind))
             return TypedResults.BadRequest(
-                $"Unknown kind '{kind}'. Valid values: {string.Join(", ", ValidKinds)}");
+                $"Unknown kind '{safeKind}'. Valid values: {string.Join(", ", ValidKinds)}");
 
         if (!TryGetTable(kind, out var table))
             return TypedResults.BadRequest(
-                $"Kind '{kind}' has no PostgreSQL domain table; there is nothing to wipe.");
+                $"Kind '{safeKind}' has no PostgreSQL domain table; there is nothing to wipe.");
 
         var zoomParam = context.Request.Query["zoom"].ToString();
         int? zoom = null;
@@ -61,7 +63,7 @@ public class WipeOsmFeaturesByKind(
         }
 
         var deleted = await adminQueries.DeleteOsmFeaturesAsync(table, zoom, ids);
-        logger.LogInformation("Deleted {Count} osmFeatures rows of kind '{Kind}'", deleted, kind);
+        logger.LogInformation("Deleted {Count} osmFeatures rows of kind '{Kind}'", deleted, safeKind);
 
         return TypedResults.Ok(deleted);
     }

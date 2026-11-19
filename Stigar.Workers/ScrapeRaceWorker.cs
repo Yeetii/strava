@@ -27,13 +27,13 @@ public sealed class ScrapeRaceWorker(
         var doc = await organizerClient.GetByIdAsync(organizerKey, cancellationToken);
         if (doc is null)
         {
-            logger.LogWarning("Organizer document not found: {Key}", organizerKey);
+            logger.LogWarning("Organizer document not found: {Key}", Stigar.Core.Logging.LogInput.Sanitize(organizerKey));
             return;
         }
 
         if (!request.IsUrgent && RaceScrapePipeline.IsFreshEnoughForAutomaticScrape(doc, DateTime.UtcNow))
         {
-            logger.LogInformation("Skipping automatic scrape for {Key}; organizer was scraped recently at {LastScrapedUtc}", organizerKey, doc.LastScrapedUtc);
+            logger.LogInformation("Skipping automatic scrape for {Key}; organizer was scraped recently at {LastScrapedUtc}", Stigar.Core.Logging.LogInput.Sanitize(organizerKey), doc.LastScrapedUtc);
             return;
         }
 

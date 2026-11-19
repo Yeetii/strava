@@ -12,6 +12,7 @@ using System.Text.Json.Serialization;
 using Stigar.Core.Services.StravaClient;
 using Stigar.Core.Services;
 using Microsoft.Extensions.Logging;
+using Stigar.Core.Logging;
 using Stigar.Core.Constants;
 using Stigar.Core.Services.Postgres;
 
@@ -45,11 +46,12 @@ public class PostLogin(
             MaxAge = TimeSpan.FromDays(30),
             SameSite = SameSiteMode.None,
             Secure = true,
+            HttpOnly = true,
             Path = "/"
         });
 
         var userId = tokenResponse.Athlete.Id.ToString();
-        _logger.LogInformation("Logging in user {userId} ", userId);
+        _logger.LogInformation("Logging in user {userId} ", LogInput.Sanitize(userId));
         var userExist = await _usersRepository.GetById(userId);
 
         var syncStatus = userExist?.SyncStatus ?? UserSyncStatusService.CreateDefaultStatus();
@@ -72,7 +74,7 @@ public class PostLogin(
 
         if (shouldQueueInitialActivitiesFetch)
         {
-            _logger.LogInformation("Queueing initial activities fetch for user {userId}", userId);
+            _logger.LogInformation("Queueing initial activities fetch for user {userId}", LogInput.Sanitize(userId));
             jobs.EnqueueActivitiesFetch(new ActivitiesFetchJob { UserId = userId });
         }
 

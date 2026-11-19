@@ -99,7 +99,7 @@ public class DiscoverMittloppRaces(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogDebug(ex, "Mittlopp: failed to enrich {EventUrl}", job.MittloppEventUrl);
+            logger.LogDebug(ex, "Mittlopp: failed to enrich {EventUrl}", Stigar.Core.Logging.LogInput.Sanitize(job.MittloppEventUrl?.ToString()));
             return [job];
         }
     }

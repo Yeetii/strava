@@ -54,13 +54,13 @@ public class PostRaceEvent(
         };
 
         await organizerClient.WriteDiscoveryAsync(organizerKey, parsedUrl.AbsoluteUri, "manual", [discovery], cancellationToken);
-        logger.LogInformation("Manual discovery: wrote organizer {OrganizerKey} from {Url}", organizerKey, parsedUrl);
+        logger.LogInformation("Manual discovery: wrote organizer {OrganizerKey} from {Url}", Stigar.Core.Logging.LogInput.Sanitize(organizerKey), parsedUrl);
 
         // Enqueue a scrape message so the scraper picks it up.
         if (body.Scrape != false)
         {
             jobs.EnqueueScrapeRace(new ScrapeRaceMessage(organizerKey));
-            logger.LogInformation("Manual discovery: enqueued scrape for {OrganizerKey}", organizerKey);
+            logger.LogInformation("Manual discovery: enqueued scrape for {OrganizerKey}", Stigar.Core.Logging.LogInput.Sanitize(organizerKey));
         }
 
         return TypedResults.Ok(new PostRaceEventResponse(organizerKey, parsedUrl.AbsoluteUri));

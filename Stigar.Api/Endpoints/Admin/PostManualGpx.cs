@@ -115,7 +115,7 @@ public class PostManualGpx(
             Routes = routes,
         };
         await organizerClient.WriteScraperOutputAsync(organizerKey, "manual-gpx", output, cancellationToken);
-        logger.LogInformation("PostManualGpx: wrote {Count} routes for {Key}", routes.Count, organizerKey);
+        logger.LogInformation("PostManualGpx: wrote {Count} routes for {Key}", routes.Count, Stigar.Core.Logging.LogInput.Sanitize(organizerKey));
 
         return TypedResults.Ok(new PostManualGpxResponse(organizerKey, parsedUrl.AbsoluteUri, routes.Count, failedCount));
     }

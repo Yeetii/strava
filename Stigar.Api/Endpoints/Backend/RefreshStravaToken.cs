@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Logging;
+using Stigar.Core.Logging;
 using Stigar.Core.Models;
 using Stigar.Core.Services;
 using Stigar.Core.Services.Postgres;
@@ -19,11 +20,12 @@ namespace Stigar.Api.Endpoints.Backend
 
         public async Task<IResult> Handle(HttpContext context, string userId, CancellationToken cancellationToken)
         {
+            var safeUserId = LogInput.Sanitize(userId);
             var user = await _userRepository.GetById(userId);
 
             if (user == default || user.RefreshToken == null)
             {
-                return TypedResults.NotFound($"Refresh token not found for user {userId}");
+                return TypedResults.NotFound($"Refresh token not found for user {safeUserId}");
             }
 
             if (user.AccessToken != null && user.TokenExpiresAt > new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds())
@@ -38,7 +40,7 @@ namespace Stigar.Api.Endpoints.Backend
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to refresh Strava token for user {UserId}", userId);
+                _logger.LogError(ex, "Failed to refresh Strava token for user {UserId}", safeUserId);
                 throw;
             }
 

@@ -1,5 +1,6 @@
 using Stigar.Core.Jobs;
 using Microsoft.Extensions.Logging;
+using Stigar.Core.Logging;
 using Stigar.Core.Constants;
 using Stigar.Core.Models;
 using Stigar.Core.Services;
@@ -17,6 +18,6 @@ public class DeleteAccountWorker(
         // and every activity_* junction table. A single hard delete replaces the old per-container
         // TTL expiry (which only achieved eventual deletion) and the explicit session/user deletes.
         await users.Delete(job.UserId, cancellationToken);
-        logger.LogInformation("Deleted account {UserId} and cascaded children", job.UserId);
+        logger.LogInformation("Deleted account {UserId} and cascaded children", LogInput.Sanitize(job.UserId));
     }
 }

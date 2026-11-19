@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Stigar.Core.Logging;
 using Stigar.Core.Jobs;
 using Stigar.Core.Models;
 using Stigar.Core.Services;
@@ -11,14 +12,18 @@ namespace Stigar.Workers
     {
         public async Task ExecuteAsync(ActivityFetchJob fetchJob, CancellationToken cancellationToken)
         {
+            // IDs are used verbatim for lookups but sanitized for logs so an
+            // attacker-controlled value cannot forge extra log lines.
+            var safeUserId = LogInput.Sanitize(fetchJob.UserId);
+            var safeActivityId = LogInput.Sanitize(fetchJob.ActivityId);
             try
             {
                 if (string.IsNullOrWhiteSpace(fetchJob.UserId) || string.IsNullOrWhiteSpace(fetchJob.ActivityId))
                 {
                     _logger.LogError(
                         "Invalid activity fetch payload. UserId: {UserId}, ActivityId: {ActivityId}",
-                        fetchJob.UserId,
-                        fetchJob.ActivityId);
+                        safeUserId,
+                        safeActivityId);
                     return;
                 }
 
@@ -29,14 +34,14 @@ namespace Stigar.Workers
                 if (string.IsNullOrWhiteSpace(accessToken))
                 {
                     throw new InvalidOperationException(
-                        $"Failed to get a valid Strava access token for user {fetchJob.UserId}, activity {fetchJob.ActivityId}.");
+                        $"Failed to get a valid Strava access token for user {safeUserId}, activity {safeActivityId}.");
                 }
 
                 var existingActivity = await _activityRepository.GetById(fetchJob.ActivityId, cancellationToken);
                 var activity = await _activitiesApi.GetActivity(accessToken, fetchJob.ActivityId);
                 if (activity is null)
                 {
-                    _logger.LogInformation("Strava activity {ActivityId} not found (404); stopping.", fetchJob.ActivityId);
+                    _logger.LogInformation("Strava activity {ActivityId} not found (404); stopping.", safeActivityId);
                     return;
                 }
 
@@ -52,7 +57,7 @@ namespace Stigar.Workers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to fetch Strava activity {ActivityId} for user {UserId}",
-                    fetchJob.ActivityId, fetchJob.UserId);
+                    safeActivityId, safeUserId);
                 throw;
             }
         }

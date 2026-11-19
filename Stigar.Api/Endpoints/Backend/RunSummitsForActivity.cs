@@ -37,7 +37,7 @@ public class RunSummitsForActivity(
     {
         var activity = await activitiesRepository.GetById(activityId, cancellationToken);
         if (activity == null)
-            return TypedResults.NotFound($"Activity '{activityId}' was not found.");
+            return TypedResults.NotFound($"Activity '{Stigar.Core.Logging.LogInput.Sanitize(activityId)}' was not found.");
 
         var peaks = (await FetchNearbyPeaks([activity], cancellationToken)).ToList();
 

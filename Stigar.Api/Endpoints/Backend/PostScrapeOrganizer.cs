@@ -36,7 +36,7 @@ public class PostScrapeOrganizer(
 
         var doc = await organizerClient.GetByIdAsync(organizerKey, cancellationToken);
         if (doc is null)
-            return TypedResults.NotFound($"No organizer document for key '{organizerKey}'");
+            return TypedResults.NotFound($"No organizer document for key '{Stigar.Core.Logging.LogInput.Sanitize(organizerKey)}'");
 
         await pipeline.RunAsync(organizerKey, doc, cancellationToken);
 

@@ -83,7 +83,7 @@ public class DiscoverTraceDeTrailRaces(
 
             if (!eventResponse.IsSuccessStatusCode)
             {
-                logger.LogDebug("TraceDeTrail: {Status} fetching {Url}", eventResponse.StatusCode, job.TraceDeTrailEventUrl);
+                logger.LogDebug("TraceDeTrail: {Status} fetching {Url}", eventResponse.StatusCode, Stigar.Core.Logging.LogInput.Sanitize(job.TraceDeTrailEventUrl?.ToString()));
                 continue;
             }
 

@@ -34,7 +34,7 @@ public class RefreshUserStravaToken(
             return TypedResults.NotFound();
 
         if (string.IsNullOrWhiteSpace(user.RefreshToken))
-            return TypedResults.BadRequest($"Refresh token not found for user {userId}");
+            return TypedResults.BadRequest($"Refresh token not found for user {Stigar.Core.Logging.LogInput.Sanitize(userId)}");
 
         var tokenResponse = await authenticationApi.RefreshToken(user.RefreshToken);
         user.AccessToken = tokenResponse.AccessToken;

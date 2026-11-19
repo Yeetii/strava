@@ -46,7 +46,7 @@ public class ScrapeRaceMistralWorker : IManualMistralScrapeJob
 
         if (!Uri.TryCreate(job.Url.Trim(), UriKind.Absolute, out var url) || (url.Scheme is not ("http" or "https")))
         {
-            _logger.LogWarning("ManualMistralScrapeWorker received invalid Url: {Url}", job.Url);
+            _logger.LogWarning("ManualMistralScrapeWorker received invalid Url: {Url}", Stigar.Core.Logging.LogInput.Sanitize(job.Url));
             return;
         }
 
@@ -68,7 +68,7 @@ public class ScrapeRaceMistralWorker : IManualMistralScrapeJob
         else
         {
             await _organizerClient.WriteScraperOutputAsync(organizerKey, "mistral", ToScraperOutput(result), cancellationToken);
-            _logger.LogInformation("ManualMistralScrapeWorker wrote {RouteCount} routes for {OrganizerKey}", result.Routes.Count, organizerKey);
+            _logger.LogInformation("ManualMistralScrapeWorker wrote {RouteCount} routes for {OrganizerKey}", result.Routes.Count, Stigar.Core.Logging.LogInput.Sanitize(organizerKey));
         }
     }
 

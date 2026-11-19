@@ -9,6 +9,7 @@ using Stigar.Core.Models;
 using Stigar.Core.Services;
 using Stigar.Core.Services.Postgres.Admin;
 using Stigar.Api.Http;
+using Stigar.Core.Logging;
 
 namespace Stigar.Api.Endpoints.Admin;
 
@@ -39,8 +40,9 @@ public class MoveOsmFeaturesByZoom(
         if (string.IsNullOrWhiteSpace(kind))
             return CreateBadRequest("Query parameter 'kind' is required.");
 
+        var safeKind = LogInput.Sanitize(kind);
         if (!ValidKinds.Contains(kind))
-            return CreateBadRequest($"Unknown kind '{kind}'. Valid values: {string.Join(", ", ValidKinds)}");
+            return CreateBadRequest($"Unknown kind '{safeKind}'. Valid values: {string.Join(", ", ValidKinds)}");
 
         var fromZoomParam = context.Request.Query["fromZoom"].ToString();
         var toZoomParam = context.Request.Query["toZoom"].ToString();
@@ -67,20 +69,20 @@ public class MoveOsmFeaturesByZoom(
             // admin_boundaries has no tile columns; paths and races have no domain table.
             logger.LogWarning(
                 "Kind '{Kind}' cannot be retiled in PostgreSQL (no tile_x/tile_y columns or no domain table)",
-                kind);
+                safeKind);
         }
 
         var totalSkipped = totalScanned - totalMoved;
         logger.LogInformation(
             "Retiled {TotalMoved} rows for kind {Kind} from zoom {FromZoom} to zoom {ToZoom}. Scanned={TotalScanned}, Skipped={TotalSkipped}.",
             totalMoved,
-            kind,
+            safeKind,
             fromZoom,
             toZoom,
             totalScanned,
             totalSkipped);
 
-        return TypedResults.Ok(new MoveZoomResult(kind, fromZoom, toZoom, totalScanned, totalMoved, totalSkipped));
+        return TypedResults.Ok(new MoveZoomResult(safeKind, fromZoom, toZoom, totalScanned, totalMoved, totalSkipped));
     }
 
     private static bool TryGetRetileableTable(string kind, out OsmFeatureTable table)

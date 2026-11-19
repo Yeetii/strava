@@ -119,7 +119,7 @@ public class DiscoverLopplistanRaces(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogDebug(ex, "Lopplistan: failed to resolve event website for {EventPageUrl}", job.WebsiteUrl);
+            logger.LogDebug(ex, "Lopplistan: failed to resolve event website for {EventPageUrl}", Stigar.Core.Logging.LogInput.Sanitize(job.WebsiteUrl?.ToString()));
             return job;
         }
     }

@@ -1,6 +1,7 @@
 using Stigar.Core.Jobs;
 using Hangfire;
 using Microsoft.Extensions.Logging;
+using Stigar.Core.Logging;
 using Stigar.Core.Models;
 using Stigar.Core.Services;
 using Stigar.Core.Services.Postgres;
@@ -12,6 +13,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, A
 {
         public async Task ExecuteAsync(ActivitiesFetchJob fetchJob, CancellationToken cancellationToken)
         {
+            var safeUserId = LogInput.Sanitize(fetchJob.UserId);
             if (string.IsNullOrWhiteSpace(fetchJob.UserId))
             {
                 _logger.LogError("Invalid activities fetch payload: missing userId.");
@@ -28,14 +30,14 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, A
                 if (string.IsNullOrWhiteSpace(accessToken))
                 {
                     throw new InvalidOperationException(
-                        $"No valid Strava access token available for user {fetchJob.UserId}.");
+                        $"No valid Strava access token available for user {safeUserId}.");
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
                     "Failed while resolving Strava access token for user {UserId}. Page={Page}, Before={Before}, After={After}",
-                    fetchJob.UserId,
+                    safeUserId,
                     fetchJob.Page,
                     fetchJob.Before,
                     fetchJob.After);
@@ -54,7 +56,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, A
             {
                 _logger.LogError(ex,
                     "Failed while fetching Strava activities for user {UserId}. Page={Page}, Before={Before}, After={After}",
-                    fetchJob.UserId,
+                    safeUserId,
                     page,
                     fetchJob.Before,
                     fetchJob.After);
@@ -63,7 +65,7 @@ public class StravaActivitiesFetcher(ILogger<StravaActivitiesFetcher> _logger, A
 
             if (activites is null)
             {
-                _logger.LogInformation("Strava athlete {UserId} not found (404); stopping.", fetchJob.UserId);
+                _logger.LogInformation("Strava athlete {UserId} not found (404); stopping.", safeUserId);
                 return;
             }
 
