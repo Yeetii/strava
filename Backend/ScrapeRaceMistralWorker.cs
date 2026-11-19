@@ -5,20 +5,17 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.IO;
 using Shared.Services.Scrapers;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
 
 namespace Backend;
 
-public class ScrapeRaceMistralWorker
+public class ScrapeRaceMistralWorker : IManualMistralScrapeJob
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOrganizerStore _organizerClient;
-    private readonly QueueClient _queueClient;
     private readonly ILogger<ScrapeRaceMistralWorker> _logger;
     private readonly string _agentId;
     private readonly string _apiKey;
@@ -28,49 +25,28 @@ public class ScrapeRaceMistralWorker
     public ScrapeRaceMistralWorker(
         IHttpClientFactory httpClientFactory,
         IOrganizerStore organizerClient,
-        QueueClient queueClient,
         IConfiguration configuration,
         ILogger<ScrapeRaceMistralWorker> logger)
     {
         _httpClientFactory = httpClientFactory;
         _organizerClient = organizerClient;
-        _queueClient = queueClient;
         _logger = logger;
         _agentId = configuration.GetValue<string>("MistralStudioAgentId") ?? throw new Exception("MistralStudioAgentId is not configured");
         _apiKey = configuration.GetValue<string>("MistralStudioApiKey") ?? throw new Exception("MistralStudioApiKey is not configured");
         _apiBaseUrl = configuration.GetValue<string>("MistralStudioApiUrl")?.TrimEnd('/') ?? "https://api.mistral.ai/v1/conversations";
     }
 
-    [Function(nameof(ScrapeRaceMistralWorker))]
-    public async Task Run(
-        [QueueTrigger(QueueConfig.MistralScrapeJobs, AutoCompleteMessages = false)] QueueMessage message,
-        QueueMessageActions actions,
-        CancellationToken cancellationToken)
+    public async Task ExecuteAsync(ManualMistralScrapeJob job, CancellationToken cancellationToken)
     {
-        var rawBody = message.Body.ToString();
-        ManualMistralScrapeJob? job;
-        try
-        {
-            job = JsonSerializer.Deserialize<ManualMistralScrapeJob>(rawBody, _jsonOptions);
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogWarning(ex, "ManualMistralScrapeWorker received invalid JSON message");
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "InvalidJson", deadLetterErrorDescription: ex.Message);
-            return;
-        }
-
-        if (job is null || string.IsNullOrWhiteSpace(job.Url))
+        if (string.IsNullOrWhiteSpace(job.Url))
         {
             _logger.LogWarning("ManualMistralScrapeWorker received missing or empty Url");
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "MissingUrl");
             return;
         }
 
         if (!Uri.TryCreate(job.Url.Trim(), UriKind.Absolute, out var url) || (url.Scheme is not ("http" or "https")))
         {
             _logger.LogWarning("ManualMistralScrapeWorker received invalid Url: {Url}", job.Url);
-            await actions.DeadLetterMessageAsync(message, deadLetterReason: "InvalidUrl", deadLetterErrorDescription: job.Url);
             return;
         }
 
@@ -82,27 +58,17 @@ public class ScrapeRaceMistralWorker
             SourceUrls = [url.AbsoluteUri],
         };
 
-        try
+        await _organizerClient.WriteDiscoveryAsync(organizerKey, url.AbsoluteUri, "manual-mistral", [discovery], cancellationToken);
+
+        var result = await ScrapeWithMistralAsync(url, job.Name, cancellationToken);
+        if (result is null)
         {
-            await _organizerClient.WriteDiscoveryAsync(organizerKey, url.AbsoluteUri, "manual-mistral", [discovery], cancellationToken);
-
-            var result = await ScrapeWithMistralAsync(url, job.Name, cancellationToken);
-            if (result is null)
-            {
-                _logger.LogWarning("ManualMistralScrapeWorker did not receive a valid scrape result for {OrganizerKey}", organizerKey);
-            }
-            else
-            {
-                await _organizerClient.WriteScraperOutputAsync(organizerKey, "mistral", ToScraperOutput(result), cancellationToken);
-                _logger.LogInformation("ManualMistralScrapeWorker wrote {RouteCount} routes for {OrganizerKey}", result.Routes.Count, organizerKey);
-            }
-
-            await actions.CompleteMessageAsync(message, cancellationToken);
+            _logger.LogWarning("ManualMistralScrapeWorker did not receive a valid scrape result for {OrganizerKey}", organizerKey);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        else
         {
-            throw;
-
+            await _organizerClient.WriteScraperOutputAsync(organizerKey, "mistral", ToScraperOutput(result), cancellationToken);
+            _logger.LogInformation("ManualMistralScrapeWorker wrote {RouteCount} routes for {OrganizerKey}", result.Routes.Count, organizerKey);
         }
     }
 

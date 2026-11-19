@@ -1,4 +1,3 @@
-using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
@@ -8,6 +7,7 @@ using Shared.Services.Postgres.Spatial.Ingestion;
 using Shared.Geo;
 using Shared.Constants;
 using Shared.Geo.SummitsCalculator;
+using Shared.Jobs;
 using BAMCIS.GeoJSON;
 
 namespace Backend;
@@ -20,108 +20,63 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
     IPeakRepository _peaksRepository,
     ISummitsCalculator _summitsCalculator,
     UserSyncStatusService _userSyncStatusService,
-    IOsmFeatureIngestionService _osmFeatureIngestion)
+    IOsmFeatureIngestionService _osmFeatureIngestion) : ISummitsJob
 {
-    private const int MaxDegreeOfParallelism = 4;
-
     // Matches ISummitsCalculator.FindPointsNearRoute's default threshold: a peak is a summit
     // when its point lies within this many metres of any decoded route coordinate. Fetching
     // candidates with the same threshold around each route point keeps the result identical
     // to the old tile-based fetch while letting PostGIS do the spatial prefilter.
     private const int PeakProximityMeters = 50;
 
-    [Function("SummitsWorker")]
-    public async Task Run(
-        [QueueTrigger("calculateSummitsJobs", IsBatched = true, AutoCompleteMessages = false)] QueueMessage[] jobs, QueueMessageActions actions, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(ActivityIdJob job, CancellationToken cancellationToken)
     {
-
-        var jobIds = jobs.Select(x => x.Body.ToString()).ToList();
-        var activities = await _activityRepository.GetByIds(jobIds, cancellationToken);
-        var activitiesById = activities.ToDictionary(x => x.Id, StringComparer.Ordinal);
-        var peaks = (await FetchNearbyPeaks(activitiesById.Values, cancellationToken)).ToList();
-
-        // Renew locks after the potentially slow peak fetch before per-job processing
-        var realJobs = jobs.Where(QueueMessageGuard.HasLockToken).ToList();
-        await Task.WhenAll(realJobs.Select(async j =>
+        var activityId = job.ActivityId;
+        var activities = await _activityRepository.GetByIds([activityId], cancellationToken);
+        var activity = activities.FirstOrDefault();
+        if (activity is null)
         {
-            try { await actions.RenewMessageLockAsync(j); }
-            catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
-            {
-                _logger.LogWarning("Lock lost before processing for message {MessageId}; it will be redelivered.", j.MessageId);
-            }
-        }));
+            _logger.LogWarning(
+                "No activity document found for calculateSummits job (activity id: {ActivityId}); stopping.",
+                activityId);
+            return;
+        }
 
-        await Parallel.ForEachAsync(
-            jobs,
-            new ParallelOptions
-            {
-                MaxDegreeOfParallelism = MaxDegreeOfParallelism,
-                CancellationToken = cancellationToken
-            },
-            async (job, ct) =>
-            {
-                var activityId = job.Body.ToString();
-                if (!activitiesById.TryGetValue(activityId, out var activity))
-                {
-                    _logger.LogWarning(
-                        "No activity document found for calculateSummits job {MessageId} (activity id: {ActivityId}); completing message.",
-                        job.MessageId,
-                        activityId);
-                    await actions.CompleteMessageAsync(job, ct);
-                    return;
-                }
-
-                await ProcessSummitJob(job, actions, peaks, activity, ct);
-            });
+        var peaks = (await FetchNearbyPeaks([activity], cancellationToken)).ToList();
+        await ProcessSummitJob(peaks, activity, cancellationToken);
     }
 
-    private async Task ProcessSummitJob(QueueMessage job, QueueMessageActions actions, List<Feature> peaks, Activity activity, CancellationToken cancellationToken)
+    private async Task ProcessSummitJob(List<Feature> peaks, Activity activity, CancellationToken cancellationToken)
     {
-        try
+        if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
         {
-            if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
-            {
-                _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
-                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-                await actions.CompleteMessageAsync(job);
-                return;
-            }
-            var summits = CalculateSummitedPeaks(activity, peaks).ToList();
-            if (summits.Count == 0)
-            {
-                // No summits means this activity should have no rows in activity_summits.
-                await _activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
-                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-                if (QueueMessageGuard.HasLockToken(job))
-                    try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
-                await actions.CompleteMessageAsync(job);
-                return;
-            }
-            _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
-
-            var links = summits
-                .Select(summit => new SummitLink(
-                    activity.Id,
-                    activity.UserId,
-                    NormalizeSummitedPeakId(summit.Id),
-                    DateTime.UtcNow))
-                .ToList();
-
-            // Replace the activity's previous links so stale summits are removed. AddRange is
-            // idempotent (ON CONFLICT DO NOTHING); the FK cascade removes rows when the
-            // activity itself is deleted, so no manual domain-document cleanup is needed.
-            await _activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
-            await _activitySummitRepository.AddRange(links, cancellationToken);
+            _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
             await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
-            if (QueueMessageGuard.HasLockToken(job))
-                try { await actions.RenewMessageLockAsync(job); } catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost")) { }
-            await actions.CompleteMessageAsync(job);
+            return;
         }
-        catch (Exception ex)
+        var summits = CalculateSummitedPeaks(activity, peaks).ToList();
+        if (summits.Count == 0)
         {
-            throw;
-
+            // No summits means this activity should have no rows in activity_summits.
+            await _activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
+            return;
         }
+        _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
+
+        var links = summits
+            .Select(summit => new SummitLink(
+                activity.Id,
+                activity.UserId,
+                NormalizeSummitedPeakId(summit.Id),
+                DateTime.UtcNow))
+            .ToList();
+
+        // Replace the activity's previous links so stale summits are removed. AddRange is
+        // idempotent (ON CONFLICT DO NOTHING); the FK cascade removes rows when the
+        // activity itself is deleted, so no manual domain-document cleanup is needed.
+        await _activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
+        await _activitySummitRepository.AddRange(links, cancellationToken);
+        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
     }
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)

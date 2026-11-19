@@ -1,11 +1,14 @@
-using System.Net;
+using Microsoft.AspNetCore.Mvc;
+using Shared.Jobs;
+using Hangfire;
 using System.Text.Json;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.OpenApi.Models;
 using Shared.Constants;
+using API.Http;
 
 namespace API.Endpoints.Admin;
 
@@ -13,77 +16,40 @@ public record PostRaceDiscoveryRequest(string Agent, int? PageStart = null, int?
 public record PostRaceDiscoveryResponse(string Agent, int PageStart, int PageEnd, int MessagesEnqueued);
 
 public class PostRaceDiscovery(
-    QueueClient queueClient,
+    IBackgroundJobClient jobs,
     IConfiguration configuration)
 {
-    [OpenApiOperation(tags: ["Admin"], Summary = "Queue one or more race discovery messages.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(PostRaceDiscoveryRequest))]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(PostRaceDiscoveryResponse))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest)]
-    [Function(nameof(PostRaceDiscovery))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/races/discovery")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/races/discovery",
+            (HttpContext context, [FromServices] PostRaceDiscovery endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         PostRaceDiscoveryRequest? body;
         try
         {
-            body = await req.ReadFromJsonAsync<PostRaceDiscoveryRequest>(cancellationToken);
+            body = await context.Request.ReadFromJsonAsync<PostRaceDiscoveryRequest>(cancellationToken);
         }
         catch
         {
-            var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badReq.WriteStringAsync("Invalid JSON body", cancellationToken);
-            return badReq;
+            return TypedResults.BadRequest("Invalid JSON body");
         }
 
         if (body is null || string.IsNullOrWhiteSpace(body.Agent))
-        {
-            var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badReq.WriteStringAsync("Missing required field: agent", cancellationToken);
-            return badReq;
-        }
+            return TypedResults.BadRequest("Missing required field: agent");
 
         var agent = body.Agent.Trim().ToLowerInvariant();
         var pageStart = Math.Max(1, body.PageStart ?? 1);
         var pageEnd = Math.Max(pageStart, body.PageEnd ?? pageStart);
         if (pageEnd - pageStart > 49)
-        {
-            var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badReq.WriteStringAsync("Refusing to enqueue more than 50 discovery pages in one request", cancellationToken);
-            return badReq;
-        }
+            return TypedResults.BadRequest("Refusing to enqueue more than 50 discovery pages in one request");
 
-        var sender = queueClient.CreateSender(QueueConfig.RaceDiscoveryJobs);
         for (var page = pageStart; page <= pageEnd; page++)
-        {
-            var payload = new { agent, page };
-            var message = new QueueMessage(JsonSerializer.Serialize(payload))
-            {
-                ContentType = "application/json",
-                MessageId = $"discovery:{agent}:{page}",
-                Subject = $"discovery:{agent}:{page}"
-            };
-            await sender.SendMessageAsync(message, cancellationToken);
-        }
+            jobs.EnqueueRaceDiscovery(new RaceDiscoveryMessage(agent, page));
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new PostRaceDiscoveryResponse(agent, pageStart, pageEnd, pageEnd - pageStart + 1), cancellationToken);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(new PostRaceDiscoveryResponse(agent, pageStart, pageEnd, pageEnd - pageStart + 1));
     }
 }

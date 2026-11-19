@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Globalization;
 using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Geo;
 using Shared.Models;
 using Shared.Services;
@@ -26,32 +28,18 @@ public class GetVisitedPaths(
         int TimesVisited,
         string? First,
         string? Last);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/visitedPaths/{z}/{x}/{y}", (HttpContext context, [FromServices] GetVisitedPaths endpoint) => endpoint.Handle(context));
 
-    [OpenApiOperation(tags: ["Paths"])]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "z", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
-    [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
-    [OpenApiParameter(name: "y", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<VisitedPathDto>),
-        Description = "A list of paths the authenticated user has been on within the requested tile.")]
-    [Function(nameof(GetVisitedPaths))]
-    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "visitedPaths/{z}/{x}/{y}")] HttpRequestData req)
+    public async Task<IResult> Handle(HttpContext context)
     {
-        var response = req.CreateResponse();
-
-        string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
+        string? sessionId = context.SessionId();
         var user = await userAuthService.GetUserFromSessionId(sessionId);
         if (user == default)
-        {
-            response.StatusCode = HttpStatusCode.Unauthorized;
-            return response;
-        }
+            return TypedResults.Unauthorized();
 
-        if (!TryParseTileCoordinates(req, out var z, out var x, out var y))
-        {
-            response.StatusCode = HttpStatusCode.BadRequest;
-            return response;
-        }
+        if (!TryParseTileCoordinates(context, out var z, out var x, out var y))
+            return TypedResults.BadRequest();
 
         var tileKeys = SlippyTileCalculator.GetIntersectingTileKeys(z, x, y, shardFeatureClient.CanonicalZoom);
         var links = (await visitedPathsRepository.GetByUser(user.Id))
@@ -89,19 +77,16 @@ public class GetVisitedPaths(
             })
             .OrderByDescending(path => path.TimesVisited)
             .ToArray();
-
-        response.StatusCode = HttpStatusCode.OK;
-        await response.WriteAsJsonAsync(result);
-        return response;
+        return TypedResults.Ok(result);
     }
 
-    private static bool TryParseTileCoordinates(HttpRequestData req, out int z, out int x, out int y)
+    private static bool TryParseTileCoordinates(HttpContext req, out int z, out int x, out int y)
     {
         z = default;
         x = default;
         y = default;
 
-        var segments = req.Url.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var segments = req.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length < 3)
             return false;
 

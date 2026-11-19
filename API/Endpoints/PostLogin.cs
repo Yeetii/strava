@@ -1,11 +1,14 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
+using Hangfire;
 using Shared.Jobs;
 using System.Net;
 using Shared.Models;
-using Microsoft.Azure.Functions.Worker;
 using System.Text.Json.Serialization;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Services.StravaClient;
 using Shared.Services;
 using Microsoft.Extensions.Logging;
@@ -18,46 +21,32 @@ public class PostLogin(
     AuthenticationApi _authenticationApi,
     IUserRepository _usersRepository,
     ISessionRepository _sessionsRepository,
-    QueueClient queueClient,
+    IBackgroundJobClient jobs,
     ILogger<PostLogin> _logger)
 {
-    private readonly QueueSender _activitiesFetchSender = queueClient.CreateSender(QueueConfig.ActivitiesFetchJobs);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/{authCode}/login",
+            (HttpContext context, [FromServices] PostLogin endpoint, string authCode) => endpoint.Handle(context, authCode, context.RequestAborted));
 
-    [OpenApiOperation(tags: ["User management"])]
-    [OpenApiParameter(name: "authCode", In = ParameterLocation.Path)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(PostLoginResponse), Description = "The login response containing the username")]
-    [Function(nameof(PostLogin))]
-    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "{authCode}/login")] HttpRequestData req, string authCode)
+    public async Task<IResult> Handle(HttpContext context, string authCode, CancellationToken cancellationToken)
     {
-        var response = req.CreateResponse();
-
         if (string.IsNullOrEmpty(authCode))
-        {
-            response.StatusCode = HttpStatusCode.BadRequest;
-            await response.WriteStringAsync("No tokens provided");
-            return response;
-        }
+            return TypedResults.BadRequest("No tokens provided");
 
         var tokenResponse = await _authenticationApi.TokenExcange(authCode);
         var refreshToken = tokenResponse.RefreshToken;
 
         if (refreshToken == null || tokenResponse.Athlete == null)
-        {
-            response.StatusCode = HttpStatusCode.BadRequest;
-            await response.WriteStringAsync("Auth token exchange did not provide refresh token or athlete");
-            return response;
-        }
+            return TypedResults.BadRequest("Auth token exchange did not provide refresh token or athlete");
 
-        response.StatusCode = HttpStatusCode.OK;
         var sessionId = Guid.NewGuid();
-        var cookie = new HttpCookie("session", sessionId.ToString())
+        context.Response.Cookies.Append("session", sessionId.ToString(), new CookieOptions
         {
-            MaxAge = TimeSpan.FromDays(30).TotalSeconds,
-            SameSite = SameSite.ExplicitNone,
+            MaxAge = TimeSpan.FromDays(30),
+            SameSite = SameSiteMode.None,
             Secure = true,
             Path = "/"
-        };
-        response.Cookies.Append(cookie);
+        });
 
         var userId = tokenResponse.Athlete.Id.ToString();
         _logger.LogInformation("Logging in user {userId} ", userId);
@@ -84,7 +73,7 @@ public class PostLogin(
         if (shouldQueueInitialActivitiesFetch)
         {
             _logger.LogInformation("Queueing initial activities fetch for user {userId}", userId);
-            await _activitiesFetchSender.SendMessageAsync(new QueueMessage(System.Text.Json.JsonSerializer.Serialize(new ActivitiesFetchJob { UserId = userId })));
+            jobs.EnqueueActivitiesFetch(new ActivitiesFetchJob { UserId = userId });
         }
 
         await _sessionsRepository.Upsert(new Session
@@ -94,7 +83,7 @@ public class PostLogin(
             CreatedAtUtc = DateTime.UtcNow
         });
 
-        await response.WriteAsJsonAsync(new PostLoginResponse
+        return TypedResults.Ok(new PostLoginResponse
         {
             UserId = tokenResponse.Athlete.Id.ToString(),
             Username = tokenResponse.Athlete.Username,
@@ -102,8 +91,6 @@ public class PostLogin(
             LastName = tokenResponse.Athlete.Lastname,
             SyncStatus = syncStatus,
         });
-
-        return response;
     }
 
     public static bool ShouldQueueInitialActivitiesFetch(Shared.Models.User? existingUser)

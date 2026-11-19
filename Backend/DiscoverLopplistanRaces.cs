@@ -1,6 +1,6 @@
 using Shared.Services;
+using Shared.Jobs;
 using System.Text.RegularExpressions;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 
 namespace Backend;
@@ -8,13 +8,15 @@ namespace Backend;
 public class DiscoverLopplistanRaces(
     IHttpClientFactory httpClientFactory,
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverLopplistanRaces> logger)
+    ILogger<DiscoverLopplistanRaces> logger) : IRecurringJob
 {
+    public string JobId => "DiscoverLopplistanRaces";
+    public string Cron => "0 0 2 * * 1";
+
     private static readonly Uri CalendarUrl = new("https://lopplistan.se/sverige/trail/");
     private const int MaxPages = 50;
 
-    [Function(nameof(DiscoverLopplistanRaces))]
-    public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         var jobs = await FetchJobsAsync(cancellationToken);
         await discoveryService.DiscoverAndWriteAsync("lopplistan", jobs, cancellationToken);

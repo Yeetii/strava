@@ -1,6 +1,6 @@
+using Shared.Jobs;
 using BAMCIS.GeoJSON;
 using Hangfire;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Shared.Constants;
@@ -128,7 +128,6 @@ public class VisitedAreasWorkerTests
         var visitedAreas = new Mock<IActivityVisitedAreaRepository>();
         var users = new Mock<IUserRepository>();
         var syncStatus = new UserSyncStatusService(users.Object, activities.Object);
-        var queue = new QueueClient(new Mock<IBackgroundJobClient>().Object);
 
         var worker = new VisitedAreasWorker(
             NullLogger<VisitedAreasWorker>.Instance,
@@ -136,14 +135,10 @@ public class VisitedAreasWorkerTests
             visitedAreas.Object,
             protectedAreas.Object,
             adminBoundaries.Object,
-            queue,
             syncStatus,
             CreateIngestionMock().Object);
 
-        await worker.Run(
-            [new QueueMessage(activityId) { LockToken = Guid.NewGuid().ToString() }],
-            new QueueMessageActions(),
-            CancellationToken.None);
+        await worker.ExecuteAsync(new ActivityIdJob { ActivityId = activityId }, CancellationToken.None);
 
         protectedAreas.Verify(
             r => r.FindContainingPoint(It.IsAny<Coordinate>(), It.IsAny<CancellationToken>()),
@@ -230,21 +225,16 @@ public class VisitedAreasWorkerTests
 
         var users = new Mock<IUserRepository>();
         var syncStatus = new UserSyncStatusService(users.Object, activities.Object);
-        var queue = new QueueClient(new Mock<IBackgroundJobClient>().Object);
         var worker = new VisitedAreasWorker(
             NullLogger<VisitedAreasWorker>.Instance,
             activities.Object,
             new Mock<IActivityVisitedAreaRepository>().Object,
             protectedAreas.Object,
             adminBoundaries.Object,
-            queue,
             syncStatus,
             ingestion.Object);
 
-        await worker.Run(
-            [new QueueMessage(activityId) { LockToken = Guid.NewGuid().ToString() }],
-            new QueueMessageActions(),
-            CancellationToken.None);
+        await worker.ExecuteAsync(new ActivityIdJob { ActivityId = activityId }, CancellationToken.None);
 
         var protectedIngestIndex = callOrder.IndexOf("ingestProtected");
         var protectedQueryIndex = callOrder.IndexOf("queryProtected");

@@ -1,9 +1,10 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.OpenApi.Models;
+using API.Http;
 using Shared.Models;
 using Shared.Services;
 
@@ -41,24 +42,18 @@ public class GetRaceOrganizerById(
     IOrganizerStore organizerStore,
     IConfiguration configuration)
 {
-    [OpenApiOperation(tags: ["Admin"], Summary = "Inspect one race organizer working document.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "organizerKey", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(AdminRaceOrganizerDetail))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NotFound)]
-    [Function(nameof(GetRaceOrganizerById))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/races/organizers/{organizerKey}")] HttpRequestData req,
-        string organizerKey,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/manage/races/organizers/{organizerKey}",
+            (HttpContext context, [FromServices] GetRaceOrganizerById endpoint, string organizerKey) => endpoint.Handle(context, organizerKey, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, string organizerKey, CancellationToken cancellationToken)
     {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         var doc = await organizerStore.GetByIdAsync(organizerKey, cancellationToken);
         if (doc is null)
-            return req.CreateResponse(HttpStatusCode.NotFound);
+            return TypedResults.NotFound();
 
         var discovery = (doc.Discovery ?? [])
             .ToDictionary(
@@ -96,16 +91,7 @@ public class GetRaceOrganizerById(
             discovery,
             scrapers);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(detail, cancellationToken);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey)) return false;
-        return req.Headers.TryGetValues("x-admin-key", out var provided) && provided.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(detail);
     }
 
     private static string? GetDiscoveryWebsiteUrl(SourceDiscovery entry)

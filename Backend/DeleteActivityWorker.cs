@@ -1,6 +1,4 @@
 using Shared.Jobs;
-using System.Text.Json;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Models;
@@ -11,23 +9,14 @@ namespace Backend;
 
 public class DeleteActivityWorker(
     ILogger<DeleteActivityWorker> logger,
-    IActivityRepository activities)
+    IActivityRepository activities) : IActivityDeleteJob
 {
-    [Function(nameof(DeleteActivityWorker))]
-    public async Task Run(
-        [QueueTrigger(QueueConfig.ActivityDeleteJobs, AutoCompleteMessages = false)] QueueMessage message,
-        QueueMessageActions actions,
-        CancellationToken cancellationToken)
+    public async Task ExecuteAsync(ActivityDeleteJob job, CancellationToken cancellationToken)
     {
-        var deleteJob = JsonSerializer.Deserialize<ActivityDeleteJob>(message.Body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        if (deleteJob == null)
-            throw new InvalidOperationException("Activity delete job payload is invalid.");
-
         // activity_summits, activity_visited_paths and activity_visited_areas all have
         // activity_id FKs with ON DELETE CASCADE, so deleting the activity removes every
         // linked row. The old "find linked documents, then delete/patch each" walk is obsolete.
-        await DeleteActivityIfPresent(deleteJob, cancellationToken);
-        await actions.CompleteMessageAsync(message, cancellationToken);
+        await DeleteActivityIfPresent(job, cancellationToken);
     }
 
     private async Task DeleteActivityIfPresent(ActivityDeleteJob deleteJob, CancellationToken cancellationToken)

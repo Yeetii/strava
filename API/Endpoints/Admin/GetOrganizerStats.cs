@@ -1,11 +1,11 @@
-using System.Net;
-using System.Text;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.OpenApi.Models;
 using Shared.Services;
+using API.Http;
 
 namespace API.Endpoints.Admin;
 
@@ -32,16 +32,14 @@ public class GetOrganizerStats(
 
     private static readonly string[] ScraperSources = ["utmb", "itra", "bfs"];
 
-    [OpenApiOperation(tags: ["Admin"])]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(GetOrganizerStats))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/organizers/stats")] HttpRequestData req)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/manage/organizers/stats",
+            (HttpContext context, [FromServices] GetOrganizerStats endpoint) => endpoint.Handle(context));
+
+    public async Task<IResult> Handle(HttpContext context)
     {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         int total = 0, withAnyDiscovery = 0, withAnyScraper = 0, withBoth = 0, noDiscoveryNoScraper = 0;
         var activeOrganizerIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -143,15 +141,6 @@ public class GetOrganizerStats(
                 StringComparer.OrdinalIgnoreCase),
         };
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(body);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey)) return false;
-        return req.Headers.TryGetValues("x-admin-key", out var provided) && provided.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(body);
     }
 }

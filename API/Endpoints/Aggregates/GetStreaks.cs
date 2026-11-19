@@ -1,11 +1,9 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
-using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services.Postgres;
 
@@ -30,19 +28,16 @@ public class GetStreaks(ILoggerFactory loggerFactory, IActivityRepository activi
 {
     private readonly ILogger _logger = loggerFactory.CreateLogger<GetStreaks>();
 
-    [OpenApiOperation(tags: ["Aggregates"])]
-    [OpenApiParameter(name: "userId", In = ParameterLocation.Path)]
-    [OpenApiParameter(name: "before", In = ParameterLocation.Query)]
-    [OpenApiParameter(name: "after", In = ParameterLocation.Query)]
-    [OpenApiSecurity("function_key", SecuritySchemeType.ApiKey, Name = "code", In = OpenApiSecurityLocationType.Query)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(Streaks), Description = "The OK response")]
-    [Function("GetStreaks")]
-    public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "{userId}/streaks")] HttpRequestData req, string userId)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/{userId}/streaks",
+            (HttpContext context, [FromServices] GetStreaks endpoint, string userId) => endpoint.Handle(context, userId, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, string userId, CancellationToken cancellationToken)
     {
         IEnumerable<Activity> activities = await activitiesRepository.GetAllByUser(userId);
 
-        var before = req.Query["before"];
-        var after = req.Query["after"];
+        string? before = context.Request.Query["before"].Count > 0 ? context.Request.Query["before"].ToString() : null;
+        string? after = context.Request.Query["after"].Count > 0 ? context.Request.Query["after"].ToString() : null;
 
         if (before != null)
             activities = activities.Where(a => a.StartDate <= DateTime.Parse(before));
@@ -51,7 +46,7 @@ public class GetStreaks(ILoggerFactory loggerFactory, IActivityRepository activi
             activities = activities.Where(b => b.StartDate > DateTime.Parse(after));
 
         var streaks = StreakCalculator.CalculateStreaks(activities);
-        return new JsonResult(streaks);
+        return TypedResults.Ok(streaks);
         
     }
 }

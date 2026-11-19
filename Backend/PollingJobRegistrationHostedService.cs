@@ -2,7 +2,7 @@ using Hangfire;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
-using Shared.Hosting;
+using Shared.Jobs;
 
 namespace Backend;
 

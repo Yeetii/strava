@@ -1,10 +1,11 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.OpenApi.Models;
 using Shared.Services.Postgres.Admin;
+using API.Http;
 
 namespace API.Endpoints.Admin;
 
@@ -34,17 +35,14 @@ public class GetCountries(
         "VN","VU","WF","WS","XK","YE","YT","ZA","ZM","ZW"
     };
 
-    [OpenApiOperation(tags: ["Admin"])]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(CountriesResponse),
-        Description = "All stored admin_level=2 country rows plus a list of ISO codes not yet stored.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(GetCountries))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/countries")] HttpRequestData req)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/manage/countries",
+            (HttpContext context, [FromServices] GetCountries endpoint) => endpoint.Handle(context));
+
+    public async Task<IResult> Handle(HttpContext context)
     {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         var stored = await adminQueries.GetCountriesAsync();
         var countries = stored
@@ -62,19 +60,7 @@ public class GetCountries(
             .OrderBy(c => c)
             .ToList();
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new CountriesResponse(countries, missingCodes));
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(new CountriesResponse(countries, missingCodes));
     }
 
     private record CountryEntry(string Id, string? Name, string? CountryCode);

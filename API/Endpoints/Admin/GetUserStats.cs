@@ -1,9 +1,10 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.OpenApi.Models;
+using API.Http;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
@@ -57,26 +58,21 @@ public class GetUserStats(
     ISessionRepository sessionsRepository,
     IConfiguration configuration)
 {
-    [OpenApiOperation(tags: ["Admin"])]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "userId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(AdminUserStats))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NotFound)]
-    [Function(nameof(GetUserStats))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/users/{userId}/stats")] HttpRequestData req,
-        string userId)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/manage/users/{userId}/stats",
+            (HttpContext context, [FromServices] GetUserStats endpoint, string userId) => endpoint.Handle(context, userId));
+
+    public async Task<IResult> Handle(HttpContext context, string userId)
     {
-        if (!IsAuthorized(req))
+        if (!context.IsAdminAuthorized(configuration))
         {
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+            return TypedResults.Unauthorized();
         }
 
         var user = await usersRepository.GetById(userId);
         if (user == null)
         {
-            return req.CreateResponse(HttpStatusCode.NotFound);
+            return TypedResults.NotFound();
         }
 
         var activities = (await activitiesRepository.GetAllByUser(userId))
@@ -104,8 +100,7 @@ public class GetUserStats(
                 .Where(updatedAt => updatedAt.HasValue)
                 .Max());
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new AdminUserStats(
+        return TypedResults.Ok(new AdminUserStats(
             UserId: user.Id,
             Username: user.UserName,
             FirstName: user.FirstName,
@@ -123,7 +118,6 @@ public class GetUserStats(
                     StartDateLocal: activity.StartDateLocal,
                     ProcessingStatus: activity.ProcessingStatus ?? new ActivityProcessingStatus()))
                 .ToArray()));
-        return response;
     }
 
     public static AdminStravaAuthStatus BuildStravaAuthStatus(UserDocument user)
@@ -150,17 +144,5 @@ public class GetUserStats(
             HasActivityRead: scopeSet.Contains("activity:read"),
             HasActivityReadAll: scopeSet.Contains("activity:read_all"),
             HasActivityWrite: scopeSet.Contains("activity:write"));
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-        {
-            return false;
-        }
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
     }
 }

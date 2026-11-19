@@ -1,6 +1,6 @@
-using Microsoft.Azure.Functions.Worker;
+using Hangfire;
 using Shared.Constants;
-using Shared.Hosting;
+using Shared.Jobs;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
@@ -14,7 +14,7 @@ namespace Backend
     /// per-activity enqueue/mark-excluded logic as before.
     /// </summary>
     public class QueueActivityJobs(
-        QueueClient queueClient,
+        IBackgroundJobClient jobs,
         IActivityRepository activities,
         IBackendAdminQueries queries) : IQueueActivityJobs
     {
@@ -24,23 +24,16 @@ namespace Backend
             IReadOnlyList<Activity> updatedActivities,
             CancellationToken cancellationToken)
         {
-            var summitsSender = queueClient.CreateSender(QueueConfig.CalculateSummitsJobs);
-            var pathsSender = queueClient.CreateSender(QueueConfig.CalculateVisitedPathsJobs);
-            var areasSender = queueClient.CreateSender(QueueConfig.CalculateVisitedAreasJobs);
-
             foreach (var activity in updatedActivities)
             {
-                var queueTasks = new List<Task>(capacity: 3);
+                var idJob = ActivityIdJob.From(activity.Id);
                 if (ShouldQueueSummits(activity))
-                    queueTasks.Add(summitsSender.SendMessageAsync(new QueueMessage(activity.Id)));
-
+                    jobs.EnqueueSummits(idJob);
                 if (ShouldQueueVisitedPaths(activity))
-                    queueTasks.Add(pathsSender.SendMessageAsync(new QueueMessage(activity.Id)));
-
+                    jobs.EnqueueVisitedPaths(idJob);
                 if (ShouldQueueVisitedAreas(activity))
-                    queueTasks.Add(areasSender.SendMessageAsync(new QueueMessage(activity.Id)));
+                    jobs.EnqueueVisitedAreas(idJob);
 
-                await Task.WhenAll(queueTasks);
                 await MarkExcludedIfNeededAsync(activity, cancellationToken);
             }
         }

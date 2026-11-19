@@ -6,7 +6,7 @@ using Hangfire;
 using Npgsql;
 using PmtilesJob;
 using Shared.Constants;
-using Shared.Hosting;
+using Shared.Jobs;
 using Shared.Services;
 using Shared.Services.Postgres;
 using Shared.Services.Postgres.Admin;
@@ -57,10 +57,10 @@ var builder = Host.CreateDefaultBuilder(args)
 
         if (command.Command == PmtilesCommandKind.ScheduleRaceTiles)
         {
-            QueueTransport.AddHangfireStorage(services, configuration);
+            HangfireInfrastructure.AddHangfireStorage(services, configuration);
             // This host only has the pmtiles build service registered. Keep it on
-            // its own queue so it never activates backend QueueJobDispatcher jobs
-            // (which need the backend FunctionWorkerRegistry) from the shared store.
+            // its own queue so it never activates backend worker jobs from the
+            // shared store.
             services.AddHangfireServer(options =>
             {
                 options.WorkerCount = 1;

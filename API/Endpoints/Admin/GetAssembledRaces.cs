@@ -1,9 +1,10 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.OpenApi.Models;
+using API.Http;
 using Shared.Models;
 using Shared.Services;
 
@@ -27,27 +28,20 @@ public class GetAssembledRaces(
     IOrganizerStore organizerStore,
     IConfiguration configuration)
 {
-    [OpenApiOperation(tags: ["Admin"], Summary = "List assembled race features.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "organizerKey", In = ParameterLocation.Query, Type = typeof(string), Required = false)]
-    [OpenApiParameter(name: "search", In = ParameterLocation.Query, Type = typeof(string), Required = false)]
-    [OpenApiParameter(name: "raceType", In = ParameterLocation.Query, Type = typeof(string), Required = false)]
-    [OpenApiParameter(name: "limit", In = ParameterLocation.Query, Type = typeof(int), Required = false)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IReadOnlyList<AdminAssembledRaceListItem>))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(GetAssembledRaces))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/races/assembled")] HttpRequestData req,
-        CancellationToken cancellationToken)
-    {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/manage/races/assembled",
+            (HttpContext context, [FromServices] GetAssembledRaces endpoint) => endpoint.Handle(context, context.RequestAborted));
 
-        var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
-        var organizerKey = query["organizerKey"]?.Trim();
-        var search = query["search"]?.Trim();
-        var raceType = query["raceType"]?.Trim();
-        var limit = int.TryParse(query["limit"], out var parsedLimit) && parsedLimit > 0 ? parsedLimit : 200;
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
+        var query = context.Request.Query;
+        var organizerKey = query["organizerKey"].ToString().Trim();
+        var search = query["search"].ToString().Trim();
+        var raceType = query["raceType"].ToString().Trim();
+        var limit = int.TryParse(query["limit"].ToString(), out var parsedLimit) && parsedLimit > 0 ? parsedLimit : 200;
 
         var results = new List<AdminAssembledRaceListItem>();
         await foreach (var item in organizerStore.StreamAssembledRacesAsync(organizerKey, maxConcurrency: 32, cancellationToken))
@@ -89,16 +83,7 @@ public class GetAssembledRaces(
                 break;
         }
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(results, cancellationToken);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey)) return false;
-        return req.Headers.TryGetValues("x-admin-key", out var provided) && provided.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(results);
     }
 
     private static string? TryGetString(IDictionary<string, dynamic> props, string key)

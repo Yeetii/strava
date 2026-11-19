@@ -1,4 +1,3 @@
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Geo;
 using Shared.Models;
@@ -7,6 +6,7 @@ using BAMCIS.GeoJSON;
 using Shared.Services.Postgres;
 using Shared.Services.Postgres.Spatial;
 using Shared.Services.Shards;
+using Shared.Jobs;
 
 namespace Backend;
 
@@ -15,11 +15,8 @@ public class VisitedPathsWorker(
     IActivityRepository _activityRepository,
     IActivityVisitedPathRepository _visitedPathRepository,
     ShardFeatureClient _highwaysShardFeatureClient,
-    QueueClient queueClient,
-    UserSyncStatusService _userSyncStatusService)
+    UserSyncStatusService _userSyncStatusService) : IVisitedPathsJob
 {
-    private readonly QueueClient _queueClient = queueClient;
-
     // 50m ≈ 0.00045° – use a slightly larger threshold for a rough but fast check
     private const double ProximityThresholdDegrees = 0.0005;
 
@@ -38,16 +35,10 @@ public class VisitedPathsWorker(
 
     private record ActivitySlim(string Id, string UserId, string? Polyline, string? SummaryPolyline);
 
-    [Function(nameof(VisitedPathsWorker))]
-    public async Task Run(
-        [QueueTrigger(Shared.Constants.QueueConfig.CalculateVisitedPathsJobs, IsBatched = true, AutoCompleteMessages = false)]
-        QueueMessage[] jobs,
-        QueueMessageActions actions,
-        CancellationToken cancellationToken)
+    public async Task ExecuteAsync(ActivityIdJob job, CancellationToken cancellationToken)
     {
-
-        var ids = jobs.Select(x => x.Body.ToString()).ToList();
-        var activities = await FetchActivitySlims(ids, cancellationToken);
+        var activityId = job.ActivityId;
+        var activities = await FetchActivitySlims([activityId], cancellationToken);
         var activitiesList = activities
             .Where(a => !string.IsNullOrWhiteSpace(a.Polyline ?? a.SummaryPolyline))
             .ToList();
@@ -58,123 +49,78 @@ public class VisitedPathsWorker(
             a => a.Id,
             a => GeoSpatialFunctions.DecodePolyline(a.Polyline ?? a.SummaryPolyline).ToList());
 
-        // Renew locks before the potentially slow shared data fetch
-        var realJobs = jobs.Where(QueueMessageGuard.HasLockToken).ToList();
-        await Task.WhenAll(realJobs.Select(async j =>
-        {
-            try { await actions.RenewMessageLockAsync(j); }
-            catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
-            {
-                _logger.LogWarning("Lock lost before renewal for message {MessageId}; it will be redelivered.", j.MessageId);
-            }
-        }));
-
         var nearbyPaths = (await FetchNearbyPaths(decodedActivities)).ToList();
         var pathGridIndex = BuildPathGridIndex(nearbyPaths);
 
-        // Renew locks again after the potentially slow shared data fetch
-        await Task.WhenAll(realJobs.Select(async j =>
-        {
-            try { await actions.RenewMessageLockAsync(j); }
-            catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
-            {
-                _logger.LogWarning("Lock lost after fetch renewal for message {MessageId}; it will be redelivered.", j.MessageId);
-            }
-        }));
-
-        foreach (var job in jobs)
-            await ProcessJob(job, actions, activitiesById, decodedActivities, pathGridIndex, cancellationToken);
+        await ProcessJob(activityId, activitiesById, decodedActivities, pathGridIndex, cancellationToken);
     }
 
     private async Task ProcessJob(
-        QueueMessage job,
-        QueueMessageActions actions,
+        string activityId,
         Dictionary<string, ActivitySlim> activitiesById,
         Dictionary<string, List<Coordinate>> decodedActivities,
         PathGridIndex pathGridIndex,
         CancellationToken cancellationToken)
     {
-        var activityId = job.Body.ToString();
-        try
+        activitiesById.TryGetValue(activityId, out var activity);
+
+        if (activity == null || !decodedActivities.TryGetValue(activityId, out var activityPoints) || activityPoints.Count == 0)
         {
-            activitiesById.TryGetValue(activityId, out var activity);
-
-            if (activity == null || !decodedActivities.TryGetValue(activityId, out var activityPoints) || activityPoints.Count == 0)
+            _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
+            if (activity != null)
             {
-                _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
-                if (activity != null)
-                {
-                    await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-                }
-                if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
-                return;
-            }
-
-            var activityGrid = BuildSpatialGrid(activityPoints);
-            var visitedPaths = FindVisitedPaths(activityGrid, pathGridIndex).ToList();
-            var visitedPathsByOsmId = visitedPaths
-                .Select(path => (Path: path, OsmHighwayId: GetOsmHighwayId(path)))
-                .Where(match => !string.IsNullOrWhiteSpace(match.OsmHighwayId))
-                .GroupBy(match => match.OsmHighwayId!, StringComparer.Ordinal)
-                .Select(group => (group.First().Path, OsmHighwayId: group.Key))
-                .ToList();
-
-            _logger.LogInformation(
-                "Activity {ActivityId} visits {PathCount} paths ({OsmPathCount} by canonical osmId)",
-                activityId,
-                visitedPaths.Count,
-                visitedPathsByOsmId.Count);
-
-            if (visitedPathsByOsmId.Count == 0)
-            {
-                // The junction table is the sole record of which paths an activity visited.
-                await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
                 await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-                if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
-                return;
             }
-
-            var paths = visitedPathsByOsmId
-                .Select(pathMatch =>
-                {
-                    var pathFeature = pathMatch.Path;
-                    var featureCentroid = GeometryCentroidHelper.GetCentroid(pathFeature.Geometry);
-                    var (featureTileX, featureTileY) = SlippyTileCalculator.WGS84ToTileIndex(featureCentroid, _highwaysShardFeatureClient.CanonicalZoom);
-
-                    return new VisitedPathInput(
-                        activity.Id,
-                        activity.UserId,
-                        pathMatch.OsmHighwayId,
-                        pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
-                        pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
-                        featureTileX,
-                        featureTileY);
-                })
-                .ToList();
-
-            if (QueueMessageGuard.HasLockToken(job))
-            {
-                try { await actions.RenewMessageLockAsync(job); }
-                catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
-                {
-                    _logger.LogWarning("Lock lost before writing paths for message {MessageId}; it will be redelivered.", job.MessageId);
-                }
-            }
-            // Replace the activity's previous links, then insert the current ones. AddPath
-            // carries the name/type/tile columns; the writes are idempotent, and the FK
-            // cascade removes rows when the activity itself is deleted.
-            await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
-            await _visitedPathRepository.AddRange(paths, cancellationToken);
-            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
-            if (QueueMessageGuard.HasLockToken(job)) await actions.CompleteMessageAsync(job);
+            return;
         }
-        catch (Exception ex)
+
+        var activityGrid = BuildSpatialGrid(activityPoints);
+        var visitedPaths = FindVisitedPaths(activityGrid, pathGridIndex).ToList();
+        var visitedPathsByOsmId = visitedPaths
+            .Select(path => (Path: path, OsmHighwayId: GetOsmHighwayId(path)))
+            .Where(match => !string.IsNullOrWhiteSpace(match.OsmHighwayId))
+            .GroupBy(match => match.OsmHighwayId!, StringComparer.Ordinal)
+            .Select(group => (group.First().Path, OsmHighwayId: group.Key))
+            .ToList();
+
+        _logger.LogInformation(
+            "Activity {ActivityId} visits {PathCount} paths ({OsmPathCount} by canonical osmId)",
+            activityId,
+            visitedPaths.Count,
+            visitedPathsByOsmId.Count);
+
+        if (visitedPathsByOsmId.Count == 0)
         {
-
-            _logger.LogError(ex, "Failed to process visited paths for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                activityId, job.MessageId, job.DeliveryCount);
-            throw;
+            // The junction table is the sole record of which paths an activity visited.
+            await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
+            return;
         }
+
+        var paths = visitedPathsByOsmId
+            .Select(pathMatch =>
+            {
+                var pathFeature = pathMatch.Path;
+                var featureCentroid = GeometryCentroidHelper.GetCentroid(pathFeature.Geometry);
+                var (featureTileX, featureTileY) = SlippyTileCalculator.WGS84ToTileIndex(featureCentroid, _highwaysShardFeatureClient.CanonicalZoom);
+
+                return new VisitedPathInput(
+                    activity.Id,
+                    activity.UserId,
+                    pathMatch.OsmHighwayId,
+                    pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
+                    pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
+                    featureTileX,
+                    featureTileY);
+            })
+            .ToList();
+
+        // Replace the activity's previous links, then insert the current ones. AddPath
+        // carries the name/type/tile columns; the writes are idempotent, and the FK
+        // cascade removes rows when the activity itself is deleted.
+        await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
+        await _visitedPathRepository.AddRange(paths, cancellationToken);
+        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
     }
 
     internal static HashSet<(int, int)> BuildSpatialGrid(List<Coordinate> points)

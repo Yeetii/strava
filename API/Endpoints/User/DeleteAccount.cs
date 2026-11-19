@@ -1,67 +1,39 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Hangfire;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Shared.Jobs;
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
-using API.Utils;
-using Shared.Constants;
-using Shared.Models;
 using Shared.Services;
 
 namespace API.Endpoints.User;
 
-public class DeleteAccount(UserAuthenticationService _userAuthService)
+public class DeleteAccount(UserAuthenticationService _userAuthService, IBackgroundJobClient jobs)
 {
-    [OpenApiOperation(tags: ["User management"], Summary = "Submit an account delete job for the current user.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response or account delete job queued")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(DeleteAccount))]
-    public async Task<ReturnBindings> Run([HttpTrigger(AuthorizationLevel.Anonymous, "delete", "options", Route = "account")] HttpRequestData req)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapMethods("/api/account", ["DELETE", "OPTIONS"],
+            (HttpContext context, [FromServices] DeleteAccount endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        var response = req.CreateResponse();
-        CorsHeaders.Add(req, response, "DELETE, OPTIONS");
-        var outputs = new ReturnBindings { Response = response };
+        if (context.IsOptionsRequest())
+            return TypedResults.NoContent();
 
-        if (CorsHeaders.IsOptions(req))
-        {
-            response.StatusCode = HttpStatusCode.NoContent;
-            return outputs;
-        }
-
-        var sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
-        var user = await _userAuthService.GetUserFromSessionId(sessionId);
+        var user = await _userAuthService.GetUserFromSessionId(context.SessionId());
         if (user == null)
-        {
-            response.StatusCode = HttpStatusCode.Unauthorized;
-            await response.WriteStringAsync("Invalid session");
-            return outputs;
-        }
+            return TypedResults.Unauthorized();
 
-        outputs.AccountDeleteJob = new AccountDeleteJob
-        {
-            UserId = user.Id
-        };
+        jobs.EnqueueAccountDelete(new AccountDeleteJob { UserId = user.Id });
 
-        var cookie = new HttpCookie("session", string.Empty)
+        context.Response.Cookies.Delete("session", new CookieOptions
         {
-            MaxAge = 0,
-            SameSite = SameSite.ExplicitNone,
             Secure = true,
-            Path = "/"
-        };
-        response.Cookies.Append(cookie);
-
-        response.StatusCode = HttpStatusCode.NoContent;
-        return outputs;
-    }
-
-    public class ReturnBindings
-    {
-        [HttpResult]
-        public required HttpResponseData Response { get; set; }
-
-        [QueueOutput(QueueConfig.AccountDeleteJobs)]
-        public AccountDeleteJob? AccountDeleteJob { get; set; }
+            HttpOnly = false,
+            SameSite = SameSiteMode.None,
+            Path = "/",
+        });
+        return TypedResults.NoContent();
     }
 }

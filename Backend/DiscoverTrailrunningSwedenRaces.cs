@@ -1,20 +1,22 @@
 using Shared.Services;
-using Microsoft.Azure.Functions.Worker;
+using Shared.Jobs;
 using Microsoft.Extensions.Logging;
 namespace Backend;
 
 public class DiscoverTrailrunningSwedenRaces(
     IHttpClientFactory httpClientFactory,
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverTrailrunningSwedenRaces> logger)
+    ILogger<DiscoverTrailrunningSwedenRaces> logger) : IRecurringJob
 {
+    public string JobId => "DiscoverTrailrunningSwedenRaces";
+    public string Cron => "0 0 3 * * 1";
+
     private static readonly Uri CalendarUrl = new("https://trailrunningsweden.se/trailkalendern/");
     private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
     private const bool DebugLimitEventsEnabled = false;
     private const int DebugMaxEvents = 10;
 
-    [Function(nameof(DiscoverTrailrunningSwedenRaces))]
-    public async Task Run([TimerTrigger("0 0 3 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         var jobs = await FetchJobsAsync(cancellationToken);
         await discoveryService.DiscoverAndWriteAsync("trailrunningsweden", jobs, cancellationToken);

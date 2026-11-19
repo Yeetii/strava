@@ -1,5 +1,5 @@
 using Shared.Services;
-using Microsoft.Azure.Functions.Worker;
+using Shared.Jobs;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
@@ -8,16 +8,18 @@ namespace Backend;
 public class DiscoverRunagainRaces(
     IHttpClientFactory httpClientFactory,
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverRunagainRaces> logger)
+    ILogger<DiscoverRunagainRaces> logger) : IRecurringJob
 {
+    public string JobId => "DiscoverRunagainRaces";
+    public string Cron => "0 0 2 * * 1";
+
     private static readonly Uri ApiUrl = new("https://cloudrun-pgjjiy2k6a-ew.a.run.app/find_runs");
     private const string FirestoreBatchUrl = "https://firestore.googleapis.com/v1/projects/nestelop-production/databases/(default)/documents:batchGet";
     private const string FirestoreDocPrefix = "projects/nestelop-production/databases/(default)/documents/RunCollection/";
     private static readonly string[] RaceTypes = ["Stiløp", "Backyard ultra", "Ultra", "Motbakke"];
     private static readonly string[] TerrainTypes = ["Terreng"];
 
-    [Function(nameof(DiscoverRunagainRaces))]
-    public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         var httpClient = httpClientFactory.CreateClient();
         var jobs = await FetchJobsAsync(httpClient, cancellationToken);

@@ -54,7 +54,7 @@ public class ItraScraperTests
             }
         };
 
-        var job = ScrapeRaceWorker.BuildScrapeJobFromDocument(doc);
+        var job = RaceScrapePipeline.BuildScrapeJobFromDocument(doc);
 
         Assert.Null(job.UtmbUrl);
         Assert.Null(job.RunagainUrl);

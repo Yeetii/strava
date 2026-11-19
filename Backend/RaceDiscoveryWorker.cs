@@ -1,9 +1,7 @@
 using Shared.Services;
 using Shared.Jobs;
 using System.Text.Json;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
-using Shared.Constants;
 
 namespace Backend;
 
@@ -14,8 +12,7 @@ public class RaceDiscoveryWorker(
     DiscoverSkyrunningRaces skyrunningDiscovery,
     DiscoverMittloppRaces mittloppDiscovery,
     RaceDiscoveryService discoveryService,
-    ILogger<RaceDiscoveryWorker> logger,
-    QueueClient queueClient)
+    ILogger<RaceDiscoveryWorker> logger) : IRaceDiscoveryJob
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(10);
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web)
@@ -23,39 +20,15 @@ public class RaceDiscoveryWorker(
         PropertyNameCaseInsensitive = true
     };
 
-    [Function(nameof(RaceDiscoveryWorker))]
-    public async Task Run(
-        [QueueTrigger(QueueConfig.RaceDiscoveryJobs, AutoCompleteMessages = false)]
-        QueueMessage message,
-        QueueMessageActions actions,
-        CancellationToken cancellationToken)
+    public async Task ExecuteAsync(RaceDiscoveryMessage job, CancellationToken cancellationToken)
     {
-        RaceDiscoveryMessage? discoveryMessage;
-        try
+        if (string.IsNullOrWhiteSpace(job.Agent))
         {
-            discoveryMessage = DeserializeMessage(message);
-        }
-        catch (JsonException ex)
-        {
-            logger.LogWarning(ex, "Race discovery message {MessageId} is not valid JSON", message.MessageId);
-            await actions.DeadLetterMessageAsync(message,
-                deadLetterReason: "InvalidMessage",
-                deadLetterErrorDescription: ex.Message,
-                cancellationToken: cancellationToken);
+            logger.LogWarning("Race discovery message requires an agent.");
             return;
         }
 
-        if (discoveryMessage is null || string.IsNullOrWhiteSpace(discoveryMessage.Agent))
-        {
-            await actions.DeadLetterMessageAsync(message,
-                deadLetterReason: "InvalidMessage",
-                deadLetterErrorDescription: "Race discovery message requires an agent.",
-                cancellationToken: cancellationToken);
-            return;
-        }
-
-        var normalizedMessage = discoveryMessage with { Agent = discoveryMessage.Agent.Trim().ToLowerInvariant() };
-
+        var normalizedMessage = job with { Agent = job.Agent.Trim().ToLowerInvariant() };
 
         try
         {
@@ -77,18 +50,12 @@ public class RaceDiscoveryWorker(
                 _ => throw new NotSupportedException($"Unknown race discovery agent '{normalizedMessage.Agent}'.")
             };
 
-            await actions.CompleteMessageAsync(message, cancellationToken);
-
             if (nextMessage is not null)
                 await discoveryService.EnqueueDiscoveryMessageAsync(nextMessage, delay: null, cancellationToken);
         }
         catch (NotSupportedException ex)
         {
             logger.LogWarning(ex, "Unsupported race discovery agent {Agent}", normalizedMessage.Agent);
-            await actions.DeadLetterMessageAsync(message,
-                deadLetterReason: "UnsupportedAgent",
-                deadLetterErrorDescription: ex.Message,
-                cancellationToken: cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -96,10 +63,11 @@ public class RaceDiscoveryWorker(
             logger.LogWarning(ex,
                 "Race discovery {Agent} page {Page} failed; rescheduled same page after {Delay}",
                 normalizedMessage.Agent, normalizedMessage.CurrentPage, RetryDelay);
-            await actions.CompleteMessageAsync(message, cancellationToken);
         }
     }
 
-    internal static RaceDiscoveryMessage? DeserializeMessage(QueueMessage message)
-        => JsonSerializer.Deserialize<RaceDiscoveryMessage>(message.Body, JsonSerializerOptions);
+    // Retained for the existing deserialization tests. The typed job no longer needs it at
+    // runtime; the shim type is fully qualified so no Azure Functions using is required.
+    internal static RaceDiscoveryMessage? DeserializeMessage(string body)
+        => JsonSerializer.Deserialize<RaceDiscoveryMessage>(body, JsonSerializerOptions);
 }

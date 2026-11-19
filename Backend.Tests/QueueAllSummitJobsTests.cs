@@ -1,3 +1,6 @@
+using API.Endpoints.Backend;
+using Microsoft.AspNetCore.Http;
+
 namespace Backend.Tests;
 
 public class QueueAllSummitJobsTests
@@ -5,7 +8,7 @@ public class QueueAllSummitJobsTests
     [Fact]
     public void GetUserIdFilter_ReturnsUserIdWhenPresent()
     {
-        var userId = QueueAllSummitJobs.GetUserIdFilter(new Uri("http://localhost:1234/api/QueueAllSummitJobs?userId=11908635"));
+        var userId = QueueAllSummitJobs.GetUserIdFilter(CreateContext("?userId=11908635"));
 
         Assert.Equal("11908635", userId);
     }
@@ -13,8 +16,15 @@ public class QueueAllSummitJobsTests
     [Fact]
     public void GetUserIdFilter_ReturnsNullWhenMissing()
     {
-        var userId = QueueAllSummitJobs.GetUserIdFilter(new Uri("http://localhost:1234/api/QueueAllSummitJobs"));
+        var userId = QueueAllSummitJobs.GetUserIdFilter(CreateContext(""));
 
         Assert.Null(userId);
+    }
+
+    private static HttpContext CreateContext(string query)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString(query);
+        return context;
     }
 }

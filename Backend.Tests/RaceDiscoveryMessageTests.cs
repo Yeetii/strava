@@ -1,6 +1,5 @@
 using Shared.Services;
 using Shared.Jobs;
-using Microsoft.Azure.Functions.Worker;
 using Backend;
 
 namespace Backend.Tests;
@@ -52,7 +51,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_DefaultsMissingPageToFirstPage()
     {
-        var received = new QueueMessage("""{"agent":"tracedetrail"}""");
+        var received = """{"agent":"tracedetrail"}""";
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 
@@ -65,7 +64,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_AcceptsCamelCasePage()
     {
-        var received = new QueueMessage("""{"agent":"duv","page":4}""");
+        var received = """{"agent":"duv","page":4}""";
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 
@@ -78,7 +77,7 @@ public class RaceDiscoveryMessageTests
     [Fact]
     public void DeserializeMessage_AcceptsItraMetadata()
     {
-        var received = new QueueMessage("""{"agent":"itra","page":7,"country":"US","countryIndex":226,"countryPage":3,"countryPageCount":4,"racesOnPage":40}""");
+        var received = """{"agent":"itra","page":7,"country":"US","countryIndex":226,"countryPage":3,"countryPageCount":4,"racesOnPage":40}""";
 
         var message = RaceDiscoveryWorker.DeserializeMessage(received);
 

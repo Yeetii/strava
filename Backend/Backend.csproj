@@ -13,7 +13,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Backend.Tests" />
     <ProjectReference Include="..\Shared\Shared.csproj" />
-    <ProjectReference Include="..\Shared.Hosting\Shared.Hosting.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Update="local.settings.shared.json">

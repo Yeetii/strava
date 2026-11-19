@@ -1,6 +1,5 @@
 using Shared.Services;
 using Shared.Jobs;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using System.Net;
 
@@ -8,8 +7,11 @@ namespace Backend;
 
 public class DiscoverItraRaces(
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverItraRaces> logger)
+    ILogger<DiscoverItraRaces> logger) : IRecurringJob
 {
+    public string JobId => "DiscoverItraRaces";
+    public string Cron => "0 0 2 * * 1";
+
     internal const int PageSize = 50;
 
     // Country is the only filter that scopes results server-side.
@@ -30,8 +32,7 @@ public class DiscoverItraRaces(
         "PR","GU","MP","AS","UM","MF","BL","CW","SX","BQ","AW","AC","TA","IO","SH","FK","GS"
     ];
 
-    [Function(nameof(DiscoverItraRaces))]
-    public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         await discoveryService.EnqueueDiscoveryMessageAsync(CreateCountryMessage(page: 1, countryIndex: 0, countryPage: 1), delay: null, cancellationToken);
     }

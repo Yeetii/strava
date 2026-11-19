@@ -1,4 +1,4 @@
-namespace Shared.Hosting;
+namespace Shared.Jobs;
 
 /// <summary>
 /// Hangfire-facing contract for the admin-boundary metrics polling job.

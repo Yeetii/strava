@@ -1,12 +1,12 @@
-using System.Net;
-using System.Web;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
 using Shared.Services;
+using API.Http;
 
 namespace API.Endpoints.Admin;
 
@@ -18,23 +18,17 @@ public class GetOrganizerRedirectCandidates(
 {
     private static readonly TimeSpan RedirectProbeTimeout = TimeSpan.FromSeconds(10);
 
-    [OpenApiOperation(tags: ["Admin"], Summary = "Get organizer redirect candidates based on similar ids and source URL mismatches.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "testRedirects", In = ParameterLocation.Query, Type = typeof(bool), Required = false, Description = "Visit similar organizer URLs and report confirmed redirects.")]
-    [OpenApiParameter(name: "autoCreateRedirects", In = ParameterLocation.Query, Type = typeof(bool), Required = false, Description = "Automatically create redirects for confirmed cases whose target organizer already exists.")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(OrganizerRedirectCandidateReport))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(GetOrganizerRedirectCandidates))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/organizers/redirect-candidates")] HttpRequestData req,
-        CancellationToken cancellationToken)
-    {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/manage/organizers/redirect-candidates",
+            (HttpContext context, [FromServices] GetOrganizerRedirectCandidates endpoint) => endpoint.Handle(context, context.RequestAborted));
 
-        var query = HttpUtility.ParseQueryString(req.Url.Query);
-        var testRedirects = ParseBool(query["testRedirects"]);
-        var autoCreateRedirects = ParseBool(query["autoCreateRedirects"]);
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
+        var testRedirects = ParseBool(context.Request.Query["testRedirects"].ToString());
+        var autoCreateRedirects = ParseBool(context.Request.Query["autoCreateRedirects"].ToString());
         if (autoCreateRedirects)
             testRedirects = true;
 
@@ -78,16 +72,7 @@ public class GetOrganizerRedirectCandidates(
                 baseReport.VerySimilarIdCandidates);
         }
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(report, cancellationToken);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey)) return false;
-        return req.Headers.TryGetValues("x-admin-key", out var provided) && provided.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(report);
     }
 
     private async Task<List<OrganizerRedirectProbeObservation>> ProbeRedirectsAsync(

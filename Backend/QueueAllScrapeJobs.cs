@@ -1,8 +1,6 @@
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
-using System.Net;
+using Shared.Jobs;
 
 namespace Backend;
 
@@ -14,10 +12,12 @@ namespace Backend;
 public class QueueAllScrapeJobs(
     IOrganizerStore raceOrganizerClient,
     RaceDiscoveryService discoveryService,
-    ILogger<QueueAllScrapeJobs> logger)
+    ILogger<QueueAllScrapeJobs> logger) : IRecurringJob
 {
-    [Function(nameof(QueueAllScrapeJobs))]
-    public async Task Run([TimerTrigger("0 0 3 * * 2")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public string JobId => "QueueAllScrapeJobs";
+    public string Cron => "0 0 3 * * 2";
+
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         var cutoffUtc = DateTime.UtcNow.Subtract(RaceDiscoveryService.AutomaticScrapeFreshnessWindow);
         var ids = await raceOrganizerClient.GetIdsDueForAutomaticScrapeAsync(cutoffUtc, cancellationToken);
@@ -25,17 +25,4 @@ public class QueueAllScrapeJobs(
         await discoveryService.EnqueueScrapeMessagesAsync(ids.ToHashSet(StringComparer.OrdinalIgnoreCase), cancellationToken, isUrgent: false);
     }
 
-    [Function("QueueAllScrapeJobsHttp")]
-    public async Task<HttpResponseData> RunHttp(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "manage/queue-all-scrape-jobs")] HttpRequestData req,
-        CancellationToken cancellationToken)
-    {
-        var allIds = await raceOrganizerClient.GetIdsDueForAutomaticScrapeAsync(DateTime.MaxValue, cancellationToken);
-        logger.LogInformation("Manual HTTP trigger: queuing {Count} urgent scrape jobs for all organizers", allIds.Count);
-        await discoveryService.EnqueueScrapeMessagesAsync(allIds.ToHashSet(StringComparer.OrdinalIgnoreCase), cancellationToken, isUrgent: true);
-
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteStringAsync($"Queued {allIds.Count} urgent scrape jobs", cancellationToken);
-        return response;
-    }
 }

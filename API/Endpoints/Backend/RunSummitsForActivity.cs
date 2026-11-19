@@ -1,7 +1,9 @@
-using System.Net;
+using Microsoft.AspNetCore.Mvc;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Geo;
@@ -12,7 +14,7 @@ using Shared.Services.Postgres;
 using Shared.Services.Postgres.Spatial;
 using Shared.Services.Postgres.Spatial.Ingestion;
 
-namespace Backend;
+namespace API.Endpoints.Backend;
 
 public class RunSummitsForActivity(
     ILogger<RunSummitsForActivity> logger,
@@ -26,19 +28,16 @@ public class RunSummitsForActivity(
     // Matches ISummitsCalculator.FindPointsNearRoute's default threshold.
     private const int PeakProximityMeters = 50;
 
-    [Function(nameof(RunSummitsForActivity))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "debug/summits/{activityId}")] HttpRequestData req,
-        string activityId,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/debug/summits/{activityId}",
+            (HttpContext context, [FromServices] RunSummitsForActivity endpoint, string activityId) =>
+                endpoint.Handle(context, activityId, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, string activityId, CancellationToken cancellationToken)
     {
         var activity = await activitiesRepository.GetById(activityId, cancellationToken);
         if (activity == null)
-        {
-            var notFound = req.CreateResponse(HttpStatusCode.NotFound);
-            await notFound.WriteStringAsync($"Activity '{activityId}' was not found.", cancellationToken);
-            return notFound;
-        }
+            return TypedResults.NotFound($"Activity '{activityId}' was not found.");
 
         var peaks = (await FetchNearbyPeaks([activity], cancellationToken)).ToList();
 
@@ -47,16 +46,14 @@ public class RunSummitsForActivity(
             logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
             await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
 
-            var skipped = req.CreateResponse(HttpStatusCode.OK);
-            await skipped.WriteAsJsonAsync(new
+            return TypedResults.Ok(new
             {
                 activityId = activity.Id,
                 processed = true,
                 skipped = true,
                 reason = "missing-geodata",
                 summitCount = 0
-            }, cancellationToken);
-            return skipped;
+            });
         }
 
         var summits = CalculateSummitedPeaks(activity, peaks, summitsCalculator).ToList();
@@ -64,15 +61,13 @@ public class RunSummitsForActivity(
         {
             await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
 
-            var okNoSummits = req.CreateResponse(HttpStatusCode.OK);
-            await okNoSummits.WriteAsJsonAsync(new
+            return TypedResults.Ok(new
             {
                 activityId = activity.Id,
                 processed = true,
                 skipped = false,
                 summitCount = 0
-            }, cancellationToken);
-            return okNoSummits;
+            });
         }
 
         logger.LogInformation("Debug summit run: activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
@@ -80,23 +75,21 @@ public class RunSummitsForActivity(
             .Select(summit => new SummitLink(
                 activity.Id,
                 activity.UserId,
-                SummitsWorker.NormalizeSummitedPeakId(summit.Id),
+                PeakIdRules.Normalize(summit.Id),
                 DateTime.UtcNow))
             .ToList();
         await activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
         await activitySummitRepository.AddRange(links, cancellationToken);
         await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
 
-        var ok = req.CreateResponse(HttpStatusCode.OK);
-        await ok.WriteAsJsonAsync(new
+        return TypedResults.Ok(new
         {
             activityId = activity.Id,
             processed = true,
             skipped = false,
             summitCount = summits.Count,
             summitIds = summits.Select(x => x.Id.Value).ToArray()
-        }, cancellationToken);
-        return ok;
+        });
     }
 
     private static IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks, ISummitsCalculator summitsCalculator)
@@ -115,7 +108,7 @@ public class RunSummitsForActivity(
         CancellationToken cancellationToken)
     {
         var decodedRoutes = activities
-            .Select(activity => activity.Polyline ?? activity.SummaryPolyline)
+            .Select(activity => activity.SummaryPolyline ?? activity.Polyline)
             .Where(polyline => !string.IsNullOrEmpty(polyline))
             .Select(polyline => GeoSpatialFunctions.DecodePolyline(polyline!)
                 .DistinctBy(point => (point.Lat, point.Lng))

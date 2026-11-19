@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
 using System.Text.Json.Serialization;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres.Spatial;
@@ -16,17 +18,15 @@ public class GetCurrentUser(
     IActivityVisitedPathRepository visitedPathsRepository,
     IActivityVisitedAreaRepository visitedAreasRepository)
 {
-    [OpenApiOperation(tags: ["User management"], Summary = "Get the authenticated user's profile and Strava sync status.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(CurrentUserResponse))]
-    [Function(nameof(GetCurrentUser))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "user")] HttpRequestData req)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/user", (HttpContext context, [FromServices] GetCurrentUser endpoint) => endpoint.Handle(context));
+
+    public async Task<IResult> Handle(HttpContext context)
     {
-        string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
+        string? sessionId = context.SessionId();
         var user = await userAuthService.GetUserFromSessionId(sessionId);
         if (user == null)
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+            return TypedResults.Unauthorized();
 
         var foundTotals = new FoundTotalsResponse
         {
@@ -35,8 +35,7 @@ public class GetCurrentUser(
             VisitedAreas = await visitedAreasRepository.CountByUser(user.Id),
         };
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new CurrentUserResponse
+        return TypedResults.Ok(new CurrentUserResponse
         {
             UserId = user.Id,
             Username = user.UserName,
@@ -45,7 +44,6 @@ public class GetCurrentUser(
             SyncStatus = user.SyncStatus ?? UserSyncStatusService.CreateDefaultStatus(),
             FoundTotals = foundTotals,
         });
-        return response;
     }
 
     public class CurrentUserResponse

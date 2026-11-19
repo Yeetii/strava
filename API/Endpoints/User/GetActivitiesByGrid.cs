@@ -1,10 +1,11 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
 using BAMCIS.GeoJSON;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Geo;
 using Shared.Services.Shards;
 using API.Utils;
@@ -15,16 +16,10 @@ public class GetActivitiesByGrid(ShardFeatureClient _shardFeatureClient)
 {
     // The legacy PathsCollectionClient stored and served path features at zoom 11.
     private const int PathTileZoom = 11;
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/activities/{x}/{y}", (HttpContext context, [FromServices] GetActivitiesByGrid endpoint, int x, int y) => endpoint.Handle(context, x, y, context.RequestAborted));
 
-    [OpenApiOperation(tags: ["Activities"])]
-    [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(double), Required = true)]
-    [OpenApiParameter(name: "y", In = ParameterLocation.Path, Type = typeof(double), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection))]
-    [Function("GetActivitiesByGrid")]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "activities/{x}/{y}")] HttpRequestData req,
-        int x, int y,
-        CancellationToken cancellationToken)
+    public async Task<IResult> Handle(HttpContext context, int x, int y, CancellationToken cancellationToken)
     {
         try
         {
@@ -34,13 +29,11 @@ public class GetActivitiesByGrid(ShardFeatureClient _shardFeatureClient)
                 PathTileZoom, x, y, _shardFeatureClient.CanonicalZoom);
             var activities = await _shardFeatureClient.GetFeaturesForShards(shardKeys, cancellationToken);
             var featureCollection = new FeatureCollection(activities);
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            await response.WriteAsJsonAsync(featureCollection);
-            return response;
+            return TypedResults.Ok(featureCollection);
         }
         catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
         {
-            return RequestCancellation.CreateCancelledResponse(req);
+            return TypedResults.NoContent();
         }
     }
 }

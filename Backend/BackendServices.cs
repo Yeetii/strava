@@ -14,7 +14,7 @@ using Shared.Services.Postgres.Spatial;
 using Shared.Services.Postgres.Spatial.Ingestion;
 using Shared.Services.Shards;
 using Shared.Services.StravaClient;
-using Shared.Hosting;
+using Shared.Jobs;
 
 namespace Backend;
 
@@ -104,6 +104,10 @@ public static class BackendServices
         services.AddScoped<UserSyncStatusService>();
         services.AddScoped<ISummitsCalculator>(_ => new SummitsCalculatorWithBoundingBoxFilter());
         services.AddSingleton<RaceDiscoveryService>();
+        services.AddSingleton(serviceProvider => new RaceScrapePipeline(
+            serviceProvider.GetRequiredService<IHttpClientFactory>(),
+            serviceProvider.GetRequiredService<IOrganizerStore>(),
+            serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("RaceScrapePipeline")));
         services.AddSingleton<DiscoverDuvRaces>();
         services.AddSingleton<DiscoverTraceDeTrailRaces>();
         services.AddSingleton<DiscoverItraRaces>();
@@ -112,9 +116,7 @@ public static class BackendServices
         services.AddSingleton<DiscoverLopplistanRaces>();
         services.AddSingleton<DiscoverMittloppRaces>();
 
-        // All queues run on Hangfire/Redis. Storage is registered once by each
-        // host entry point, not here.
-        QueueTransport.AddHangfireQueueProducer(services);
+        // Hangfire storage is registered by each host entry point, not here.
 
     }
 }

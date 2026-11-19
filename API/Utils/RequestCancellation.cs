@@ -1,8 +1,6 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker.Http;
-
 namespace API.Utils;
 
+/// <summary>Pure helper for recognizing cancelled operations in endpoint filters.</summary>
 public static class RequestCancellation
 {
     public static bool IsCancellation(Exception exception, CancellationToken cancellationToken)
@@ -19,10 +17,5 @@ public static class RequestCancellation
         }
 
         return cancellationToken.IsCancellationRequested;
-    }
-
-    public static HttpResponseData CreateCancelledResponse(HttpRequestData req)
-    {
-        return req.CreateResponse(HttpStatusCode.NoContent);
     }
 }

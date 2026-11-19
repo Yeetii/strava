@@ -1,39 +1,22 @@
+using Microsoft.AspNetCore.Mvc;
+using Hangfire;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Shared.Jobs;
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
-using Microsoft.OpenApi.Models;
-using Shared.Constants;
-using Shared.Models;
 
 namespace API.Endpoints.Admin;
 
-public class RemoveUser
+public class RemoveUser(IBackgroundJobClient jobs)
 {
-    [OpenApiOperation(tags: ["Admin"])]
-    [OpenApiParameter(name: "userId", In = ParameterLocation.Path)]
-    [OpenApiSecurity("function_key", SecuritySchemeType.ApiKey, Name = "code", In = OpenApiSecurityLocationType.Query)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "Account delete job queued")]
-    [Function(nameof(RemoveUser))]
-    public ReturnBindings Run(
-        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "manage/users/{userId}")] HttpRequestData req,
-        string userId)
-    {
-        return new ReturnBindings
-        {
-            Response = req.CreateResponse(HttpStatusCode.NoContent),
-            AccountDeleteJob = new AccountDeleteJob { UserId = userId }
-        };
-    }
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapDelete("/api/manage/users/{userId}",
+            (HttpContext context, [FromServices] RemoveUser endpoint, string userId) => endpoint.Handle(context, userId));
 
-    public class ReturnBindings
+    public IResult Handle(HttpContext context, string userId)
     {
-        [HttpResult]
-        public required HttpResponseData Response { get; set; }
-
-        [QueueOutput(QueueConfig.AccountDeleteJobs)]
-        public AccountDeleteJob? AccountDeleteJob { get; set; }
+        jobs.EnqueueAccountDelete(new AccountDeleteJob { UserId = userId });
+        return TypedResults.NoContent();
     }
 }

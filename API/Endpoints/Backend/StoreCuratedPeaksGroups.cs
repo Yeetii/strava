@@ -1,11 +1,14 @@
-using Microsoft.Azure.Functions.Worker;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Azure.Functions.Worker.Http;
 using Shared.Models;
 using Shared.Services.Postgres;
 
-namespace Backend
+namespace API.Endpoints.Backend
 {
     public class StoreCuratedPeaksGroups(ILogger<StoreCuratedPeaksGroups> _logger, IPeaksGroupRepository peaksGroupRepository)
     {
@@ -15,17 +18,17 @@ namespace Backend
             string area,
             long? id
         );
+        public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+            app.MapGet("/api/peaks/refine", (HttpContext context, [FromServices] StoreCuratedPeaksGroups endpoint) => endpoint.Handle(context));
 
-
-        [Function(nameof(StoreCuratedPeaksGroups))]
-        public async Task<IEnumerable<PeaksGroup>?> Run([HttpTrigger(AuthorizationLevel.Function, "get", Route = "peaks/refine")] HttpRequestData req)
+        public async Task<IResult> Handle(HttpContext context)
         {
             string filePath = "./peaks.json";
 
             if (!File.Exists(filePath))
             {
                 _logger.LogError("File not found: {path}", filePath);
-                return default;
+                return TypedResults.NotFound();
             }
             string jsonString = await File.ReadAllTextAsync(filePath);
             var featuresList = JsonSerializer.Deserialize<IEnumerable<RefinedPeak>>(jsonString);
@@ -33,7 +36,7 @@ namespace Backend
             if (featuresList == null)
             {
                 _logger.LogError("Failed to deserialize JSON string");
-                return default;
+                return TypedResults.NotFound();
             }
 
 
@@ -67,7 +70,7 @@ namespace Backend
             foreach (var group in groups)
                 await peaksGroupRepository.Upsert(group);
 
-            return groups;
+            return TypedResults.Ok(groups);
         }
     }
 }

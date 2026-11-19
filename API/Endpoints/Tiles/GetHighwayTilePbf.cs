@@ -1,11 +1,13 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
 using API.Utils;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
 using Shared.Services.Shards;
 using System.Globalization;
 using System.Diagnostics;
@@ -14,23 +16,14 @@ namespace API.Endpoints.Tiles;
 
 public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration configuration, ILogger<GetHighwayTilePbf> logger)
 {
-    [OpenApiOperation(tags: ["Tiles"])]
-    [OpenApiParameter(name: "z", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
-    [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
-    [OpenApiParameter(name: "y", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
-    [OpenApiParameter(name: "forceRefresh", In = ParameterLocation.Query, Type = typeof(bool), Required = false,
-        Description = "When true, refreshes the highway tile. Canonical z12 shards are re-fetched from Overpass; lower zoom tiles rebuild from existing shard blobs only. Requires x-admin-key header.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = false)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.OK, Description = "Gzipped MVT tile")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(GetHighwayTilePbf))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "tiles/highways/{z}/{x}/{y}.pbf")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/tiles/highways/{z}/{x}/{y}.pbf",
+            (HttpContext context, [FromServices] GetHighwayTilePbf endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
         var start = Stopwatch.StartNew();
-        var invocationId = req.FunctionContext.InvocationId;
+        var invocationId = context.TraceIdentifier;
         int z = default;
         int x = default;
         int y = default;
@@ -38,12 +31,12 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
 
         try
         {
-            if (!TryParseTileCoordinates(req, out z, out x, out y))
-                return req.CreateResponse(HttpStatusCode.BadRequest);
+            if (!TryParseTileCoordinates(context, out z, out x, out y))
+                return TypedResults.BadRequest();
 
-            forceRefresh = string.Equals(req.Query["forceRefresh"], "true", StringComparison.OrdinalIgnoreCase);
-            if (forceRefresh && !IsAuthorized(req))
-                return req.CreateResponse(HttpStatusCode.Unauthorized);
+            forceRefresh = string.Equals(context.Request.Query["forceRefresh"], "true", StringComparison.OrdinalIgnoreCase);
+            if (forceRefresh && !context.IsAdminAuthorized(configuration))
+                return TypedResults.Unauthorized();
 
             var tile = forceRefresh
                 ? await blobTileService.RefreshTileAsync(z, x, y, cancellationToken)
@@ -58,29 +51,15 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
                 invocationId,
                 start.ElapsedMilliseconds);
 
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Content-Type", "application/x-protobuf");
-            response.Headers.Add("Content-Encoding", "gzip");
+            context.Response.Headers["Content-Type"] = "application/x-protobuf";
+            context.Response.Headers["Content-Encoding"] = "gzip";
             if (tile.SourceWrittenAt is not null)
-            {
-                response.Headers.Add("X-Tile-Source-Written-At", tile.SourceWrittenAt.Value.ToString("O"));
-            }
-            if (forceRefresh)
-            {
-                response.Headers.Add("Cache-Control", "no-store");
-            }
-            else if (tile.IsComplete)
-            {
-                response.Headers.Add("Cache-Control", "public,max-age=60");
-            }
-            else
-            {
-                response.Headers.Add("Cache-Control", "no-store");
-                response.Headers.Add("X-Tile-Incomplete", "true");
-            }
-
-            await response.Body.WriteAsync(tile.Payload, cancellationToken);
-            return response;
+                context.Response.Headers["X-Tile-Source-Written-At"] = tile.SourceWrittenAt.Value.ToString("O");
+            context.Response.Headers["Cache-Control"] = forceRefresh || !tile.IsComplete ? "no-store" : "public,max-age=60";
+            if (!forceRefresh && !tile.IsComplete)
+                context.Response.Headers["X-Tile-Incomplete"] = "true";
+            await context.Response.Body.WriteAsync(tile.Payload, cancellationToken);
+            return TypedResults.Empty;
         }
         catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
         {
@@ -94,26 +73,18 @@ public class GetHighwayTilePbf(BlobTileService blobTileService, IConfiguration c
                 invocationId,
                 start.ElapsedMilliseconds,
                 cancellationToken.IsCancellationRequested);
-            return RequestCancellation.CreateCancelledResponse(req);
+            return TypedResults.NoContent();
         }
     }
 
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-        return req.Headers.TryGetValues("x-admin-key", out var values)
-            && values.FirstOrDefault() == adminKey;
-    }
 
-    private static bool TryParseTileCoordinates(HttpRequestData req, out int z, out int x, out int y)
+    private static bool TryParseTileCoordinates(HttpContext req, out int z, out int x, out int y)
     {
         z = default;
         x = default;
         y = default;
 
-        var segments = req.Url.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var segments = req.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length < 3)
             return false;
 

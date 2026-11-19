@@ -1,4 +1,3 @@
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Shared.Geo;
 using Shared.Models;
@@ -8,6 +7,7 @@ using Shared.Services.Postgres;
 using Shared.Services.Postgres.Spatial;
 using Shared.Services.Postgres.Spatial.Ingestion;
 using System.Globalization;
+using Shared.Jobs;
 
 namespace Backend;
 
@@ -17,12 +17,9 @@ public class VisitedAreasWorker(
     IActivityVisitedAreaRepository _visitedAreaRepository,
     IProtectedAreaRepository _protectedAreasRepository,
     IAdminBoundaryRepository _adminBoundariesRepository,
-    QueueClient queueClient,
     UserSyncStatusService _userSyncStatusService,
-    IOsmFeatureIngestionService _osmFeatureIngestion)
+    IOsmFeatureIngestionService _osmFeatureIngestion) : IVisitedAreasJob
 {
-    private readonly QueueClient _queueClient = queueClient;
-    private const int MaxDegreeOfParallelism = 1;
     private const int AdminLevelRegion = 4;
     private const int MaxAdminBoundaryLookupPoints = 120;
 
@@ -33,151 +30,109 @@ public class VisitedAreasWorker(
         string? Wikidata,
         string? WikimediaCommons);
 
-    [Function(nameof(VisitedAreasWorker))]
-    public async Task Run(
-        [QueueTrigger(Shared.Constants.QueueConfig.CalculateVisitedAreasJobs, IsBatched = true, AutoCompleteMessages = false)]
-        QueueMessage[] jobs,
-        QueueMessageActions actions,
-        CancellationToken cancellationToken)
+    public async Task ExecuteAsync(ActivityIdJob job, CancellationToken cancellationToken)
     {
-
-        var ids = jobs.Select(x => x.Body.ToString());
-        var activities = await _activityRepository.GetByIds(ids, cancellationToken);
+        var activityId = job.ActivityId;
+        var activities = await _activityRepository.GetByIds([activityId], cancellationToken);
         var activitiesList = activities
             .Where(a => !string.IsNullOrWhiteSpace(GetRoutePolyline(a)))
             .ToList();
 
         var nearbyAreas = (await FetchNearbyAreas(activitiesList, cancellationToken)).ToList();
-
-        var semaphore = new SemaphoreSlim(MaxDegreeOfParallelism, MaxDegreeOfParallelism);
-        var processingTasks = jobs.Select(async job =>
-        {
-            await semaphore.WaitAsync(cancellationToken);
-            try { await ProcessJob(job, actions, activitiesList, nearbyAreas, cancellationToken); }
-            finally { semaphore.Release(); }
-        });
-        await Task.WhenAll(processingTasks);
+        await ProcessJob(activityId, activitiesList, nearbyAreas, cancellationToken);
     }
 
     private async Task ProcessJob(
-        QueueMessage job,
-        QueueMessageActions actions,
+        string activityId,
         List<Activity> activitiesList,
         List<StoredFeature> nearbyAreas,
         CancellationToken cancellationToken)
     {
-        var activityId = job.Body.ToString();
-        var hasRealLockToken = QueueMessageGuard.HasLockToken(job);
-        try
+        var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
+
+        var routePolyline = activity is null ? null : GetRoutePolyline(activity);
+
+        if (activity == null || string.IsNullOrWhiteSpace(routePolyline))
         {
-            var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
-
-            var routePolyline = activity is null ? null : GetRoutePolyline(activity);
-
-            if (activity == null || string.IsNullOrWhiteSpace(routePolyline))
+            _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
+            if (activity != null)
             {
-                _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
-                if (activity != null)
-                {
-                    await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
-                }
-                if (hasRealLockToken) await actions.CompleteMessageAsync(job);
-                return;
+                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
             }
+            return;
+        }
 
-            var activityPoints = GeoSpatialFunctions.DecodePolyline(routePolyline).ToList();
-            _logger.LogDebug("Activity {ActivityId} decoded {PointCount} route points", activityId, activityPoints.Count);
+        var activityPoints = GeoSpatialFunctions.DecodePolyline(routePolyline).ToList();
+        _logger.LogDebug("Activity {ActivityId} decoded {PointCount} route points", activityId, activityPoints.Count);
 
-            var boundaryLookupPolyline = GetBoundaryLookupPolyline(activity) ?? routePolyline;
-            var boundaryLookupPoints = string.Equals(boundaryLookupPolyline, routePolyline, StringComparison.Ordinal)
-                ? activityPoints
-                : GeoSpatialFunctions.DecodePolyline(boundaryLookupPolyline).ToList();
-            _logger.LogDebug(
-                "Activity {ActivityId} using {LookupPointCount} points for admin boundary lookup",
-                activityId,
-                boundaryLookupPoints.Count);
+        var boundaryLookupPolyline = GetBoundaryLookupPolyline(activity) ?? routePolyline;
+        var boundaryLookupPoints = string.Equals(boundaryLookupPolyline, routePolyline, StringComparison.Ordinal)
+            ? activityPoints
+            : GeoSpatialFunctions.DecodePolyline(boundaryLookupPolyline).ToList();
+        _logger.LogDebug(
+            "Activity {ActivityId} using {LookupPointCount} points for admin boundary lookup",
+            activityId,
+            boundaryLookupPoints.Count);
 
-            var nearbyRegions = (await FetchAdminRegionsForActivity(boundaryLookupPoints, cancellationToken)).ToList();
+        var nearbyRegions = (await FetchAdminRegionsForActivity(boundaryLookupPoints, cancellationToken)).ToList();
 
-            if (nearbyRegions.Count == 0)
+        if (nearbyRegions.Count == 0)
+        {
+            _logger.LogWarning(
+                "No admin boundary found for activity {ActivityId} after lookup.",
+                activityId);
+        }
+
+        foreach (var region in nearbyRegions)
+        {
+            if (string.IsNullOrWhiteSpace(GetCountryIso2FromRegion(region.Properties)))
             {
-                _logger.LogWarning(
-                    "No admin boundary found for activity {ActivityId} after lookup.",
+                _logger.LogDebug(
+                    "No country could be derived for visited region {RegionId} on activity {ActivityId}. Expected ISO 3166-2 style properties (e.g. RO-BR).",
+                    region.LogicalId,
                     activityId);
             }
-
-            foreach (var region in nearbyRegions)
-            {
-                if (string.IsNullOrWhiteSpace(GetCountryIso2FromRegion(region.Properties)))
-                {
-                    _logger.LogDebug(
-                        "No country could be derived for visited region {RegionId} on activity {ActivityId}. Expected ISO 3166-2 style properties (e.g. RO-BR).",
-                        region.LogicalId,
-                        activityId);
-                }
-            }
-
-            var visitedAreas = FindVisitedProtectedAreas(activityPoints, nearbyAreas)
-                .Concat(FindVisitedRegionAreas(nearbyRegions))
-                .Concat(FindVisitedCountriesFromRegions(nearbyRegions))
-                .ToList();
-
-            var visitedCountryCount = visitedAreas.Count(a => string.Equals(a.AreaType, "country", StringComparison.Ordinal));
-            _logger.LogInformation(
-                "Visited areas summary for activity {ActivityId}: nearby protected={NearbyProtectedCount}, visited admin regions={VisitedRegionCount}, visited countries={VisitedCountryCount}, total visited areas={AreaCount}",
-                activityId,
-                nearbyAreas.Count,
-                nearbyRegions.Count,
-                visitedCountryCount,
-                visitedAreas.Count);
-
-            if (visitedAreas.Count == 0)
-            {
-                // No visited areas means this activity should have no rows in activity_visited_areas.
-                await _visitedAreaRepository.RemoveByActivity(activity.Id, cancellationToken);
-                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
-                if (hasRealLockToken) await actions.CompleteMessageAsync(job);
-                return;
-            }
-
-            var links = visitedAreas
-                .Select(area => new VisitedAreaLink(activity.Id, activity.UserId, area.AreaId, DateTime.UtcNow))
-                .ToList();
-
-            if (hasRealLockToken)
-            {
-                try { await actions.RenewMessageLockAsync(job); }
-                catch (Exception ex) when (ex is QueueException { Reason: QueueExceptionReason.MessageLockLost } || ex.Message.Contains("MessageLockLost"))
-                {
-                    _logger.LogWarning("Lock lost before writing areas for message {MessageId}; it will be redelivered.", job.MessageId);
-                }
-            }
-            _logger.LogInformation(
-                "Writing visited areas for activity {ActivityId}: links={LinkCount}, areaIds=[{AreaIds}]",
-                activityId,
-                links.Count,
-                string.Join(", ", visitedAreas.Select(area => area.AreaId)));
-            // Replace the activity's previous links, then insert the current ones. The join
-            // table holds only (activity, user, area); the area's descriptive properties come
-            // from the protected_areas/admin_boundaries domain tables. FK cascade removes rows
-            // when the activity itself is deleted.
-            await _visitedAreaRepository.RemoveByActivity(activity.Id, cancellationToken);
-            await _visitedAreaRepository.AddRange(links, cancellationToken);
-            _logger.LogInformation("Batch write complete for activity {ActivityId}", activityId);
-            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
-            if (hasRealLockToken) await actions.CompleteMessageAsync(job);
         }
-        catch (Exception ex)
+
+        var visitedAreas = FindVisitedProtectedAreas(activityPoints, nearbyAreas)
+            .Concat(FindVisitedRegionAreas(nearbyRegions))
+            .Concat(FindVisitedCountriesFromRegions(nearbyRegions))
+            .ToList();
+
+        var visitedCountryCount = visitedAreas.Count(a => string.Equals(a.AreaType, "country", StringComparison.Ordinal));
+        _logger.LogInformation(
+            "Visited areas summary for activity {ActivityId}: nearby protected={NearbyProtectedCount}, visited admin regions={VisitedRegionCount}, visited countries={VisitedCountryCount}, total visited areas={AreaCount}",
+            activityId,
+            nearbyAreas.Count,
+            nearbyRegions.Count,
+            visitedCountryCount,
+            visitedAreas.Count);
+
+        if (visitedAreas.Count == 0)
         {
-
-_logger.LogError(ex,
-                "Failed to process visited areas for activity {ActivityId} (MessageId={MessageId}, DeliveryCount={DeliveryCount})",
-                activityId,
-                job.MessageId,
-                job.DeliveryCount);
-            throw;
-
+            // No visited areas means this activity should have no rows in activity_visited_areas.
+            await _visitedAreaRepository.RemoveByActivity(activity.Id, cancellationToken);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
+            return;
         }
+
+        var links = visitedAreas
+            .Select(area => new VisitedAreaLink(activity.Id, activity.UserId, area.AreaId, DateTime.UtcNow))
+            .ToList();
+
+        _logger.LogInformation(
+            "Writing visited areas for activity {ActivityId}: links={LinkCount}, areaIds=[{AreaIds}]",
+            activityId,
+            links.Count,
+            string.Join(", ", visitedAreas.Select(area => area.AreaId)));
+        // Replace the activity's previous links, then insert the current ones. The join
+        // table holds only (activity, user, area); the area's descriptive properties come
+        // from the protected_areas/admin_boundaries domain tables. FK cascade removes rows
+        // when the activity itself is deleted.
+        await _visitedAreaRepository.RemoveByActivity(activity.Id, cancellationToken);
+        await _visitedAreaRepository.AddRange(links, cancellationToken);
+        _logger.LogInformation("Batch write complete for activity {ActivityId}", activityId);
+        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
     }
 
     private static IEnumerable<VisitedAreaCandidate> FindVisitedProtectedAreas(

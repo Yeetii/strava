@@ -1,10 +1,12 @@
-using System.Net;
+using Microsoft.AspNetCore.Mvc;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Shared.Models;
 using Shared.Services.Postgres.Spatial;
@@ -29,31 +31,29 @@ public class PostMcp(
         configuration.GetValue<string>("GraphHopperRouteUrl")
         ?? "https://graphhopper.gpx.studio/route";
 
-    [Function(nameof(PostMcp))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "get", "options", Route = "mcp")] HttpRequestData req)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapMethods("/api/mcp", ["POST", "GET", "OPTIONS"],
+            (HttpContext context, [FromServices] PostMcp endpoint) => endpoint.Handle(context));
+
+    public async Task<IResult> Handle(HttpContext context)
     {
-        if (string.Equals(req.Method, "GET", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(context.Request.Method, "GET", StringComparison.OrdinalIgnoreCase))
         {
-            var methodNotAllowed = req.CreateResponse(HttpStatusCode.MethodNotAllowed);
-            AddCorsHeaders(req, methodNotAllowed);
-            return methodNotAllowed;
+            AddCorsHeaders(context);
+            return TypedResults.StatusCode(StatusCodes.Status405MethodNotAllowed);
         }
 
-        if (IsOptions(req.Method))
+        if (IsOptions(context.Request.Method))
         {
-            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            AddCorsHeaders(req, optionsResponse);
-            return optionsResponse;
+            AddCorsHeaders(context);
+            return TypedResults.NoContent();
         }
 
-        var body = await new StreamReader(req.Body).ReadToEndAsync();
+        var body = await new StreamReader(context.Request.Body).ReadToEndAsync();
         if (string.IsNullOrWhiteSpace(body))
         {
-            var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
-            AddCorsHeaders(req, badRequest);
-            await badRequest.WriteStringAsync("Request body is required.");
-            return badRequest;
+            AddCorsHeaders(context);
+            return TypedResults.Text("Request body is required.", statusCode: StatusCodes.Status400BadRequest);
         }
 
         JsonDocument envelope;
@@ -63,20 +63,16 @@ public class PostMcp(
         }
         catch (JsonException)
         {
-            var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
-            AddCorsHeaders(req, badRequest);
-            await badRequest.WriteAsJsonAsync(CreateJsonRpcError(null, -32700, "Parse error"));
-            return badRequest;
+            AddCorsHeaders(context);
+            return TypedResults.Json(CreateJsonRpcError(null, -32700, "Parse error"), statusCode: StatusCodes.Status400BadRequest);
         }
 
         using (envelope)
         {
             if (!envelope.RootElement.TryGetProperty("method", out var methodElement))
             {
-                var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
-                AddCorsHeaders(req, badRequest);
-                await badRequest.WriteAsJsonAsync(CreateJsonRpcError(null, -32600, "Invalid Request"));
-                return badRequest;
+                AddCorsHeaders(context);
+                return TypedResults.Json(CreateJsonRpcError(null, -32600, "Invalid Request"), statusCode: StatusCodes.Status400BadRequest);
             }
 
             var method = methodElement.GetString();
@@ -85,14 +81,9 @@ public class PostMcp(
 
             if (isNotification)
             {
-                var accepted = req.CreateResponse(HttpStatusCode.Accepted);
-                AddCorsHeaders(req, accepted);
-                return accepted;
+                AddCorsHeaders(context);
+                return TypedResults.StatusCode(StatusCodes.Status202Accepted);
             }
-
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            AddCorsHeaders(req, response);
-            response.Headers.Add("Content-Type", "application/json");
 
             object result = method switch
             {
@@ -102,8 +93,9 @@ public class PostMcp(
                 _ => CreateJsonRpcError(id, -32601, $"Method not found: {method}"),
             };
 
-            await response.WriteStringAsync(JsonSerializer.Serialize(result, JsonOptions));
-            return response;
+            AddCorsHeaders(context);
+            context.Response.ContentType = "application/json";
+            return TypedResults.Text(JsonSerializer.Serialize(result, JsonOptions), "application/json");
         }
     }
 
@@ -334,21 +326,22 @@ public class PostMcp(
         },
     };
 
-    private static void AddCorsHeaders(HttpRequestData req, HttpResponseData response)
+    private static void AddCorsHeaders(HttpContext context)
     {
-        response.Headers.Add("Access-Control-Allow-Credentials", "true");
-        response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, MCP-Protocol-Version, Mcp-Session-Id");
-        response.Headers.Add("Access-Control-Allow-Methods", "POST, OPTIONS");
-        response.Headers.Add("Access-Control-Allow-Private-Network", "true");
+        var response = context.Response;
+        response.Headers.Append("Access-Control-Allow-Credentials", "true");
+        response.Headers.Append("Access-Control-Allow-Headers", "Content-Type, MCP-Protocol-Version, Mcp-Session-Id");
+        response.Headers.Append("Access-Control-Allow-Methods", "POST, OPTIONS");
+        response.Headers.Append("Access-Control-Allow-Private-Network", "true");
 
-        var origin = req.Headers.TryGetValues("Origin", out var origins)
+        var origin = context.Request.Headers.TryGetValue("Origin", out var origins)
             ? origins.FirstOrDefault()
             : null;
 
         if (!string.IsNullOrWhiteSpace(origin))
         {
-            response.Headers.Add("Access-Control-Allow-Origin", origin);
-            response.Headers.Add("Vary", "Origin");
+            response.Headers.Append("Access-Control-Allow-Origin", origin);
+            response.Headers.Append("Vary", "Origin");
         }
     }
 

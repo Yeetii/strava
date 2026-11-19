@@ -1,28 +1,29 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using Shared.Services;
 using System.Net;
 using System.Text.Json;
 using Shared.Services.Scrapers;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 
-namespace Backend;
+namespace API.Endpoints.Backend;
 
 public class TestScrapeUrl(
     IHttpClientFactory httpClientFactory,
     ILogger<TestScrapeUrl> logger)
 {
-    [Function(nameof(TestScrapeUrl))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "scrape/test")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/scrape/test", (HttpContext context, [FromServices] TestScrapeUrl endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        var url = req.Query["url"];
+        var url = context.Request.Query["url"].ToString();
         if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            var badRequest = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badRequest.WriteStringAsync("Missing or invalid 'url' query parameter");
-            return badRequest;
+            return TypedResults.BadRequest("Missing or invalid 'url' query parameter");
         }
 
         logger.LogInformation("TestScrapeUrl: BFS-scraping {Url}", url);
@@ -59,13 +60,11 @@ public class TestScrapeUrl(
             }) ?? [],
         };
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        response.Headers.Add("Content-Type", "application/json");
-        await response.WriteStringAsync(JsonSerializer.Serialize(body, new JsonSerializerOptions
+        var json = JsonSerializer.Serialize(body, new JsonSerializerOptions
         {
             WriteIndented = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        }));
-        return response;
+        });
+        return TypedResults.Text(json, "application/json; charset=utf-8");
     }
 }

@@ -1,16 +1,17 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
 using Shared.Geo;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres.Admin;
 using Shared.Services.Postgres.Spatial;
 using Shared.Services.Postgres.Spatial.Ingestion;
+using API.Http;
 
 namespace API.Endpoints.Admin;
 
@@ -23,25 +24,17 @@ public class FetchCountries(
 {
     private const int CountryAdminLevel = 2;
 
-    [OpenApiOperation(tags: ["Admin"])]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "countryCodes", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Comma-separated ISO 3166-1 alpha-2 codes. Resolved against already-stored level-2 boundaries; an unstored country cannot be resolved to a bbox.")]
-    [OpenApiParameter(name: "osmIds", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Comma-separated OSM IDs (e.g. relation:2145268). Resolved against already-stored level-2 boundaries.")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json",
-        bodyType: typeof(CountryFetchResult))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(FetchCountries))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/countries/fetch")] HttpRequestData req,
-        CancellationToken cancellationToken)
-    {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/countries/fetch",
+            (HttpContext context, [FromServices] FetchCountries endpoint) => endpoint.Handle(context, context.RequestAborted));
 
-        var osmIdsParam = req.Query["osmIds"];
-        var codesParam = req.Query["countryCodes"];
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
+        var osmIdsParam = context.Request.Query["osmIds"].ToString();
+        var codesParam = context.Request.Query["countryCodes"].ToString();
 
         IReadOnlyList<string>? countryCodes = null;
         IReadOnlyList<(string osmType, long osmId)>? osmIds = null;
@@ -119,9 +112,7 @@ public class FetchCountries(
             TilesFailed: ingestion.TilesFailed,
             Unmapped: unmapped);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(result);
-        return response;
+        return TypedResults.Ok(result);
     }
 
     private static IEnumerable<(int x, int y)> ExpandAreaTiles(AdminBoundaryArea area, int zoom)
@@ -145,16 +136,6 @@ public class FetchCountries(
         return new Coordinate(
             (southWest.Lng + northEast.Lng) / 2,
             (southWest.Lat + northEast.Lat) / 2);
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
     }
 }
 

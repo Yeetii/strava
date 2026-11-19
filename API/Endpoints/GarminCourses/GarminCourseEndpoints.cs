@@ -1,9 +1,9 @@
-using System.Net;
-using API.Utils;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Shared.Services;
 using Shared.Services.GarminClient;
 
@@ -13,112 +13,101 @@ public class GetGarminCourses(
     UserAuthenticationService userAuthService,
     GarminCoursesApi garminCoursesApi)
 {
-    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "List Garmin courses from the configured Garmin proxy service.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "type", In = ParameterLocation.Query, Type = typeof(string), Required = false)]
-    [OpenApiParameter(name: "start", In = ParameterLocation.Query, Type = typeof(int), Required = false)]
-    [OpenApiParameter(name: "limit", In = ParameterLocation.Query, Type = typeof(int), Required = false)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Garmin courses response.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest, Description = "Invalid query parameters")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(GetGarminCourses))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "garmin/courses")] HttpRequestData req,
-        CancellationToken cancellationToken)
-    {
-        if (CorsHeaders.IsOptions(req))
-        {
-            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            CorsHeaders.Add(req, optionsResponse, "GET, POST, OPTIONS");
-            return optionsResponse;
-        }
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapMethods("/api/garmin/courses", ["GET", "OPTIONS"],
+            (HttpContext context, [FromServices] GetGarminCourses endpoint) => endpoint.Handle(context, context.RequestAborted));
 
-        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService);
+    // Registers every Garmin course endpoint in this file. The host calls this
+    // once during startup; keeping it here makes the route/verb set explicit.
+    public static void MapAll(IEndpointRouteBuilder app)
+    {
+        Map(app);
+        GetGarminCourse.Map(app);
+        GetGarminCourseGpx.Map(app);
+        DeleteGarminCourse.Map(app);
+        PutGarminCourse.Map(app);
+        PostGarminCourse.Map(app);
+        PostGarminDeviceMessages.Map(app);
+    }
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (context.IsOptionsRequest())
+            return TypedResults.NoContent();
+
+        var authFailure = await GarminCourseAuthorization.Authorize(context, userAuthService);
         if (authFailure is not null)
             return authFailure;
 
-        if (!TryParsePagination(req, out var start, out var limit, out var badRequest))
+        if (!TryParsePagination(context, out var start, out var limit, out var badRequest))
             return badRequest!;
 
         return await ProxyUpstreamAsync(
-            req,
-            () => garminCoursesApi.GetCourses(req.Query["type"], start, limit, cancellationToken),
-            cancellationToken,
-            "GET, POST, OPTIONS");
+            context,
+            () => garminCoursesApi.GetCourses(context.Request.Query["type"], start, limit, cancellationToken),
+            cancellationToken);
     }
 
-    internal static bool TryParsePagination(HttpRequestData req, out int start, out int limit, out HttpResponseData? badRequest)
+    internal static bool TryParsePagination(HttpContext context, out int start, out int limit, out IResult? badRequest)
     {
         start = 0;
         limit = 50;
         badRequest = null;
 
-        var startValue = req.Query["start"];
+        var startValue = context.Request.Query["start"];
         if (!string.IsNullOrWhiteSpace(startValue) && !int.TryParse(startValue, out start))
         {
-            badRequest = CreateBadRequest(req, "start must be an integer", "GET, POST, OPTIONS");
+            badRequest = CreateBadRequest(context, "start must be an integer");
             return false;
         }
 
-        var limitValue = req.Query["limit"];
+        var limitValue = context.Request.Query["limit"];
         if (!string.IsNullOrWhiteSpace(limitValue) && !int.TryParse(limitValue, out limit))
         {
-            badRequest = CreateBadRequest(req, "limit must be an integer", "GET, POST, OPTIONS");
+            badRequest = CreateBadRequest(context, "limit must be an integer");
             return false;
         }
 
         return true;
     }
 
-    internal static HttpResponseData CreateBadRequest(HttpRequestData req, string message, string methods)
-    {
-        var response = req.CreateResponse(HttpStatusCode.BadRequest);
-        CorsHeaders.Add(req, response, methods);
-        response.WriteString(message);
-        return response;
-    }
+    internal static IResult CreateBadRequest(HttpContext context, string message) =>
+        EndpointSupport.Text(message, StatusCodes.Status400BadRequest);
 
-    internal static async Task<HttpResponseData> ProxyUpstreamAsync(
-        HttpRequestData req,
+    internal static async Task<IResult> ProxyUpstreamAsync(
+        HttpContext context,
         Func<Task<HttpResponseMessage>> upstreamCall,
-        CancellationToken cancellationToken,
-        string methods)
+        CancellationToken cancellationToken)
     {
         try
         {
             using var upstreamResponse = await upstreamCall();
-            return await ProxyResponseAsync(req, upstreamResponse, cancellationToken, methods);
+            return await ProxyResponseAsync(context, upstreamResponse, cancellationToken);
         }
         catch (HttpRequestException)
         {
-            return CreateProxyUnavailable(req, methods);
+            return CreateProxyUnavailable(context);
         }
     }
 
-    internal static HttpResponseData CreateProxyUnavailable(HttpRequestData req, string methods)
-    {
-        var response = req.CreateResponse(HttpStatusCode.BadGateway);
-        CorsHeaders.Add(req, response, methods);
-        response.WriteString("Garmin proxy service is unavailable. Configure GarminProxyBaseUrl or start the local proxy service.");
-        return response;
-    }
+    internal static IResult CreateProxyUnavailable(HttpContext context) =>
+        EndpointSupport.Text(
+            "Garmin proxy service is unavailable. Configure GarminProxyBaseUrl or start the local proxy service.",
+            StatusCodes.Status502BadGateway);
 
-    internal static async Task<HttpResponseData> ProxyResponseAsync(
-        HttpRequestData req,
+    internal static async Task<IResult> ProxyResponseAsync(
+        HttpContext context,
         HttpResponseMessage upstreamResponse,
-        CancellationToken cancellationToken,
-        string methods)
+        CancellationToken cancellationToken)
     {
-        var response = req.CreateResponse(upstreamResponse.StatusCode);
-        CorsHeaders.Add(req, response, methods);
+        context.Response.StatusCode = (int)upstreamResponse.StatusCode;
 
         foreach (var header in upstreamResponse.Headers)
         {
             if (IsHopByHopHeader(header.Key))
                 continue;
 
-            response.Headers.Add(header.Key, string.Join(",", header.Value));
+            context.Response.Headers.Append(header.Key, string.Join(",", header.Value));
         }
 
         foreach (var header in upstreamResponse.Content.Headers)
@@ -126,11 +115,11 @@ public class GetGarminCourses(
             if (IsHopByHopHeader(header.Key))
                 continue;
 
-            response.Headers.Add(header.Key, string.Join(",", header.Value));
+            context.Response.Headers.Append(header.Key, string.Join(",", header.Value));
         }
 
-        await upstreamResponse.Content.CopyToAsync(response.Body, cancellationToken);
-        return response;
+        await upstreamResponse.Content.CopyToAsync(context.Response.Body, cancellationToken);
+        return TypedResults.Empty;
     }
 
     private static bool IsHopByHopHeader(string headerName)
@@ -151,26 +140,20 @@ public class GetGarminCourse(
     UserAuthenticationService userAuthService,
     GarminCoursesApi garminCoursesApi)
 {
-    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Get a Garmin course from the configured Garmin proxy service.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "courseId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Garmin course response.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(GetGarminCourse))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "garmin/courses/{courseId}")] HttpRequestData req,
-        string courseId,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/garmin/courses/{courseId}",
+            (HttpContext context, [FromServices] GetGarminCourse endpoint, string courseId) => endpoint.Handle(context, courseId, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, string courseId, CancellationToken cancellationToken)
     {
-        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "GET, OPTIONS");
+        var authFailure = await GarminCourseAuthorization.Authorize(context, userAuthService);
         if (authFailure is not null)
             return authFailure;
 
         return await GetGarminCourses.ProxyUpstreamAsync(
-            req,
+            context,
             () => garminCoursesApi.GetCourse(courseId, cancellationToken),
-            cancellationToken,
-            "GET, OPTIONS");
+            cancellationToken);
     }
 }
 
@@ -178,26 +161,20 @@ public class GetGarminCourseGpx(
     UserAuthenticationService userAuthService,
     GarminCoursesApi garminCoursesApi)
 {
-    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Download a Garmin course GPX from the configured Garmin proxy service.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "courseId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/gpx+xml", bodyType: typeof(string), Description = "Garmin course GPX.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(GetGarminCourseGpx))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "garmin/courses/{courseId}/gpx")] HttpRequestData req,
-        string courseId,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/garmin/courses/{courseId}/gpx",
+            (HttpContext context, [FromServices] GetGarminCourseGpx endpoint, string courseId) => endpoint.Handle(context, courseId, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, string courseId, CancellationToken cancellationToken)
     {
-        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "GET, OPTIONS");
+        var authFailure = await GarminCourseAuthorization.Authorize(context, userAuthService);
         if (authFailure is not null)
             return authFailure;
 
         return await GetGarminCourses.ProxyUpstreamAsync(
-            req,
+            context,
             () => garminCoursesApi.DownloadCourseGpx(courseId, cancellationToken),
-            cancellationToken,
-            "GET, OPTIONS");
+            cancellationToken);
     }
 }
 
@@ -205,33 +182,23 @@ public class DeleteGarminCourse(
     UserAuthenticationService userAuthService,
     GarminCoursesApi garminCoursesApi)
 {
-    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Delete a Garmin course via the configured Garmin proxy service.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "courseId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Garmin course delete response.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(DeleteGarminCourse))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", "options", Route = "garmin/courses/{courseId}")] HttpRequestData req,
-        string courseId,
-        CancellationToken cancellationToken)
-    {
-        if (CorsHeaders.IsOptions(req))
-        {
-            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            CorsHeaders.Add(req, optionsResponse, "DELETE, PUT, OPTIONS");
-            return optionsResponse;
-        }
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapMethods("/api/garmin/courses/{courseId}", ["DELETE", "OPTIONS"],
+            (HttpContext context, [FromServices] DeleteGarminCourse endpoint, string courseId) => endpoint.Handle(context, courseId, context.RequestAborted));
 
-        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "DELETE, PUT, OPTIONS");
+    public async Task<IResult> Handle(HttpContext context, string courseId, CancellationToken cancellationToken)
+    {
+        if (context.IsOptionsRequest())
+            return TypedResults.NoContent();
+
+        var authFailure = await GarminCourseAuthorization.Authorize(context, userAuthService);
         if (authFailure is not null)
             return authFailure;
 
         return await GetGarminCourses.ProxyUpstreamAsync(
-            req,
+            context,
             () => garminCoursesApi.DeleteCourse(courseId, cancellationToken),
-            cancellationToken,
-            "DELETE, PUT, OPTIONS");
+            cancellationToken);
     }
 }
 
@@ -241,32 +208,23 @@ public class PutGarminCourse(
 {
     internal const long HardcodedDeviceId = 3616062752L;
 
-    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Replace a Garmin course's route with new GPX via the configured Garmin proxy service.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "courseId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "filename", In = ParameterLocation.Query, Type = typeof(string), Required = false)]
-    [OpenApiRequestBody(contentType: "application/gpx+xml", bodyType: typeof(string), Required = true)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Garmin course update response.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest, Description = "GPX payload missing")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(PutGarminCourse))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "garmin/courses/{courseId}")] HttpRequestData req,
-        string courseId,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPut("/api/garmin/courses/{courseId}",
+            (HttpContext context, [FromServices] PutGarminCourse endpoint, string courseId) => endpoint.Handle(context, courseId, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, string courseId, CancellationToken cancellationToken)
     {
-        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "DELETE, PUT, OPTIONS");
+        var authFailure = await GarminCourseAuthorization.Authorize(context, userAuthService);
         if (authFailure is not null)
             return authFailure;
 
         await using var buffer = new MemoryStream();
-        await req.Body.CopyToAsync(buffer, cancellationToken);
+        await context.Request.Body.CopyToAsync(buffer, cancellationToken);
         var gpxBytes = buffer.ToArray();
         if (gpxBytes.Length == 0)
-            return GetGarminCourses.CreateBadRequest(req, "Request body must contain GPX data", "DELETE, PUT, OPTIONS");
+            return GetGarminCourses.CreateBadRequest(context, "Request body must contain GPX data");
 
-        var fileName = req.Query["filename"];
+        var fileName = context.Request.Query["filename"];
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
@@ -277,7 +235,7 @@ public class PutGarminCourse(
         }
         catch (HttpRequestException)
         {
-            return GetGarminCourses.CreateProxyUnavailable(req, "DELETE, PUT, OPTIONS");
+            return GetGarminCourses.CreateProxyUnavailable(context);
         }
 
         using (upstreamResponse)
@@ -307,7 +265,7 @@ public class PutGarminCourse(
                 }
             }
 
-            return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "DELETE, PUT, OPTIONS");
+            return await GetGarminCourses.ProxyResponseAsync(context, upstreamResponse, cancellationToken);
         }
     }
 }
@@ -316,30 +274,23 @@ public class PostGarminCourse(
     UserAuthenticationService userAuthService,
     GarminCoursesApi garminCoursesApi)
 {
-    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Upload a Garmin course GPX via the configured Garmin proxy service.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "filename", In = ParameterLocation.Query, Type = typeof(string), Required = false)]
-    [OpenApiRequestBody(contentType: "application/gpx+xml", bodyType: typeof(string), Required = true)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Garmin course upload response.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest, Description = "GPX payload missing")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(PostGarminCourse))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "garmin/courses")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/garmin/courses",
+            (HttpContext context, [FromServices] PostGarminCourse endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService);
+        var authFailure = await GarminCourseAuthorization.Authorize(context, userAuthService);
         if (authFailure is not null)
             return authFailure;
 
         await using var buffer = new MemoryStream();
-        await req.Body.CopyToAsync(buffer, cancellationToken);
+        await context.Request.Body.CopyToAsync(buffer, cancellationToken);
         var gpxBytes = buffer.ToArray();
         if (gpxBytes.Length == 0)
-            return GetGarminCourses.CreateBadRequest(req, "Request body must contain GPX data", "GET, POST, OPTIONS");
+            return GetGarminCourses.CreateBadRequest(context, "Request body must contain GPX data");
 
-        var fileName = req.Query["filename"];
+        var fileName = context.Request.Query["filename"];
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
@@ -350,7 +301,7 @@ public class PostGarminCourse(
         }
         catch (HttpRequestException)
         {
-            return GetGarminCourses.CreateProxyUnavailable(req, "GET, POST, OPTIONS");
+            return GetGarminCourses.CreateProxyUnavailable(context);
         }
 
         using (upstreamResponse)
@@ -382,15 +333,14 @@ public class PostGarminCourse(
                 }
 
                 // Re-build response from buffered body since the stream is consumed
-                var proxyResponse = req.CreateResponse(upstreamResponse.StatusCode);
-                CorsHeaders.Add(req, proxyResponse, "GET, POST, OPTIONS");
+                context.Response.StatusCode = (int)upstreamResponse.StatusCode;
                 foreach (var header in upstreamResponse.Content.Headers)
-                    proxyResponse.Headers.TryAddWithoutValidation(header.Key, header.Value);
-                await proxyResponse.Body.WriteAsync(responseBody, cancellationToken);
-                return proxyResponse;
+                    context.Response.Headers.Append(header.Key, string.Join(",", header.Value));
+                await context.Response.Body.WriteAsync(responseBody, cancellationToken);
+                return TypedResults.Empty;
             }
 
-            return await GetGarminCourses.ProxyResponseAsync(req, upstreamResponse, cancellationToken, "GET, POST, OPTIONS");
+            return await GetGarminCourses.ProxyResponseAsync(context, upstreamResponse, cancellationToken);
         }
     }
 
@@ -416,42 +366,31 @@ public class PostGarminDeviceMessages(
     UserAuthenticationService userAuthService,
     GarminCoursesApi garminCoursesApi)
 {
-    [OpenApiOperation(tags: ["Garmin Courses"], Summary = "Send device messages to a Garmin device via the configured Garmin proxy service.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(object[]), Required = true, Description = "Array of device message objects.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Device messages response.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest, Description = "Body missing or not a JSON array")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(PostGarminDeviceMessages))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "garmin/device-messages")] HttpRequestData req,
-        CancellationToken cancellationToken)
-    {
-        if (CorsHeaders.IsOptions(req))
-        {
-            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            CorsHeaders.Add(req, optionsResponse, "POST, OPTIONS");
-            return optionsResponse;
-        }
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapMethods("/api/garmin/device-messages", ["POST", "OPTIONS"],
+            (HttpContext context, [FromServices] PostGarminDeviceMessages endpoint) => endpoint.Handle(context, context.RequestAborted));
 
-        var authFailure = await GarminCourseAuthorization.Authorize(req, userAuthService, "POST, OPTIONS");
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (context.IsOptionsRequest())
+            return TypedResults.NoContent();
+
+        var authFailure = await GarminCourseAuthorization.Authorize(context, userAuthService);
         if (authFailure is not null)
             return authFailure;
 
         await using var buffer = new MemoryStream();
-        await req.Body.CopyToAsync(buffer, cancellationToken);
+        await context.Request.Body.CopyToAsync(buffer, cancellationToken);
         var bodyBytes = buffer.ToArray();
         if (bodyBytes.Length == 0)
-            return GetGarminCourses.CreateBadRequest(req, "Request body must contain a JSON array of device messages", "POST, OPTIONS");
+            return GetGarminCourses.CreateBadRequest(context, "Request body must contain a JSON array of device messages");
 
         var content = new System.Net.Http.ByteArrayContent(bodyBytes);
         content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse("application/json");
 
         return await GetGarminCourses.ProxyUpstreamAsync(
-            req,
+            context,
             () => garminCoursesApi.SendDeviceMessagesRaw(content, cancellationToken),
-            cancellationToken,
-            "POST, OPTIONS");
+            cancellationToken);
     }
 }

@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
 
@@ -13,38 +15,30 @@ public class GetStravaRouteGpx(
     StravaTokenService _stravaTokenService,
     RoutesApi _routesApi)
 {
-    [OpenApiOperation(tags: ["Strava Routes"], Summary = "Export a Strava route as a GPX file.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "routeId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/gpx+xml", bodyType: typeof(string),
-        Description = "The route as a GPX file.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NotFound, Description = "Route not found")]
-    [Function(nameof(GetStravaRouteGpx))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "strava/routes/{routeId}/gpx")] HttpRequestData req,
-        string routeId)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/strava/routes/{routeId}/gpx", (HttpContext context, [FromServices] GetStravaRouteGpx endpoint, string routeId) => endpoint.Handle(context, routeId, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, string routeId, CancellationToken cancellationToken)
     {
-        string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
+        string? sessionId = context.SessionId();
         var user = await _userAuthService.GetUserFromSessionId(sessionId);
         if (user == null)
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+            return TypedResults.Unauthorized();
 
         var token = await _stravaTokenService.GetValidAccessToken(user);
         if (token == null)
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+            return TypedResults.Unauthorized();
 
         var gpxStream = await _routesApi.GetRouteGpx(token, routeId);
         if (gpxStream == null)
-            return req.CreateResponse(HttpStatusCode.NotFound);
+            return TypedResults.NotFound();
 
         await using (gpxStream)
         {
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Content-Type", "application/gpx+xml");
-            response.Headers.Add("Content-Disposition", $"attachment; filename=\"route-{routeId}.gpx\"");
-            await gpxStream.CopyToAsync(response.Body);
-            return response;
+            context.Response.ContentType = "application/gpx+xml";
+            context.Response.Headers["Content-Disposition"] = $"attachment; filename=\"route-{routeId}.gpx\"";
+            await gpxStream.CopyToAsync(context.Response.Body, cancellationToken);
+            return TypedResults.Empty;
         }
     }
 }

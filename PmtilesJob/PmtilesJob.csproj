@@ -20,7 +20,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />
-    <ProjectReference Include="..\Shared.Hosting\Shared.Hosting.csproj" />
   </ItemGroup>
 
   <ItemGroup>

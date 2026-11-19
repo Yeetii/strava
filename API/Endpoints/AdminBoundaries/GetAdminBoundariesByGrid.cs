@@ -1,10 +1,12 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Configuration;
-using Microsoft.OpenApi.Models;
 using API.Utils;
 using Shared.Geo;
 using Shared.Models;
@@ -23,30 +25,19 @@ public class GetAdminBoundariesByGrid(
 {
     private const int DefaultZoom = 6;
     private const int DefaultAdminLevel = 2;
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/boundaries/{x}/{y}", (HttpContext context, [FromServices] GetAdminBoundariesByGrid endpoint, int x, int y) => endpoint.Handle(context, x, y, context.RequestAborted));
 
-    [OpenApiOperation(tags: ["AdminBoundaries"])]
-    [OpenApiParameter(name: "x", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
-    [OpenApiParameter(name: "y", In = ParameterLocation.Path, Type = typeof(int), Required = true)]
-    [OpenApiParameter(name: "zoom", In = ParameterLocation.Query, Type = typeof(int), Required = false)]
-    [OpenApiParameter(name: "adminLevel", In = ParameterLocation.Query, Type = typeof(int), Required = false,
-        Description = "OSM admin_level (e.g. 2 = country, 4 = state/region). See https://wiki.openstreetmap.org/wiki/Key:admin_level")]
-    [OpenApiParameter(name: "forceRefresh", In = ParameterLocation.Query, Type = typeof(bool), Required = false,
-        Description = "When true, clears the OSM tile-query markers covering this tile and re-fetches from Overpass. Requires x-admin-key header.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = false)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
-        Description = "A GeoJson FeatureCollection with administrative boundaries for the given OSM admin_level.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(GetAdminBoundariesByGrid))]
-    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "boundaries/{x}/{y}")] HttpRequestData req, int x, int y, CancellationToken cancellationToken)
+    public async Task<IResult> Handle(HttpContext context, int x, int y, CancellationToken cancellationToken)
     {
         try
         {
-            var zoom = ParseIntQuery(req, "zoom", DefaultZoom);
-            var adminLevel = ParseIntQuery(req, "adminLevel", DefaultAdminLevel);
-            var forceRefresh = string.Equals(req.Query["forceRefresh"], "true", StringComparison.OrdinalIgnoreCase);
+            var zoom = ParseIntQuery(context, "zoom", DefaultZoom);
+            var adminLevel = ParseIntQuery(context, "adminLevel", DefaultAdminLevel);
+            var forceRefresh = string.Equals(context.Request.Query["forceRefresh"], "true", StringComparison.OrdinalIgnoreCase);
 
-            if (forceRefresh && !IsAuthorized(req))
-                return req.CreateResponse(HttpStatusCode.Unauthorized);
+            if (forceRefresh && !context.IsAdminAuthorized(configuration))
+                return TypedResults.Unauthorized();
 
             if (forceRefresh)
                 await RefreshTileAsync(x, y, zoom, adminLevel, cancellationToken);
@@ -56,13 +47,11 @@ public class GetAdminBoundariesByGrid(
             var featureCollection = new FeatureCollection(boundaries
                 .Select(b => b.ToFeature()).ToList());
 
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            await response.WriteAsJsonAsync(featureCollection);
-            return response;
+            return TypedResults.Ok(featureCollection);
         }
         catch (Exception ex) when (RequestCancellation.IsCancellation(ex, cancellationToken))
         {
-            return RequestCancellation.CreateCancelledResponse(req);
+            return TypedResults.NoContent();
         }
     }
 
@@ -96,17 +85,9 @@ public class GetAdminBoundariesByGrid(
             cancellationToken);
     }
 
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-        return req.Headers.TryGetValues("x-admin-key", out var values)
-            && values.FirstOrDefault() == adminKey;
-    }
 
-    private static int ParseIntQuery(HttpRequestData req, string name, int defaultValue)
+    private static int ParseIntQuery(HttpContext req, string name, int defaultValue)
     {
-        return int.TryParse(req.Query[name], out var value) ? value : defaultValue;
+        return int.TryParse(req.Request.Query[name], out var value) ? value : defaultValue;
     }
 }

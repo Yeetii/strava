@@ -16,14 +16,11 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />
-    <ProjectReference Include="..\Shared.Hosting\Shared.Hosting.csproj" />
-    <ProjectReference Include="..\Backend\Backend.csproj" />
   </ItemGroup>
 
   <!-- StoreCuratedPeaksGroups reads ./peaks.json at runtime. -->
   <ItemGroup>
-    <None Include="..\Backend\peaks.json" Link="peaks.json"
-          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="peaks.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <None Update="openapi/openapi.source.json">

@@ -1,25 +1,29 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using Shared.Services;
 using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services.Postgres.Admin;
 
-namespace Backend;
+namespace API.Endpoints.Backend;
 
 public class CleanupExcludedActivityTypes(
     IBackendAdminQueries queries,
     ILogger<CleanupExcludedActivityTypes> logger)
 {
-    [Function(nameof(CleanupExcludedActivityTypes))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "manage/cleanup-excluded-activity-types")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/cleanup-excluded-activity-types", (HttpContext context, [FromServices] CleanupExcludedActivityTypes endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        var userId = req.Query["userId"]; // optional — omit to process all users
-        var featureParam = req.Query["feature"] ?? "all";
-        var dryRun = string.Equals(req.Query["dryRun"], "true", StringComparison.OrdinalIgnoreCase);
+        string? userId = context.Request.Query["userId"].ToString(); // optional — omit to process all users
+        var featureParam = context.Request.Query["feature"].ToString() ?? "all";
+        var dryRun = string.Equals(context.Request.Query["dryRun"], "true", StringComparison.OrdinalIgnoreCase);
 
         var includePaths = featureParam is "all" or "paths";
         var includePeaks = featureParam is "all" or "peaks";
@@ -69,8 +73,7 @@ public class CleanupExcludedActivityTypes(
             peaksDeleted, peaksPatched,
             areasDeleted, areasPatched);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new
+        return TypedResults.Ok(new
         {
             userId = string.IsNullOrWhiteSpace(userId) ? "all" : userId,
             dryRun,
@@ -83,7 +86,6 @@ public class CleanupExcludedActivityTypes(
             paths = new { deleted = pathsDeleted, patched = pathsPatched },
             peaks = new { deleted = peaksDeleted, patched = peaksPatched },
             areas = new { deleted = areasDeleted, patched = areasPatched },
-        }, cancellationToken);
-        return response;
+        });
     }
 }

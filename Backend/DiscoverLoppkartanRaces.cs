@@ -1,5 +1,5 @@
 using Shared.Services;
-using Microsoft.Azure.Functions.Worker;
+using Shared.Jobs;
 using Microsoft.Extensions.Logging;
 
 namespace Backend;
@@ -7,12 +7,14 @@ namespace Backend;
 public class DiscoverLoppkartanRaces(
     IHttpClientFactory httpClientFactory,
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverLoppkartanRaces> logger)
+    ILogger<DiscoverLoppkartanRaces> logger) : IRecurringJob
 {
+    public string JobId => "DiscoverLoppkartanRaces";
+    public string Cron => "0 0 2 * * 1";
+
     private static readonly Uri MarkersUrl = new("https://www.loppkartan.se/markers-se.json");
 
-    [Function(nameof(DiscoverLoppkartanRaces))]
-    public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         var jobs = await FetchJobsAsync(cancellationToken);
         await discoveryService.DiscoverAndWriteAsync("loppkartan", jobs, cancellationToken);

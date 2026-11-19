@@ -1,12 +1,16 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Shared.Services;
 using Shared.Services.Postgres.Admin;
 using Shared.Services.Postgres.Spatial;
 
-namespace Backend;
+namespace API.Endpoints.Backend;
 
 public class BackfillAdminBoundaryMetrics(
     AdminBoundaryMetricsEnricher enricher,
@@ -16,13 +20,12 @@ public class BackfillAdminBoundaryMetrics(
 {
     private const int DefaultBatchSize = 5;
     private const int MaxBatchSize = 25;
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/boundaries/backfill", (HttpContext context, [FromServices] BackfillAdminBoundaryMetrics endpoint) => endpoint.Handle(context, context.RequestAborted));
 
-    [Function(nameof(BackfillAdminBoundaryMetrics))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "boundaries/backfill")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        var batchSize = ParseBatchSize(req);
+        var batchSize = ParseBatchSize(context);
 
         // Same selection as the old Cosmos query: non-empty admin boundaries whose metrics
         // version is behind the current one, ordered by id for deterministic paging.
@@ -36,7 +39,7 @@ public class BackfillAdminBoundaryMetrics(
         var processed = 0;
         var failed = new List<string>();
 
-        foreach (var boundary in boundaries.Where(OsmFeaturesChangeTrigger.ShouldEnrich))
+        foreach (var boundary in boundaries.Where(AdminBoundaryEnrichmentRules.ShouldEnrich))
         {
             try
             {
@@ -53,21 +56,19 @@ public class BackfillAdminBoundaryMetrics(
             }
         }
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new
+        return TypedResults.Ok(new
         {
             requestedBatchSize = batchSize,
             fetched = boundaryIds.Count,
             processed,
             failed,
             hasMore = boundaryIds.Count == batchSize
-        }, cancellationToken);
-        return response;
+        });
     }
 
-    private static int ParseBatchSize(HttpRequestData req)
+    private static int ParseBatchSize(HttpContext req)
     {
-        if (!int.TryParse(req.Query["batchSize"], out var batchSize))
+        if (!int.TryParse(req.Request.Query["batchSize"], out var batchSize))
         {
             return DefaultBatchSize;
         }

@@ -1,11 +1,12 @@
-using System.Net;
+using Microsoft.AspNetCore.Mvc;
 using Hangfire;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
+using API.Http;
 using Shared.Services;
 using Shared.Services.Postgres.Admin;
 
@@ -41,18 +42,14 @@ public class GetAdminStatus(
     IConfiguration configuration,
     ILogger<GetAdminStatus> logger)
 {
-    [OpenApiOperation(tags: ["Admin"])]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(AdminStatus))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(GetAdminStatus))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/status")] HttpRequestData req)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/manage/status",
+            (HttpContext context, [FromServices] GetAdminStatus endpoint) => endpoint.Handle(context));
+
+    public async Task<IResult> Handle(HttpContext context)
     {
-        if (!IsAuthorized(req))
-        {
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
-        }
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         var queueStatus = FetchQueueStatus();
         var tableTasks = statusRepository.TableNames.Select(FetchTableStatusAsync).ToArray();
@@ -76,21 +73,8 @@ public class GetAdminStatus(
             activityWindowCounts.ProcessedNewActivitiesLast24Hours,
             raceCounts.OrganizerCount,
             raceCounts.AssembledRaceCount);
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(status);
-        return response;
-    }
 
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-        {
-            return false;
-        }
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(status);
     }
 
     private QueueStatus FetchQueueStatus()

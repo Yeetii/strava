@@ -1,5 +1,5 @@
 using Shared.Services;
-using Microsoft.Azure.Functions.Worker;
+using Shared.Jobs;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Net;
@@ -8,8 +8,11 @@ namespace Backend;
 
 public class DiscoverBetrailRaces(
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverBetrailRaces> logger)
+    ILogger<DiscoverBetrailRaces> logger) : IRecurringJob
 {
+    public string JobId => "DiscoverBetrailRaces";
+    public string Cron => "0 0 2 * * 1";
+
     // Debug-only throttle: limit discovery volume for faster local iteration.
     private const bool DebugLimitEventsEnabled = false;
     private const int DebugMaxEvents = 10;
@@ -17,8 +20,7 @@ public class DiscoverBetrailRaces(
     private static readonly Uri ApiBaseUrl = new("https://www.betrail.run/api/events-drizzle");
     private static readonly Uri CalendarUrl = new("https://www.betrail.run/en/calendar/all");
 
-    [Function(nameof(DiscoverBetrailRaces))]
-    public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         var jobs = await FetchJobsAsync(cancellationToken);
         await discoveryService.DiscoverAndWriteAsync("betrail", jobs, cancellationToken);

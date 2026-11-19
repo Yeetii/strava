@@ -1,12 +1,13 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
+using API.Http;
 
 namespace API.Endpoints.Admin;
 
@@ -20,38 +21,33 @@ public class PostManualGpx(
     IConfiguration configuration,
     ILogger<PostManualGpx> logger)
 {
-    [OpenApiOperation(tags: ["Admin"], Summary = "Submit one or more GPX files for a race URL.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(PostManualGpxRequest))]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(PostManualGpxResponse))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest)]
-    [Function(nameof(PostManualGpx))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/races/gpx")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/races/gpx",
+            (HttpContext context, [FromServices] PostManualGpx endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         PostManualGpxRequest? body;
         try
         {
-            body = await req.ReadFromJsonAsync<PostManualGpxRequest>(cancellationToken);
+            body = await context.Request.ReadFromJsonAsync<PostManualGpxRequest>(cancellationToken);
         }
         catch
         {
-            return await BadRequest(req, "Invalid JSON body", cancellationToken);
+            return BadRequest("Invalid JSON body");
         }
 
         if (body is null || string.IsNullOrWhiteSpace(body.Url))
-            return await BadRequest(req, "Missing required field: url", cancellationToken);
+            return BadRequest("Missing required field: url");
 
         if (body.GpxFiles is null || body.GpxFiles.Count == 0)
-            return await BadRequest(req, "Missing required field: gpxFiles (must contain at least one entry)", cancellationToken);
+            return BadRequest("Missing required field: gpxFiles (must contain at least one entry)");
 
         if (!Uri.TryCreate(body.Url.Trim(), UriKind.Absolute, out var parsedUrl) || parsedUrl.Scheme is not ("http" or "https"))
-            return await BadRequest(req, "Invalid URL — must be an absolute http(s) URL", cancellationToken);
+            return BadRequest("Invalid URL — must be an absolute http(s) URL");
 
         // Parse each supplied GPX file.
         var routes = new List<ScrapedRouteOutput>();
@@ -99,7 +95,7 @@ public class PostManualGpx(
         }
 
         if (routes.Count == 0)
-            return await BadRequest(req, $"No GPX files could be parsed ({failedCount} failed)", cancellationToken);
+            return BadRequest($"No GPX files could be parsed ({failedCount} failed)");
 
         var organizerKey = OrganizerUrlRules.DeriveOrganizerKey(parsedUrl);
 
@@ -121,26 +117,10 @@ public class PostManualGpx(
         await organizerClient.WriteScraperOutputAsync(organizerKey, "manual-gpx", output, cancellationToken);
         logger.LogInformation("PostManualGpx: wrote {Count} routes for {Key}", routes.Count, organizerKey);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(
-            new PostManualGpxResponse(organizerKey, parsedUrl.AbsoluteUri, routes.Count, failedCount),
-            cancellationToken);
-        return response;
+        return TypedResults.Ok(new PostManualGpxResponse(organizerKey, parsedUrl.AbsoluteUri, routes.Count, failedCount));
     }
 
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey)) return false;
-        return req.Headers.TryGetValues("x-admin-key", out var provided) && provided.FirstOrDefault() == adminKey;
-    }
-
-    private static async Task<HttpResponseData> BadRequest(HttpRequestData req, string message, CancellationToken ct)
-    {
-        var r = req.CreateResponse(HttpStatusCode.BadRequest);
-        await r.WriteStringAsync(message, ct);
-        return r;
-    }
+    private static IResult BadRequest(string message) => TypedResults.BadRequest(message);
 }
 
 public record PostManualGpxRequest(

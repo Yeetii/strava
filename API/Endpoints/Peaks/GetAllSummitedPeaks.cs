@@ -1,9 +1,7 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
 using System.Net;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
@@ -17,22 +15,16 @@ namespace API
         IActivityRepository activityRepository,
         UserAuthenticationService userAuthService)
     {
-        [OpenApiOperation(tags: ["Peaks"])]
-        [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(FeatureCollection),
-            Description = "A GeoJson FeatureCollection with peaks the user has summited.")]
-        [Function(nameof(GetAllSummitedPeaks))]
-        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "summitedPeaks")] HttpRequestData req)
+        public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+            app.MapGet("/api/summitedPeaks", (HttpContext context, [FromServices] GetAllSummitedPeaks endpoint) => endpoint.Handle(context));
+
+        public async Task<IResult> Handle(HttpContext context)
         {
-            var response = req.CreateResponse();
-            string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
+            string? sessionId = context.SessionId();
 
             var user = await userAuthService.GetUserFromSessionId(sessionId);
             if (user == default)
-            {
-                response.StatusCode = HttpStatusCode.Unauthorized;
-                return response;
-            }
+                return TypedResults.Unauthorized();
 
             var links = await summitsRepository.GetByUser(user.Id);
             var summitGroups = links
@@ -74,9 +66,7 @@ namespace API
 
             var featureCollection = new FeatureCollection(features);
 
-            response.StatusCode = HttpStatusCode.OK;
-            await response.WriteAsJsonAsync(featureCollection);
-            return response;
+            return TypedResults.Ok(featureCollection);
         }
     }
 }

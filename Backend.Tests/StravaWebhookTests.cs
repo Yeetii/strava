@@ -1,6 +1,5 @@
 using Shared.Jobs;
-using Backend;
-using Microsoft.AspNetCore.Mvc;
+using API.Endpoints.Backend;
 using Newtonsoft.Json.Linq;
 
 namespace Backend.Tests;
@@ -71,8 +70,5 @@ public class StravaWebhookTests
         Assert.Null(outputs.ActivityDeleteJob);
     }
 
-    private static OutputBindings CreateOutputs() => new()
-    {
-        Response = new OkResult()
-    };
+    private static WebhookJobs CreateOutputs() => new();
 }

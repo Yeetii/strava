@@ -1,4 +1,3 @@
-using Microsoft.Azure.Functions.Worker;
 using Shared.Models;
 using Shared.Services;
 
@@ -9,9 +8,9 @@ public class ScrapeRaceWorkerTests
     [Fact]
     public void DeserializeMessage_AcceptsJsonAutomaticMessage()
     {
-        var received = new QueueMessage("""{"organizerKey":"sample.com","isUrgent":false}""");
+        var received = """{"organizerKey":"sample.com","isUrgent":false}""";
 
-        var message = ScrapeRaceWorker.DeserializeMessage(received);
+        var message = RaceScrapePipeline.DeserializeMessage(received);
 
         Assert.Equal("sample.com", message.OrganizerKey);
         Assert.False(message.IsUrgent);
@@ -20,9 +19,9 @@ public class ScrapeRaceWorkerTests
     [Fact]
     public void DeserializeMessage_FallsBackToPlainTextUrgentMessage()
     {
-        var received = new QueueMessage("sample.com");
+        var received = "sample.com";
 
-        var message = ScrapeRaceWorker.DeserializeMessage(received);
+        var message = RaceScrapePipeline.DeserializeMessage(received);
 
         Assert.Equal("sample.com", message.OrganizerKey);
         Assert.True(message.IsUrgent);
@@ -39,7 +38,7 @@ public class ScrapeRaceWorkerTests
             LastScrapedUtc = now.AddDays(-2).ToString("o")
         };
 
-        Assert.True(ScrapeRaceWorker.IsFreshEnoughForAutomaticScrape(doc, now));
+        Assert.True(RaceScrapePipeline.IsFreshEnoughForAutomaticScrape(doc, now));
     }
 
     [Fact]
@@ -97,10 +96,10 @@ public class ScrapeRaceWorkerTests
             ]
         };
 
-        var baselineHashes = ScrapeRaceWorker.ComputeHashes(baseline);
-        var rescrapedHashes = ScrapeRaceWorker.ComputeHashes(rescraped);
-        var propertyHashes = ScrapeRaceWorker.ComputeHashes(propertyChange);
-        var routeHashes = ScrapeRaceWorker.ComputeHashes(routeChange);
+        var baselineHashes = RaceScrapePipeline.ComputeHashes(baseline);
+        var rescrapedHashes = RaceScrapePipeline.ComputeHashes(rescraped);
+        var propertyHashes = RaceScrapePipeline.ComputeHashes(propertyChange);
+        var routeHashes = RaceScrapePipeline.ComputeHashes(routeChange);
 
         Assert.Equal(baselineHashes.PropertiesHash, rescrapedHashes.PropertiesHash);
         Assert.Equal(baselineHashes.RoutesHash, rescrapedHashes.RoutesHash);
@@ -135,7 +134,7 @@ public class ScrapeRaceWorkerTests
             }
         };
 
-        var urls = ScrapeRaceWorker.CollectBfsUrls(doc);
+        var urls = RaceScrapePipeline.CollectBfsUrls(doc);
 
         Assert.Contains(urls, u => u.AbsoluteUri == "https://www.strava.com/route/12345/example");
         Assert.Contains(urls, u => u.AbsoluteUri == "https://www.strava.com/route/99999/other");

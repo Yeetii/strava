@@ -68,10 +68,14 @@ public interface IVisitedAreasJob
 /// <summary>Typed enqueue helpers so no producer hand-builds a transport envelope.</summary>
 public static class JobEnqueueExtensions
 {
+    // Hangfire queue names must be lowercase letters, digits, underscore or dash.
+    // QueueConfig carries the historical camelCase names; normalize at the boundary.
+    public static string NormalizeQueue(string queue) => queue.ToLowerInvariant();
+
     private static string Enqueue<TJob>(IBackgroundJobClient jobs, string queue, Expression<Func<TJob, Task>> call)
-        where TJob : class => jobs.Enqueue(queue, call);
+        where TJob : class => jobs.Enqueue(NormalizeQueue(queue), call);
     private static string Schedule<TJob>(IBackgroundJobClient jobs, string queue, Expression<Func<TJob, Task>> call, TimeSpan delay)
-        where TJob : class => jobs.Schedule(queue, call, delay);
+        where TJob : class => jobs.Schedule(NormalizeQueue(queue), call, delay);
 
     public static string EnqueueScrapeRace(this IBackgroundJobClient jobs, ScrapeRaceMessage job) =>
         Enqueue<IScrapeRaceJob>(jobs, QueueConfig.ScrapeRace, x => x.ExecuteAsync(job, CancellationToken.None));

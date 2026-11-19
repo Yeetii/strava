@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
-namespace Shared.Hosting;
+namespace Shared.Jobs;
 
 /// <summary>Minimal sink for one job's console output. Kept free of Hangfire
 /// types so the logger bridge can be exercised in tests.</summary>

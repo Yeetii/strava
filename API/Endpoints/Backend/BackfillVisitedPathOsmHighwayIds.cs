@@ -1,13 +1,17 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using Hangfire;
 using Shared.Services;
 using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
 using Shared.Services.Postgres.Admin;
 
-namespace Backend;
+namespace API.Endpoints.Backend;
 
 public class BackfillVisitedPathOsmHighwayIds(
     IBackendAdminQueries queries,
@@ -18,14 +22,13 @@ public class BackfillVisitedPathOsmHighwayIds(
     private const int MaxBatchSize = 1000;
     private const int DefaultMaxPages = 1000;
     private const int MaxMaxPages = 10000;
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/visited-paths/backfill-osm-highway-ids", (HttpContext context, [FromServices] BackfillVisitedPathOsmHighwayIds endpoint) => endpoint.Handle(context, context.RequestAborted));
 
-    [Function(nameof(BackfillVisitedPathOsmHighwayIds))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "manage/visited-paths/backfill-osm-highway-ids")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        var batchSize = ParseBatchSize(req);
-        var continuationToken = req.Query["continuationToken"];
+        var batchSize = ParseBatchSize(context);
+        var continuationToken = context.Request.Query["continuationToken"].ToString();
 
         var (fetchedDocuments, queuedActivities, nextContinuationToken) = await ProcessPageAsync(
             batchSize,
@@ -39,29 +42,26 @@ public class BackfillVisitedPathOsmHighwayIds(
             batchSize,
             !string.IsNullOrWhiteSpace(nextContinuationToken));
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new
+        return TypedResults.Ok(new
         {
             requestedBatchSize = batchSize,
             fetchedDocuments,
             queuedActivities,
             hasMore = !string.IsNullOrWhiteSpace(nextContinuationToken),
             continuationToken = nextContinuationToken
-        }, cancellationToken);
-        return response;
+        });
     }
+    public static RouteHandlerBuilder MapAll(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/visited-paths/backfill-osm-highway-ids/all", (HttpContext context, [FromServices] BackfillVisitedPathOsmHighwayIds endpoint) => endpoint.HandleAll(context, context.RequestAborted));
 
-    [Function("BackfillVisitedPathOsmHighwayIdsAll")]
-    public async Task<HttpResponseData> RunAllPages(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = "manage/visited-paths/backfill-osm-highway-ids/all")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public async Task<IResult> HandleAll(HttpContext context, CancellationToken cancellationToken)
     {
-        var batchSize = ParseBatchSize(req);
-        var maxPages = ParseMaxPages(req);
+        var batchSize = ParseBatchSize(context);
+        var maxPages = ParseMaxPages(context);
         var pageCount = 0;
         var totalDocuments = 0;
         var totalQueued = 0;
-        string? continuationToken = req.Query["continuationToken"];
+        string? continuationToken = context.Request.Query["continuationToken"].ToString();
 
         do
         {
@@ -85,8 +85,7 @@ public class BackfillVisitedPathOsmHighwayIds(
             totalQueued,
             stoppedByLimit);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new
+        return TypedResults.Ok(new
         {
             requestedBatchSize = batchSize,
             maxPages,
@@ -96,8 +95,7 @@ public class BackfillVisitedPathOsmHighwayIds(
             completed = string.IsNullOrWhiteSpace(continuationToken),
             stoppedByLimit,
             continuationToken
-        }, cancellationToken);
-        return response;
+        });
     }
 
     private async Task<(int FetchedDocuments, int QueuedActivities, string? ContinuationToken)> ProcessPageAsync(
@@ -122,9 +120,9 @@ public class BackfillVisitedPathOsmHighwayIds(
         return (activityIds.Count, queuedActivities, nextContinuationToken);
     }
 
-    private static int ParseBatchSize(HttpRequestData req)
+    private static int ParseBatchSize(HttpContext req)
     {
-        if (!int.TryParse(req.Query["batchSize"], out var batchSize))
+        if (!int.TryParse(req.Request.Query["batchSize"], out var batchSize))
         {
             return DefaultBatchSize;
         }
@@ -132,9 +130,9 @@ public class BackfillVisitedPathOsmHighwayIds(
         return Math.Clamp(batchSize, 1, MaxBatchSize);
     }
 
-    private static int ParseMaxPages(HttpRequestData req)
+    private static int ParseMaxPages(HttpContext req)
     {
-        if (!int.TryParse(req.Query["maxPages"], out var maxPages))
+        if (!int.TryParse(req.Request.Query["maxPages"], out var maxPages))
         {
             return DefaultMaxPages;
         }

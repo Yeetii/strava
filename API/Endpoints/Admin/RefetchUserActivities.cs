@@ -1,11 +1,13 @@
+using Microsoft.AspNetCore.Mvc;
+using Hangfire;
 using Shared.Jobs;
-using System.Net;
 using System.Text.Json;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
-using Microsoft.OpenApi.Models;
+using API.Http;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
@@ -18,51 +20,30 @@ public record RefetchUserActivitiesResponse(string UserId, bool Queued);
 
 public class RefetchUserActivities(
     IUserRepository usersRepository,
-    QueueClient queueClient,
+    IBackgroundJobClient jobs,
     IConfiguration configuration)
 {
-    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.ActivitiesFetchJobs);
 
-    [OpenApiOperation(tags: ["Admin"], Summary = "Queue a full Strava activities refetch for a user.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "userId", In = ParameterLocation.Path, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(RefetchUserActivitiesResponse))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NotFound)]
-    [Function(nameof(RefetchUserActivities))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/users/{userId}/activities/refetch")] HttpRequestData req,
-        string userId,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/users/{userId}/activities/refetch",
+            (HttpContext context, [FromServices] RefetchUserActivities endpoint, string userId) => endpoint.Handle(context, userId, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, string userId, CancellationToken cancellationToken)
     {
-        if (!IsAuthorized(req))
+        if (!context.IsAdminAuthorized(configuration))
         {
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+            return TypedResults.Unauthorized();
         }
 
         var user = await usersRepository.GetById(userId, cancellationToken);
         if (user == null)
         {
-            return req.CreateResponse(HttpStatusCode.NotFound);
+            return TypedResults.NotFound();
         }
 
         var fetchJob = new ActivitiesFetchJob { UserId = userId, Page = 1 };
-        await _sender.SendMessageAsync(new QueueMessage(JsonSerializer.Serialize(fetchJob)), cancellationToken);
+        jobs.EnqueueActivitiesFetch(fetchJob);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new RefetchUserActivitiesResponse(userId, Queued: true), cancellationToken);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-        {
-            return false;
-        }
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(new RefetchUserActivitiesResponse(userId, Queued: true));
     }
 }

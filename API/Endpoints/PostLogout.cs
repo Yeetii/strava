@@ -1,29 +1,25 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 
 namespace API.Endpoints;
 
 public class PostLogout
 {
-    [OpenApiOperation(tags: ["User management"], Summary = "Clear the session cookie.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "Session cookie cleared")]
-    [Function(nameof(PostLogout))]
-    public HttpResponseData Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "logout")] HttpRequestData req)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/logout", (HttpContext context, [FromServices] PostLogout endpoint) => endpoint.Handle(context));
+
+    public IResult Handle(HttpContext context)
     {
-        var response = req.CreateResponse();
-
-        var cookie = new HttpCookie("session", string.Empty)
+        context.Response.Cookies.Delete("session", new CookieOptions
         {
-            MaxAge = 0,
-            SameSite = SameSite.ExplicitNone,
             Secure = true,
-            Path = "/"
-        };
-        response.Cookies.Append(cookie);
-
-        response.StatusCode = HttpStatusCode.NoContent;
-        return response;
+            HttpOnly = false,
+            SameSite = SameSiteMode.None,
+            Path = "/",
+        });
+        return TypedResults.NoContent();
     }
 }

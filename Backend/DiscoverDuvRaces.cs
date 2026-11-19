@@ -1,6 +1,5 @@
 using Shared.Services;
 using Shared.Jobs;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using System.Net;
 
@@ -9,10 +8,12 @@ namespace Backend;
 public class DiscoverDuvRaces(
     IHttpClientFactory httpClientFactory,
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverDuvRaces> logger)
+    ILogger<DiscoverDuvRaces> logger) : IRecurringJob
 {
-    [Function(nameof(DiscoverDuvRaces))]
-    public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public string JobId => "DiscoverDuvRaces";
+    public string Cron => "0 0 2 * * 1";
+
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         await discoveryService.EnqueueDiscoveryMessageAsync(new RaceDiscoveryMessage("duv"), delay: null, cancellationToken);
     }

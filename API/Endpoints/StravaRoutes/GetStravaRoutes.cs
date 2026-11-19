@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
 using API.Utils;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Services;
 using Shared.Services.StravaClient;
 using Shared.Services.StravaClient.Model;
@@ -28,48 +30,26 @@ public class GetStravaRoutes(
         bool? Private,
         bool? Starred,
         string? SummaryPolyline);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapMethods("/api/strava/routes", ["GET", "OPTIONS"], (HttpContext context, [FromServices] GetStravaRoutes endpoint) => endpoint.Handle(context));
 
-    [OpenApiOperation(tags: ["Strava Routes"], Summary = "List the authenticated user's Strava routes.")]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<RouteSummaryDto>),
-        Description = "A list of the user's Strava routes.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.NoContent, Description = "CORS preflight response")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Session is missing or invalid")]
-    [Function(nameof(GetStravaRoutes))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "strava/routes")] HttpRequestData req)
+    public async Task<IResult> Handle(HttpContext context)
     {
-        if (CorsHeaders.IsOptions(req))
-        {
-            var optionsResponse = req.CreateResponse(HttpStatusCode.NoContent);
-            CorsHeaders.Add(req, optionsResponse, "GET, POST, OPTIONS");
-            return optionsResponse;
-        }
+        if (context.IsOptionsRequest())
+            return TypedResults.NoContent();
 
-        var response = req.CreateResponse();
-        CorsHeaders.Add(req, response, "GET, POST, OPTIONS");
-
-        string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
+        string? sessionId = context.SessionId();
         var user = await _userAuthService.GetUserFromSessionId(sessionId);
         if (user == null)
-        {
-            response.StatusCode = HttpStatusCode.Unauthorized;
-            return response;
-        }
+            return TypedResults.Unauthorized();
 
         var token = await _stravaTokenService.GetValidAccessToken(user);
         if (token == null)
-        {
-            response.StatusCode = HttpStatusCode.Unauthorized;
-            return response;
-        }
+            return TypedResults.Unauthorized();
 
         var routes = await _routesApi.GetAthleteRoutes(token, user.Id);
         if (routes == null)
-        {
-            response.StatusCode = HttpStatusCode.NotFound;
-            return response;
-        }
+            return TypedResults.NotFound();
 
         var dtos = routes.Select(r => new RouteSummaryDto(
             r.Id,
@@ -84,10 +64,7 @@ public class GetStravaRoutes(
             r.Private,
             r.Starred,
             r.Map?.SummaryPolyline));
-
-        response.StatusCode = HttpStatusCode.OK;
-        await response.WriteAsJsonAsync(dtos);
-        return response;
+        return TypedResults.Ok(dtos);
     }
 
     private static string MapActivityType(StravaRoute route)

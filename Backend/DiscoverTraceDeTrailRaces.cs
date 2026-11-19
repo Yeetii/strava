@@ -1,6 +1,5 @@
 using Shared.Services;
 using Shared.Jobs;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Net;
@@ -10,15 +9,17 @@ namespace Backend;
 public class DiscoverTraceDeTrailRaces(
     IHttpClientFactory httpClientFactory,
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverTraceDeTrailRaces> logger)
+    ILogger<DiscoverTraceDeTrailRaces> logger) : IRecurringJob
 {
+    public string JobId => "DiscoverTraceDeTrailRaces";
+    public string Cron => "0 0 2 * * 1";
+
     private static readonly Uri CalendarUrl = new("https://tracedetrail.fr/event/getEventsCalendar/all/all/all");
     private const string CalendarReferer = "https://tracedetrail.fr/en/calendar";
     private const int StartMonthOffset = -12;
     private const int EndMonthOffset = 12;
 
-    [Function(nameof(DiscoverTraceDeTrailRaces))]
-    public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         await discoveryService.EnqueueDiscoveryMessageAsync(new RaceDiscoveryMessage("tracedetrail"), delay: null, cancellationToken);
     }

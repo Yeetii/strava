@@ -1,5 +1,5 @@
 using Shared.Services;
-using Microsoft.Azure.Functions.Worker;
+using Shared.Jobs;
 using Microsoft.Extensions.Logging;
 
 namespace Backend;
@@ -7,12 +7,14 @@ namespace Backend;
 public class DiscoverUtmbRaces(
     IHttpClientFactory httpClientFactory,
     RaceDiscoveryService discoveryService,
-    ILogger<DiscoverUtmbRaces> logger)
+    ILogger<DiscoverUtmbRaces> logger) : IRecurringJob
 {
+    public string JobId => "DiscoverUtmbRaces";
+    public string Cron => "0 0 2 * * 1";
+
     private static readonly Uri ApiUrl = new("https://api.utmb.world/search/races?lang=en&limit=400");
 
-    [Function(nameof(DiscoverUtmbRaces))]
-    public async Task Run([TimerTrigger("0 0 2 * * 1")] TimerInfo timerInfo, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         var jobs = await FetchJobsAsync(cancellationToken);
         await discoveryService.DiscoverAndWriteAsync("utmb", jobs, cancellationToken);

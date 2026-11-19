@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
@@ -38,21 +40,17 @@ public class GetActivityStatuses
         DateTime StartDateLocal,
         string? SummaryPolyline,
         ActivityProcessingStatus ProcessingStatus);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/activityStatuses", (HttpContext context, [FromServices] GetActivityStatuses endpoint) => endpoint.Handle(context));
 
-    [OpenApiOperation(tags: ["Activities"])]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "limit", In = ParameterLocation.Query, Type = typeof(int), Required = false, Description = "Maximum number of recent activity statuses to return. Defaults to 10, max 100.")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<ActivityStatusDto>))]
-    [Function(nameof(GetActivityStatuses))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "activityStatuses")] HttpRequestData req)
+    public async Task<IResult> Handle(HttpContext context)
     {
-        var sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
+        var sessionId = context.SessionId();
         var user = await _userAuthService.GetUserFromSessionId(sessionId);
         if (user == null)
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+            return TypedResults.Unauthorized();
 
-        var limit = ParseLimit(req.Query["limit"]);
+        var limit = ParseLimit(context.Request.Query["limit"]);
         var projected = (await _activitiesRepository.GetAllByUser(user.Id))
             .OrderByDescending(activity => activity.StartDateLocal)
             .Take(limit)
@@ -74,9 +72,7 @@ public class GetActivityStatuses
                 ProcessingStatus: activity.ProcessingStatus ?? new ActivityProcessingStatus()))
             .ToArray();
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(statuses);
-        return response;
+        return TypedResults.Ok(statuses);
     }
 
     public static int ParseLimit(string? rawLimit)

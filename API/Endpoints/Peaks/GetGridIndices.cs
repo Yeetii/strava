@@ -1,8 +1,9 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
+using API.Http;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres.Spatial;
@@ -11,21 +12,14 @@ namespace API.Endpoints.Peaks
 {
     public class GetGridIndices(IPeakRepository _peaks)
     {
-        [OpenApiOperation(tags: ["Peaks"])]
-        [OpenApiParameter(name: "peakIds", In = ParameterLocation.Query, Type = typeof(IEnumerable<string>), Required = true)]
-        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<string>), Description = "Grid indices (x,y) containing the peaks")]
-        [Function(nameof(GetGridIndices))]
-        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "gridIndices")] HttpRequestData req)
+        public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+            app.MapGet("/api/gridIndices", (HttpContext context, [FromServices] GetGridIndices endpoint) => endpoint.Handle(context));
+
+        public async Task<IResult> Handle(HttpContext context)
         {
-            var queryParams = req.Url.ParseQueryString();
-            var peakIdsString = queryParams["peakIds"];
-            if (peakIdsString == null)
-            {
-                var badResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-                await badResponse.WriteStringAsync("Missing peakIds query parameter");
-                return badResponse;
-            }
-            var peakIds = peakIdsString.Split(',');
+            if (!context.Request.Query.TryGetValue("peakIds", out var peakIdsValue) || string.IsNullOrEmpty(peakIdsValue.ToString()))
+                return TypedResults.BadRequest("Missing peakIds query parameter");
+            var peakIds = peakIdsValue.ToString().Split(',');
             // Match the legacy GetByFeatureIdsAsync lookup: normalise each id and try both
             // the raw and the kind-prefixed form before reading the peaks table.
             var normalizedIds = peakIds
@@ -41,9 +35,7 @@ namespace API.Endpoints.Peaks
 
             var grids = peaks.Select(x => x.X + "," + x.Y).Distinct();
 
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            await response.WriteAsJsonAsync(grids);
-            return response;
+            return TypedResults.Ok(grids);
         }
     }
 

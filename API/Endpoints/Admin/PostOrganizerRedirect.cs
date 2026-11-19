@@ -1,10 +1,11 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
+using API.Http;
 using Shared.Services;
 
 namespace API.Endpoints.Admin;
@@ -14,38 +15,33 @@ public class PostOrganizerRedirect(
     IConfiguration configuration,
     ILogger<PostOrganizerRedirect> logger)
 {
-    [OpenApiOperation(tags: ["Admin"], Summary = "Redirect one organizer site to another organizer id.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(PostOrganizerRedirectRequest))]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(PostOrganizerRedirectResponse))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest)]
-    [Function(nameof(PostOrganizerRedirect))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/organizers/redirects")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/organizers/redirects",
+            (HttpContext context, [FromServices] PostOrganizerRedirect endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         PostOrganizerRedirectRequest? body;
         try
         {
-            body = await req.ReadFromJsonAsync<PostOrganizerRedirectRequest>(cancellationToken);
+            body = await context.Request.ReadFromJsonAsync<PostOrganizerRedirectRequest>(cancellationToken);
         }
         catch
         {
-            return await BadRequest(req, "Invalid JSON body", cancellationToken);
+            return BadRequest("Invalid JSON body");
         }
 
         if (body is null || string.IsNullOrWhiteSpace(body.FromUrl) || string.IsNullOrWhiteSpace(body.ToUrl))
-            return await BadRequest(req, "Missing required fields: fromUrl and toUrl", cancellationToken);
+            return BadRequest("Missing required fields: fromUrl and toUrl");
 
         if (!TryParseHttpUrl(body.FromUrl, out var fromUrl))
-            return await BadRequest(req, "Invalid fromUrl — must be an absolute http(s) URL", cancellationToken);
+            return BadRequest("Invalid fromUrl — must be an absolute http(s) URL");
 
         if (!TryParseHttpUrl(body.ToUrl, out var toUrl))
-            return await BadRequest(req, "Invalid toUrl — must be an absolute http(s) URL", cancellationToken);
+            return BadRequest("Invalid toUrl — must be an absolute http(s) URL");
 
         var sourceOrganizerKey = OrganizerUrlRules.DeriveOrganizerKey(fromUrl);
         var targetOrganizerKey = OrganizerUrlRules.DeriveOrganizerKey(toUrl);
@@ -56,7 +52,7 @@ public class PostOrganizerRedirect(
         }
         catch (InvalidOperationException ex)
         {
-            return await BadRequest(req, ex.Message, cancellationToken);
+            return BadRequest(ex.Message);
         }
 
         var resolvedTargetOrganizerKey = await organizerStore.ResolveOrganizerKeyAsync(targetOrganizerKey, cancellationToken);
@@ -65,25 +61,12 @@ public class PostOrganizerRedirect(
             sourceOrganizerKey,
             resolvedTargetOrganizerKey);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(
+        return TypedResults.Ok(
             new PostOrganizerRedirectResponse(
                 sourceOrganizerKey,
                 resolvedTargetOrganizerKey,
                 fromUrl.AbsoluteUri,
-                toUrl.AbsoluteUri),
-            cancellationToken);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
+                toUrl.AbsoluteUri));
     }
 
     private static bool TryParseHttpUrl(string rawUrl, out Uri parsedUrl)
@@ -99,12 +82,7 @@ public class PostOrganizerRedirect(
         return false;
     }
 
-    private static async Task<HttpResponseData> BadRequest(HttpRequestData req, string message, CancellationToken cancellationToken)
-    {
-        var response = req.CreateResponse(HttpStatusCode.BadRequest);
-        await response.WriteStringAsync(message, cancellationToken);
-        return response;
-    }
+    private static IResult BadRequest(string message) => TypedResults.BadRequest(message);
 }
 
 public record PostOrganizerRedirectRequest(string FromUrl, string ToUrl);

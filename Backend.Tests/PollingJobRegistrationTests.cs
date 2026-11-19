@@ -2,7 +2,7 @@ using Hangfire;
 using Hangfire.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shared.Constants;
-using Shared.Hosting;
+using Shared.Jobs;
 
 namespace Backend.Tests;
 
@@ -38,7 +38,7 @@ public class PollingJobRegistrationTests
 
         foreach (var (_, job, _, _) in registrations)
         {
-            Assert.Equal(typeof(QueueTransport).Assembly, job.Type.Assembly);
+            Assert.Equal(typeof(IAdminBoundaryMetricsPollingJob).Assembly, job.Type.Assembly);
             Assert.Equal(AppConfig.BackendPollingQueueName, job.Queue);
         }
 

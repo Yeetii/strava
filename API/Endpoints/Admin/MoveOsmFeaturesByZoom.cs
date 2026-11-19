@@ -1,13 +1,14 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres.Admin;
+using API.Http;
 
 namespace API.Endpoints.Admin;
 
@@ -25,45 +26,32 @@ public class MoveOsmFeaturesByZoom(
         FeatureKinds.Race,
     };
 
-    [OpenApiOperation(tags: ["Admin"])]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "kind", In = ParameterLocation.Query, Type = typeof(string), Required = true,
-        Description = "Feature kind to move: peak | path | protectedArea | adminBoundary | race")]
-    [OpenApiParameter(name: "fromZoom", In = ParameterLocation.Query, Type = typeof(int), Required = true,
-        Description = "Source storage zoom level for rows to move.")]
-    [OpenApiParameter(name: "toZoom", In = ParameterLocation.Query, Type = typeof(int), Required = true,
-        Description = "Destination zoom level for the recomputed tile_x/tile_y.")]
-    [OpenApiParameter(name: "ids", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Optional comma-separated feature IDs to move. IDs may be provided with or without the kind prefix.")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(MoveZoomResult),
-        Description = "Summary of retiled rows.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(MoveOsmFeaturesByZoom))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/osmfeatures/moveZoom")] HttpRequestData req,
-        CancellationToken cancellationToken)
-    {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/osmfeatures/moveZoom",
+            (HttpContext context, [FromServices] MoveOsmFeaturesByZoom endpoint) => endpoint.Handle(context, context.RequestAborted));
 
-        var kind = req.Query["kind"];
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
+        var kind = context.Request.Query["kind"].ToString();
         if (string.IsNullOrWhiteSpace(kind))
-            return await CreateBadRequest(req, "Query parameter 'kind' is required.");
+            return CreateBadRequest("Query parameter 'kind' is required.");
 
         if (!ValidKinds.Contains(kind))
-            return await CreateBadRequest(req, $"Unknown kind '{kind}'. Valid values: {string.Join(", ", ValidKinds)}");
+            return CreateBadRequest($"Unknown kind '{kind}'. Valid values: {string.Join(", ", ValidKinds)}");
 
-        var fromZoomParam = req.Query["fromZoom"];
-        var toZoomParam = req.Query["toZoom"];
+        var fromZoomParam = context.Request.Query["fromZoom"].ToString();
+        var toZoomParam = context.Request.Query["toZoom"].ToString();
         if (!int.TryParse(fromZoomParam, out var fromZoom))
-            return await CreateBadRequest(req, "Query parameter 'fromZoom' is required and must be an integer.");
+            return CreateBadRequest("Query parameter 'fromZoom' is required and must be an integer.");
         if (!int.TryParse(toZoomParam, out var toZoom))
-            return await CreateBadRequest(req, "Query parameter 'toZoom' is required and must be an integer.");
+            return CreateBadRequest("Query parameter 'toZoom' is required and must be an integer.");
         if (fromZoom == toZoom)
-            return await CreateBadRequest(req, "Query parameters 'fromZoom' and 'toZoom' must differ.");
+            return CreateBadRequest("Query parameters 'fromZoom' and 'toZoom' must differ.");
 
-        var ids = ParseIds(req.Query["ids"], kind);
+        var ids = ParseIds(context.Request.Query["ids"].ToString(), kind);
 
         var totalScanned = 0;
         var totalMoved = 0;
@@ -92,9 +80,7 @@ public class MoveOsmFeaturesByZoom(
             totalScanned,
             totalSkipped);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new MoveZoomResult(kind, fromZoom, toZoom, totalScanned, totalMoved, totalSkipped));
-        return response;
+        return TypedResults.Ok(new MoveZoomResult(kind, fromZoom, toZoom, totalScanned, totalMoved, totalSkipped));
     }
 
     private static bool TryGetRetileableTable(string kind, out OsmFeatureTable table)
@@ -125,22 +111,7 @@ public class MoveOsmFeaturesByZoom(
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
-    }
-
-    private static async Task<HttpResponseData> CreateBadRequest(HttpRequestData req, string message)
-    {
-        var response = req.CreateResponse(HttpStatusCode.BadRequest);
-        await response.WriteStringAsync(message);
-        return response;
-    }
+    private static IResult CreateBadRequest(string message) => TypedResults.BadRequest(message);
 }
 
 public record MoveZoomResult(

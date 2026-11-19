@@ -1,92 +1,60 @@
+using Microsoft.AspNetCore.Mvc;
+using Hangfire;
 using Shared.Jobs;
 using System.Linq;
-using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
 using Shared.Constants;
 using Shared.Models;
 using Shared.Services;
+using API.Http;
 
 namespace API.Endpoints.Admin;
 
 public class PostManualMistralScrape(
-    QueueClient queueClient,
+    IBackgroundJobClient jobs,
     IConfiguration configuration,
     ILogger<PostManualMistralScrape> logger)
 {
-    [OpenApiOperation(tags: ["Admin"], Summary = "Queue a manual Mistral scrape job for a race event URL.")]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(PostManualMistralScrapeRequest))]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(PostManualMistralScrapeResponse))]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.BadRequest)]
-    [Function(nameof(PostManualMistralScrape))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/races/scrape/mistral")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/races/scrape/mistral",
+            (HttpContext context, [FromServices] PostManualMistralScrape endpoint) => endpoint.Handle(context, context.RequestAborted));
+
+    public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         PostManualMistralScrapeRequest? body;
         try
         {
-            body = await req.ReadFromJsonAsync<PostManualMistralScrapeRequest>(cancellationToken);
+            body = await context.Request.ReadFromJsonAsync<PostManualMistralScrapeRequest>(cancellationToken);
         }
         catch
         {
-            var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badReq.WriteStringAsync("Invalid JSON body", cancellationToken);
-            return badReq;
+            return TypedResults.BadRequest("Invalid JSON body");
         }
 
         if (body is null || string.IsNullOrWhiteSpace(body.Url))
-        {
-            var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badReq.WriteStringAsync("Missing required field: url", cancellationToken);
-            return badReq;
-        }
+            return TypedResults.BadRequest("Missing required field: url");
 
         if (!Uri.TryCreate(body.Url.Trim(), UriKind.Absolute, out var parsedUrl) || parsedUrl.Scheme is not ("http" or "https"))
-        {
-            var badReq = req.CreateResponse(HttpStatusCode.BadRequest);
-            await badReq.WriteStringAsync("Invalid URL — must be an absolute http(s) URL", cancellationToken);
-            return badReq;
-        }
+            return TypedResults.BadRequest("Invalid URL — must be an absolute http(s) URL");
 
         var organizerKey = OrganizerUrlRules.DeriveOrganizerKey(parsedUrl);
 
-        var requestMessage = new QueueMessage(JsonSerializer.Serialize(new ManualMistralScrapeJob(parsedUrl.AbsoluteUri, body.Name), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))
-        {
-            ContentType = "application/json"
-        };
-
-        var sender = queueClient.CreateSender(QueueConfig.MistralScrapeJobs);
-        await sender.SendMessageAsync(requestMessage, cancellationToken);
+        jobs.EnqueueManualMistralScrape(new ManualMistralScrapeJob(parsedUrl.AbsoluteUri, body.Name));
         logger.LogInformation("Enqueued manual mistral scrape job for {OrganizerKey}", organizerKey);
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new PostManualMistralScrapeResponse(organizerKey, parsedUrl.AbsoluteUri), cancellationToken);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(new PostManualMistralScrapeResponse(organizerKey, parsedUrl.AbsoluteUri));
     }
 }
 
 public record PostManualMistralScrapeRequest(string Url, string? Name = null);
 public record PostManualMistralScrapeResponse(string EventKey, string CanonicalUrl);
-

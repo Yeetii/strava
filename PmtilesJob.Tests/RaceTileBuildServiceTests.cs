@@ -537,7 +537,7 @@ public class PmtilesUtilityServiceTests
 
         recurringJobs.Verify(jobs => jobs.AddOrUpdate(
             "race-pmtiles-weekly",
-            It.Is<Job>(job => job.Type == typeof(Shared.Hosting.IRaceTilesBuildJob)),
+            It.Is<Job>(job => job.Type == typeof(Shared.Jobs.IRaceTilesBuildJob)),
             "0 3 * * 2",
             It.Is<RecurringJobOptions>(options =>
                 options.QueueName == AppConfig.RaceTilesQueueName)), Times.Once);

@@ -1,5 +1,8 @@
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Logging;
 using Shared.Models;
 using Shared.Services;
@@ -7,29 +10,25 @@ using Shared.Services.Postgres;
 using Shared.Services.StravaClient;
 
 
-namespace Backend
+namespace API.Endpoints.Backend
 {
     public class RefreshStravaToken(AuthenticationApi _authApi, IUserRepository _userRepository, ILogger<RefreshStravaToken> _logger)
     {
+        public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+            app.MapGet("/api/{userId}/accessToken", (HttpContext context, [FromServices] RefreshStravaToken endpoint, string userId) => endpoint.Handle(context, userId, context.RequestAborted));
 
-        [Function("RefreshStravaToken")]
-        public async Task<HttpResponseData> Run(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "{userId}/accessToken")] HttpRequestData req, string userId)
+        public async Task<IResult> Handle(HttpContext context, string userId, CancellationToken cancellationToken)
         {
             var user = await _userRepository.GetById(userId);
 
             if (user == default || user.RefreshToken == null)
             {
-                var notFoundResult = req.CreateResponse(System.Net.HttpStatusCode.NotFound);
-                await notFoundResult.WriteStringAsync($"Refresh token not found for user {userId}");
-                return notFoundResult;
+                return TypedResults.NotFound($"Refresh token not found for user {userId}");
             }
 
             if (user.AccessToken != null && user.TokenExpiresAt > new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds())
             {
-                var tokenStillWorksResponse = req.CreateResponse(System.Net.HttpStatusCode.OK);
-                await tokenStillWorksResponse.WriteStringAsync(user.AccessToken);
-                return tokenStillWorksResponse;
+                return TypedResults.Ok(user.AccessToken);
             }
 
             var tokenResponse = default(Shared.Services.StravaClient.Model.TokenResponse);
@@ -48,10 +47,7 @@ namespace Backend
             user.StravaScope = tokenResponse.Scope ?? user.StravaScope;
             await _userRepository.Upsert(user);
 
-            var result = req.CreateResponse(System.Net.HttpStatusCode.OK);
-            await result.WriteStringAsync(tokenResponse.AccessToken);
-
-            return result;
+            return TypedResults.Ok(tokenResponse.AccessToken);
         }
     }
 }

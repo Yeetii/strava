@@ -1,15 +1,12 @@
 using API;
-using API.Endpoints.Tiles;
+using API.Http;
 using API.Utils;
-using Backend;
 using Shared.Geo.SummitsCalculator;
 using Hangfire;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Azure.Functions.Worker;
 using Npgsql;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -24,12 +21,11 @@ using Shared.Services.Postgres.Spatial;
 using Shared.Services.Postgres.Spatial.Ingestion;
 using Shared.Services.Shards;
 using Shared.Services.StravaClient;
-using Shared.Hosting;
+using Shared.Jobs;
 
-// ASP.NET Core (Kestrel) host replacing the Functions worker for the API
-// container. All 59 endpoints are mapped from their existing function bodies
-// by MapFunctions(); the DI graph below transfers verbatim from the old
-// ConfigureServices block.
+// ASP.NET Core (Kestrel) host for the API container. Endpoints are mapped as
+// native minimal APIs by EndpointMappings; the DI graph below is shared with
+// the Workers host through the core assembly.
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -122,10 +118,9 @@ builder.Services.AddHttpClient<OverpassClient>(client =>
     client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
     client.Timeout = TimeSpan.FromMinutes(10);
 });
-// All queues run on Hangfire/Redis. Storage is registered once per host; the
-// producer shim turns QueueClient sends into Hangfire jobs.
-QueueTransport.AddHangfireStorage(builder.Services, configuration);
-QueueTransport.AddHangfireQueueProducer(builder.Services);
+// All queues run on Hangfire/Redis. Storage is registered once per host;
+// producers enqueue strongly-typed jobs via IBackgroundJobClient.
+HangfireInfrastructure.AddHangfireStorage(builder.Services, configuration);
 builder.Services.AddScoped(serviceProvider =>
     new UserAuthenticationService(
         serviceProvider.GetRequiredService<IUserRepository>(),
@@ -138,6 +133,10 @@ builder.Services.AddScoped<UserSyncStatusService>();
 builder.Services.AddSingleton<AdminBoundaryMetricsEnricher>();
 builder.Services.AddSingleton<ISummitsCalculator, SummitsCalculatorWithBoundingBoxFilter>();
 builder.Services.AddSingleton<RaceDiscoveryService>();
+builder.Services.AddSingleton(serviceProvider => new RaceScrapePipeline(
+    serviceProvider.GetRequiredService<IHttpClientFactory>(),
+    serviceProvider.GetRequiredService<IOrganizerStore>(),
+    serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("RaceScrapePipeline")));
 
 var defaultOrigins = new[]
 {
@@ -174,10 +173,10 @@ builder.Services.AddCors(options =>
     });
 });
 builder.Services.AddOpenApi();
+builder.Services.AddApiEndpoints();
 
 var app = builder.Build();
 
-FunctionsJson.Options = app.Services.GetRequiredService<IOptions<JsonSerializerOptions>>().Value;
 
 app.Use((context, next) =>
 {
@@ -220,12 +219,7 @@ app.UseHangfireDashboard(HangfireDashboardGuard.DashboardPath, new DashboardOpti
     DashboardTitle = "Peakshunters Jobs",
 });
 
-app.MapFunctions(typeof(Program).Assembly);
-app.MapFunctions(typeof(StravaWebhook).Assembly);
-
-// Public race tiles, served from the shared race-data volume with HTTP range
-// support. No auth: this replaces the old public Blob URL.
-app.MapGetTrailsPmtiles(configuration);
+app.MapApiEndpoints();
 
 app.MapGet("/health", () => Results.Ok("ok"));
 

@@ -1,8 +1,9 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
+using API.Http;
 using Shared.Models;
 using Shared.Services.Postgres;
 
@@ -10,15 +11,13 @@ namespace API
 {
     public class GetAllPeaksGroups(IPeaksGroupRepository repository)
     {
-        [OpenApiOperation(tags: ["Peaks"])]
-        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<PeaksGroup>))]
-        [Function(nameof(GetAllPeaksGroups))]
-        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "peaksGroups")] HttpRequestData req)
+        public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+            app.MapGet("/api/peaksGroups", (HttpContext context, [FromServices] GetAllPeaksGroups endpoint) => endpoint.Handle(context));
+
+        public async Task<IResult> Handle(HttpContext context)
         {
             var groups = await repository.GetAll();
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            await response.WriteAsJsonAsync(groups);
-            return response;
+            return TypedResults.Ok(groups);
         }
     }
 }

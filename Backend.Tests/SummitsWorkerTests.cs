@@ -1,5 +1,5 @@
+using Shared.Jobs;
 using BAMCIS.GeoJSON;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Shared.Constants;
@@ -89,10 +89,7 @@ public class SummitsWorkerTests
             syncStatus,
             CreateIngestionMock().Object);
 
-        await worker.Run(
-            [new QueueMessage(activityId) { LockToken = Guid.NewGuid().ToString() }],
-            new QueueMessageActions(),
-            CancellationToken.None);
+        await worker.ExecuteAsync(new ActivityIdJob { ActivityId = activityId }, CancellationToken.None);
 
         peaks.Verify(
             r => r.GetByTiles(It.IsAny<IEnumerable<(int, int)>>(), It.IsAny<CancellationToken>()),
@@ -136,14 +133,7 @@ public class SummitsWorkerTests
             syncStatus,
             CreateIngestionMock().Object);
 
-        var completed = 0;
-        var job = new QueueMessage(activityId) { LockToken = Guid.NewGuid().ToString() };
-        await worker.Run(
-            [job],
-            new QueueMessageActions(complete: (_, _) => { completed++; return Task.CompletedTask; }),
-            CancellationToken.None);
-
-        Assert.Equal(1, completed);
+        await worker.ExecuteAsync(new ActivityIdJob { ActivityId = activityId }, CancellationToken.None);
         peaks.Verify(
             r => r.GetByTiles(It.IsAny<IEnumerable<(int, int)>>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -214,10 +204,7 @@ public class SummitsWorkerTests
             syncStatus,
             ingestion.Object);
 
-        await worker.Run(
-            [new QueueMessage(activityId) { LockToken = Guid.NewGuid().ToString() }],
-            new QueueMessageActions(),
-            CancellationToken.None);
+        await worker.ExecuteAsync(new ActivityIdJob { ActivityId = activityId }, CancellationToken.None);
 
         Assert.NotEmpty(callOrder);
         Assert.Equal("ingest", callOrder[0]);

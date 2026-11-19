@@ -1,10 +1,13 @@
-using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.AspNetCore.Mvc;
+using Shared.Jobs;
+using Hangfire;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
+using API.Http;
 using Shared.Constants;
 using Shared.Services;
 using Shared.Services.Postgres.Admin;
@@ -13,47 +16,27 @@ namespace API.Endpoints.Admin;
 
 public class ReEnrichAdminBoundaries(
     IOsmFeatureAdminQueries adminQueries,
-    QueueClient queueClient,
+    IBackgroundJobClient jobs,
     IConfiguration configuration,
     ILogger<ReEnrichAdminBoundaries> logger)
 {
-    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.EnrichAdminBoundaryJobs);
 
-    [OpenApiOperation(tags: ["Admin"])]
-    [OpenApiParameter(name: "x-admin-key", In = ParameterLocation.Header, Type = typeof(string), Required = true)]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(int),
-        Description = "Number of admin boundary rows queued for re-enrichment.")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized)]
-    [Function(nameof(ReEnrichAdminBoundaries))]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "manage/adminBoundaries/reEnrich")] HttpRequestData req)
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapPost("/api/manage/adminBoundaries/reEnrich",
+            (HttpContext context, [FromServices] ReEnrichAdminBoundaries endpoint) => endpoint.Handle(context));
+
+    public async Task<IResult> Handle(HttpContext context)
     {
-        if (!IsAuthorized(req))
-            return req.CreateResponse(HttpStatusCode.Unauthorized);
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
 
         var ids = await adminQueries.GetAllAdminBoundaryIdsAsync();
 
         logger.LogInformation("Queuing {Count} admin boundary enrichment jobs", ids.Count);
 
-        const int batchSize = 100;
-        for (int i = 0; i < ids.Count; i += batchSize)
-        {
-            var messages = ids.Skip(i).Take(batchSize).Select(id => new QueueMessage(id)).ToList();
-            await _sender.SendMessagesAsync(messages);
-        }
+        foreach (var id in ids)
+            jobs.EnqueueAdminBoundaryEnrichment(AdminBoundaryIdJob.From(id));
 
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(ids.Count);
-        return response;
-    }
-
-    private bool IsAuthorized(HttpRequestData req)
-    {
-        var adminKey = configuration.GetValue<string>("AdminApiKey");
-        if (string.IsNullOrEmpty(adminKey))
-            return false;
-
-        return req.Headers.TryGetValues("x-admin-key", out var providedKeys)
-            && providedKeys.FirstOrDefault() == adminKey;
+        return TypedResults.Ok(ids.Count);
     }
 }

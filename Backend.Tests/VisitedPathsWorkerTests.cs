@@ -1,6 +1,6 @@
+using Shared.Jobs;
 using BAMCIS.GeoJSON;
 using Hangfire;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Shared.Models;
@@ -208,20 +208,15 @@ public class VisitedPathsWorkerTests
         var visitedPaths = new Mock<IActivityVisitedPathRepository>();
         var users = new Mock<IUserRepository>();
         var syncStatus = new UserSyncStatusService(users.Object, activities.Object);
-        var queue = new QueueClient(new Mock<IBackgroundJobClient>().Object);
 
         var worker = new VisitedPathsWorker(
             NullLogger<VisitedPathsWorker>.Instance,
             activities.Object,
             visitedPaths.Object,
             shards.Object,
-            queue,
             syncStatus);
 
-        await worker.Run(
-            [new QueueMessage(activityId) { LockToken = Guid.NewGuid().ToString() }],
-            new QueueMessageActions(),
-            CancellationToken.None);
+        await worker.ExecuteAsync(new ActivityIdJob { ActivityId = activityId }, CancellationToken.None);
 
         visitedPaths.Verify(r => r.RemoveByActivity(activityId, It.IsAny<CancellationToken>()), Times.Once);
         visitedPaths.Verify(

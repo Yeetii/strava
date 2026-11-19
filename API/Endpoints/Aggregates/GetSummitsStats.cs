@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Globalization;
 using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres.Spatial;
@@ -29,21 +31,16 @@ namespace API.Endpoints.Aggregates
         IActivitySummitRepository summitsRepository,
         IPeakRepository peaksRepository)
     {
-        [OpenApiOperation(tags: ["Aggregates"])]
-        [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = false)]
-        [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(SummitsStats))]
-        [Function(nameof(GetSummitsStats))]
-        public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "summitsStats")] HttpRequestData req)
+        public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+            app.MapGet("/api/summitsStats", (HttpContext context, [FromServices] GetSummitsStats endpoint) => endpoint.Handle(context));
+
+        public async Task<IResult> Handle(HttpContext context)
         {
-            var response = req.CreateResponse();
-            string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
+            string? sessionId = context.SessionId();
 
             var user = await _userAuthService.GetUserFromSessionId(sessionId);
             if (user == default)
-            {
-                response.StatusCode = HttpStatusCode.Unauthorized;
-                return response;
-            }
+                return TypedResults.Unauthorized();
 
             var linksByPeak = (await summitsRepository.GetByUser(user.Id))
                 .GroupBy(link => StoredFeature.NormalizeFeatureId(FeatureKinds.Peak, link.PeakId))
@@ -75,9 +72,7 @@ namespace API.Endpoints.Aggregates
                 MostVisitedPeaks = GetMostVisitedPeaks(summitedPeaks)
             };
 
-            response.StatusCode = HttpStatusCode.OK;
-            await response.WriteAsJsonAsync(summitsStats);
-            return response;
+            return TypedResults.Ok(summitsStats);
         }
 
         private static string? GetText(IDictionary<string, dynamic> properties, string key)

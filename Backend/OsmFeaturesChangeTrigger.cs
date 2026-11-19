@@ -1,7 +1,7 @@
-using Microsoft.Azure.Functions.Worker;
+using Hangfire;
 using Microsoft.Extensions.Logging;
 using Shared.Constants;
-using Shared.Hosting;
+using Shared.Jobs;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres.Admin;
@@ -47,14 +47,13 @@ public static class OsmFeaturesChangeTrigger
 /// </summary>
 public sealed class AdminBoundaryMetricsPollingJob(
     IBackendAdminQueries queries,
-    QueueClient queueClient,
+    IBackgroundJobClient jobs,
     ILogger<AdminBoundaryMetricsPollingJob> logger) : IAdminBoundaryMetricsPollingJob
 {
     public const string RecurringJobId = "poll-admin-boundary-enrichment";
     public const string CronExpression = "*/5 * * * *";
     private const int BatchSize = 100;
 
-    private readonly QueueSender _sender = queueClient.CreateSender(QueueConfig.EnrichAdminBoundaryJobs);
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
@@ -72,14 +71,13 @@ public sealed class AdminBoundaryMetricsPollingJob(
             if (ids.Count == 0)
                 break;
 
-            // Same application properties as the old admin-boundary change-feed branch: none.
-            var messages = ids.Select(id => new QueueMessage(id)).ToList();
-            await _sender.SendMessagesAsync(messages, cancellationToken);
-            totalQueued += messages.Count;
+            foreach (var id in ids)
+                jobs.EnqueueAdminBoundaryEnrichment(AdminBoundaryIdJob.From(id));
+            totalQueued += ids.Count;
 
             logger.LogInformation(
                 "Queuing {Count} admin boundary enrichment jobs from stale metrics poll (after={AfterId})",
-                messages.Count, afterId ?? "<start>");
+                ids.Count, afterId ?? "<start>");
 
             if (ids.Count < BatchSize)
                 break;

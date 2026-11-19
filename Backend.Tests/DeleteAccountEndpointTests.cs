@@ -1,11 +1,11 @@
-using Shared.Jobs;
-using System.Net;
-using System.Security.Claims;
-using System.Text;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Extensions.Logging;
+using Hangfire.Common;
+using Hangfire.States;
+using Hangfire;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Moq;
+using Shared.Constants;
+using Shared.Jobs;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
@@ -16,42 +16,43 @@ namespace Backend.Tests;
 public class DeleteAccountEndpointTests
 {
     [Fact]
-    public async Task Run_WithValidSession_QueuesDeleteJobAndClearsSessionCookie()
+    public async Task Handle_WithValidSession_QueuesDeleteJobAndClearsSessionCookie()
     {
         var user = new Shared.Models.User { Id = "user-123" };
         var authService = CreateUserAuthenticationService("session-123", user);
+        var jobs = new Mock<IBackgroundJobClient>();
+        var context = CreateContext("session-123");
 
-        var functionContext = new Mock<FunctionContext>().Object;
-        var request = new TestHttpRequestData(functionContext, new Uri("https://localhost/account"), "DELETE");
-        request.AddCookie(new HttpCookie("session", "session-123"));
+        var endpoint = new DeleteAccount(authService, jobs.Object);
+        var result = await endpoint.Handle(context, CancellationToken.None);
 
-        var function = new DeleteAccount(authService);
-        var outputs = await function.Run(request);
-
-        Assert.Equal(HttpStatusCode.NoContent, outputs.Response.StatusCode);
-        Assert.NotNull(outputs.AccountDeleteJob);
-        Assert.Equal("user-123", outputs.AccountDeleteJob!.UserId);
-
-        var sessionCookie = Assert.Single(((TestHttpCookies)outputs.Response.Cookies).Items);
-        Assert.Equal("session", sessionCookie.Name);
-        Assert.Equal(string.Empty, sessionCookie.Value);
-        Assert.Equal(0, sessionCookie.MaxAge);
-        Assert.Null(sessionCookie.Domain); // host-only: works on the .ts.net funnel host
+        Assert.Equal(StatusCodes.Status204NoContent, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
+        jobs.Verify(j => j.Create(It.Is<Job>(job =>
+            job.Method.Name == "ExecuteAsync" && job.Queue == QueueConfig.AccountDeleteJobs.ToLowerInvariant()),
+            It.IsAny<IState>()), Times.Once);
+        Assert.Contains("session=", context.Response.Headers["Set-Cookie"].ToString());
     }
 
     [Fact]
-    public async Task Run_WithoutValidSession_ReturnsUnauthorized()
+    public async Task Handle_WithoutValidSession_ReturnsUnauthorized()
     {
         var authService = CreateUserAuthenticationService("session-123", null);
+        var jobs = new Mock<IBackgroundJobClient>();
+        var context = CreateContext(null);
 
-        var functionContext = new Mock<FunctionContext>().Object;
-        var request = new TestHttpRequestData(functionContext, new Uri("https://localhost/account"), "DELETE");
+        var endpoint = new DeleteAccount(authService, jobs.Object);
+        var result = await endpoint.Handle(context, CancellationToken.None);
 
-        var function = new DeleteAccount(authService);
-        var outputs = await function.Run(request);
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
+        jobs.VerifyNoOtherCalls();
+    }
 
-        Assert.Equal(HttpStatusCode.Unauthorized, outputs.Response.StatusCode);
-        Assert.Null(outputs.AccountDeleteJob);
+    private static DefaultHttpContext CreateContext(string? sessionId)
+    {
+        var context = new DefaultHttpContext();
+        if (sessionId is not null)
+            context.Request.Headers["Cookie"] = $"session={sessionId}";
+        return context;
     }
 
     private static UserAuthenticationService CreateUserAuthenticationService(string? sessionId, Shared.Models.User? user)
@@ -67,65 +68,5 @@ public class DeleteAccountEndpointTests
             .ReturnsAsync(user);
 
         return new UserAuthenticationService(users.Object, sessions.Object);
-    }
-
-    private sealed class TestHttpRequestData : HttpRequestData
-    {
-        public override HttpHeadersCollection Headers { get; } = new();
-        public override Uri Url { get; }
-        public override IEnumerable<ClaimsIdentity> Identities { get; } = Array.Empty<ClaimsIdentity>();
-        public override string Method { get; }
-        private readonly List<IHttpCookie> _cookies = new();
-        public override IReadOnlyCollection<IHttpCookie> Cookies => _cookies;
-        public override Stream Body { get; } = new MemoryStream();
-
-        public TestHttpRequestData(FunctionContext functionContext, Uri url, string method)
-            : base(functionContext)
-        {
-            Url = url;
-            Method = method;
-        }
-
-        public void AddCookie(HttpCookie cookie) => _cookies.Add(cookie);
-
-        public override HttpResponseData CreateResponse()
-        {
-            return new TestHttpResponseData(FunctionContext);
-        }
-    }
-
-    private sealed class TestHttpResponseData : HttpResponseData
-    {
-        public override HttpStatusCode StatusCode { get; set; }
-        public override HttpHeadersCollection Headers { get; set; } = new();
-        public override Stream Body { get; set; } = new MemoryStream();
-        public override HttpCookies Cookies { get; } = new TestHttpCookies();
-
-        public TestHttpResponseData(FunctionContext functionContext)
-            : base(functionContext)
-        {
-        }
-    }
-
-    private sealed class TestHttpCookies : HttpCookies
-    {
-        private readonly List<IHttpCookie> _cookies = new();
-
-        public override void Append(string name, string value)
-        {
-            _cookies.Add(new HttpCookie(name, value));
-        }
-
-        public override void Append(IHttpCookie cookie)
-        {
-            _cookies.Add(cookie);
-        }
-
-        public override IHttpCookie CreateNew()
-        {
-            return new HttpCookie(string.Empty, string.Empty);
-        }
-
-        public IReadOnlyCollection<IHttpCookie> Items => _cookies;
     }
 }

@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Mvc;
+using API.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
 using System.Net;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
-using Microsoft.OpenApi.Models;
 using Shared.Models;
 using Shared.Services;
 using Shared.Services.Postgres;
@@ -26,26 +28,17 @@ public class GetVisitedAreas(
         string[] Dates,
         string? Wikidata,
         string? WikimediaCommons);
+    public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
+        app.MapGet("/api/visitedAreas", (HttpContext context, [FromServices] GetVisitedAreas endpoint) => endpoint.Handle(context));
 
-    [OpenApiOperation(tags: ["VisitedAreas"])]
-    [OpenApiParameter(name: "session", In = ParameterLocation.Cookie, Type = typeof(string), Required = true)]
-    [OpenApiParameter(name: "areaType", In = ParameterLocation.Query, Type = typeof(string), Required = false,
-        Description = "Optional comma-separated filter by area type (e.g. national_park,nature_reserve,protected_area,region,country).")]
-    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(IEnumerable<VisitedAreaDto>),
-        Description = "A list of areas the authenticated user has visited, including visit counts and dates.")]
-    [Function(nameof(GetVisitedAreas))]
-    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "visitedAreas")] HttpRequestData req)
+    public async Task<IResult> Handle(HttpContext context)
     {
-        var response = req.CreateResponse();
-        string? sessionId = req.Cookies.FirstOrDefault(cookie => cookie.Name == "session")?.Value;
+        string? sessionId = context.SessionId();
         var user = await userAuthService.GetUserFromSessionId(sessionId);
         if (user == default)
-        {
-            response.StatusCode = HttpStatusCode.Unauthorized;
-            return response;
-        }
+            return TypedResults.Unauthorized();
 
-        var areaType = req.Query["areaType"];
+        string? areaType = context.Request.Query["areaType"].ToString();
         var areaTypes = areaType?
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(value => value.ToLowerInvariant())
@@ -152,10 +145,7 @@ public class GetVisitedAreas(
             .OrderByDescending(area => area.TimesVisited)
             .ThenBy(area => area.Name)
             .ToArray();
-
-        response.StatusCode = HttpStatusCode.OK;
-        await response.WriteAsJsonAsync(result);
-        return response;
+        return TypedResults.Ok(result);
     }
 
     private static string GetCountryName(string iso2)
