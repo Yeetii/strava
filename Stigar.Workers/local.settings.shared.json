@@ -1,0 +1,6 @@
+{
+  "OverpassMaxConcurrency": "1",
+  "GeocodingCache": {
+    "TimeToLiveDays": 90
+  }
+}

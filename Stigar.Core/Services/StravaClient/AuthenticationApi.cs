@@ -1,0 +1,53 @@
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Stigar.Core.Services.StravaClient.Model;
+
+namespace Stigar.Core.Services.StravaClient;
+
+public class AuthenticationApi(HttpClient _httpClient, IConfiguration configuration)
+{
+    readonly string ClientSecret = configuration.GetValue<string>("StravaClientSecret") ?? throw new InvalidOperationException("No strava client secret found");
+    const string BaseUrl = "https://www.strava.com/api/v3/oauth/token";
+
+    public async Task<TokenResponse> RefreshToken(string refreshToken)
+    {
+        var postBodyValues = new Dictionary<string, string>
+        {
+            { "client_id", "26280" },
+            { "client_secret", ClientSecret },
+            { "refresh_token", refreshToken },
+            { "grant_type", "refresh_token" }
+        };
+
+        return await CommonTokenExchange(postBodyValues);
+    }
+
+    public async Task<TokenResponse> TokenExcange(string authToken)
+    {
+        var postBodyValues = new Dictionary<string, string>
+        {
+            { "client_id", "26280" },
+            { "client_secret", ClientSecret },
+            { "code", authToken },
+            { "grant_type", "authorization_code" }
+        };
+
+        return await CommonTokenExchange(postBodyValues);
+    }
+
+    private async Task<TokenResponse> CommonTokenExchange(Dictionary<string, string> content)
+    {
+        var encodedContent = new FormUrlEncodedContent(content);
+        var response = await _httpClient.PostAsync(BaseUrl, encodedContent);
+
+        var responseBody = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"Strava token exchange failed with {(int)response.StatusCode} {response.ReasonPhrase}. Response body: {responseBody}");
+
+        var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(responseBody)
+            ?? throw new JsonException($"Could not parse token response. Response body: {responseBody}");
+
+        return tokenResponse;
+    }
+}

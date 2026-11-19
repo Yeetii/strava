@@ -1,0 +1,151 @@
+using Stigar.Core.Models;
+using Stigar.Core.Services;
+
+namespace Stigar.Workers.Tests;
+
+public class ScrapeRaceWorkerTests
+{
+    [Fact]
+    public void DeserializeMessage_AcceptsJsonAutomaticMessage()
+    {
+        var received = """{"organizerKey":"sample.com","isUrgent":false}""";
+
+        var message = RaceScrapePipeline.DeserializeMessage(received);
+
+        Assert.Equal("sample.com", message.OrganizerKey);
+        Assert.False(message.IsUrgent);
+    }
+
+    [Fact]
+    public void DeserializeMessage_FallsBackToPlainTextUrgentMessage()
+    {
+        var received = "sample.com";
+
+        var message = RaceScrapePipeline.DeserializeMessage(received);
+
+        Assert.Equal("sample.com", message.OrganizerKey);
+        Assert.True(message.IsUrgent);
+    }
+
+    [Fact]
+    public void IsFreshEnoughForAutomaticScrape_ReturnsTrueForRecentScrape()
+    {
+        var now = new DateTime(2026, 4, 29, 12, 0, 0, DateTimeKind.Utc);
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "sample.com",
+            Url = "https://sample.com",
+            LastScrapedUtc = now.AddDays(-2).ToString("o")
+        };
+
+        Assert.True(RaceScrapePipeline.IsFreshEnoughForAutomaticScrape(doc, now));
+    }
+
+    [Fact]
+    public void ComputeHashes_IgnoresScrapedAtUtcButDetectsPropertyAndRouteChanges()
+    {
+        var baseline = new ScraperOutput
+        {
+            ScrapedAtUtc = "2026-04-29T10:00:00Z",
+            ExtractedName = "Race",
+            Routes =
+            [
+                new ScrapedRouteOutput
+                {
+                    Coordinates = [[1, 2], [3, 4]],
+                    Name = "10 km",
+                    SourceUrl = "https://sample.com/10"
+                }
+            ]
+        };
+
+        var rescraped = new ScraperOutput
+        {
+            ScrapedAtUtc = "2026-04-29T11:00:00Z",
+            ExtractedName = "Race",
+            Routes =
+            [
+                new ScrapedRouteOutput
+                {
+                    Coordinates = [[1, 2], [3, 4]],
+                    Name = "10 km",
+                    SourceUrl = "https://sample.com/10"
+                }
+            ]
+        };
+
+        var propertyChange = new ScraperOutput
+        {
+            ScrapedAtUtc = "2026-04-29T11:00:00Z",
+            ExtractedName = "Race Updated",
+            Routes = rescraped.Routes
+        };
+
+        var routeChange = new ScraperOutput
+        {
+            ScrapedAtUtc = "2026-04-29T11:00:00Z",
+            ExtractedName = "Race",
+            Routes =
+            [
+                new ScrapedRouteOutput
+                {
+                    Coordinates = [[1, 2], [5, 6]],
+                    Name = "10 km",
+                    SourceUrl = "https://sample.com/10"
+                }
+            ]
+        };
+
+        var baselineHashes = RaceScrapePipeline.ComputeHashes(baseline);
+        var rescrapedHashes = RaceScrapePipeline.ComputeHashes(rescraped);
+        var propertyHashes = RaceScrapePipeline.ComputeHashes(propertyChange);
+        var routeHashes = RaceScrapePipeline.ComputeHashes(routeChange);
+
+        Assert.Equal(baselineHashes.PropertiesHash, rescrapedHashes.PropertiesHash);
+        Assert.Equal(baselineHashes.RoutesHash, rescrapedHashes.RoutesHash);
+        Assert.NotEqual(baselineHashes.PropertiesHash, propertyHashes.PropertiesHash);
+        Assert.Equal(baselineHashes.RoutesHash, propertyHashes.RoutesHash);
+        Assert.Equal(baselineHashes.PropertiesHash, routeHashes.PropertiesHash);
+        Assert.NotEqual(baselineHashes.RoutesHash, routeHashes.RoutesHash);
+    }
+
+    [Fact]
+    public void CollectBfsUrls_RestrictsScopedHostsToOrganizerScope()
+    {
+        var doc = new RaceOrganizerDocument
+        {
+            Id = "strava.com~route",
+            Url = "https://www.strava.com/route/12345/example",
+            Discovery = new Dictionary<string, List<SourceDiscovery>>
+            {
+                ["manual"] =
+                [
+                    new SourceDiscovery
+                    {
+                        DiscoveredAtUtc = "2026-04-29T00:00:00Z",
+                        SourceUrls =
+                        [
+                            "https://www.strava.com/route/99999/other",
+                            "https://www.strava.com/athletes/12345",
+                            "https://www.strava.com/route/12345/example"
+                        ]
+                    }
+                ]
+            }
+        };
+
+        var urls = RaceScrapePipeline.CollectBfsUrls(doc);
+
+        Assert.Contains(urls, u => u.AbsoluteUri == "https://www.strava.com/route/12345/example");
+        Assert.Contains(urls, u => u.AbsoluteUri == "https://www.strava.com/route/99999/other");
+        Assert.DoesNotContain(urls, u => u.AbsoluteUri == "https://www.strava.com/athletes/12345");
+    }
+
+    [Fact]
+    public void CanBfsCrawlUri_OnlyAllowsScopedPagesForSluggableHost()
+    {
+        Assert.True(OrganizerUrlRules.CanBfsCrawlUri(new Uri("https://www.strava.com/route/12342/somesite"), "strava.com~route"));
+        Assert.False(OrganizerUrlRules.CanBfsCrawlUri(new Uri("https://www.strava.com/user/erik"), "strava.com~route"));
+        Assert.False(OrganizerUrlRules.CanBfsCrawlUri(new Uri("https://www.strava.com/"), "strava.com~route"));
+    }
+}

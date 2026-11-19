@@ -1,0 +1,205 @@
+using System.Diagnostics;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Stigar.Core.Models;
+
+namespace Stigar.Core.Services.Shards;
+
+public class HighwayZoomIndexService(
+    IShardIndexStore indexStore,
+    IShardRepository shardRepository,
+    ILogger<HighwayZoomIndexService> logger,
+    int canonicalZoom = 12,
+    HighwayTileZoomProfile? profile = null)
+{
+    private const int IndexVersion = 4;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly IShardIndexStore _indexStore = indexStore;
+    private readonly IShardRepository _shardRepository = shardRepository;
+    private readonly ILogger<HighwayZoomIndexService> _logger = logger;
+    private readonly int _canonicalZoom = canonicalZoom;
+    private readonly HighwayTileZoomProfile _profile = profile ?? HighwayTileZoomProfile.Default;
+
+    public virtual async Task<HighwayTileShardSelection> GetShardKeysAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    {
+        if (z == _canonicalZoom)
+            return new HighwayTileShardSelection(true, [(x, y)]);
+
+        if (z > _canonicalZoom)
+        {
+            var scale = 1 << (z - _canonicalZoom);
+            return new HighwayTileShardSelection(true, [(x / scale, y / scale)]);
+        }
+
+        var cached = await TryReadIndexAsync(z, x, y, cancellationToken);
+        if (cached is not null)
+        {
+            _logger.LogInformation(
+                "Resolved highway shard selection from cached index for z{Z}/{X}/{Y} (shardCount={ShardCount}, isComplete={IsComplete}).",
+                z,
+                x,
+                y,
+                cached.Shards.Count,
+                cached.IsComplete);
+            return cached;
+        }
+
+        var built = await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
+        return built;
+    }
+
+    public virtual async Task SyncIndexesForShardAsync(int shardX, int shardY, Shard? shard, CancellationToken cancellationToken = default)
+    {
+        for (var z = 0; z < _canonicalZoom; z++)
+        {
+            var shift = _canonicalZoom - z;
+            var x = shardX >> shift;
+            var y = shardY >> shift;
+            var path = GetIndexPath(z, x, y);
+
+            var index = await TryReadIndexModelAsync(path, z, x, y, cancellationToken);
+            if (index is null)
+                continue;
+
+            var shouldInclude = shard?.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z, _profile)) == true;
+            var existingIndex = index.Shards.FindIndex(reference => reference.X == shardX && reference.Y == shardY);
+            var changed = false;
+
+            if (shouldInclude && existingIndex < 0)
+            {
+                index.Shards.Add(new HighwayTileShardRef(shardX, shardY));
+                changed = true;
+            }
+            else if (!shouldInclude && existingIndex >= 0)
+            {
+                index.Shards.RemoveAt(existingIndex);
+                changed = true;
+            }
+
+            if (!changed)
+                continue;
+
+            var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
+            await _indexStore.WriteAsync(path, payload, cancellationToken);
+
+            _logger.LogInformation(
+                "Updated highway shard index z{Z}/{X}/{Y} with shard {ShardX}/{ShardY}. Included={Included}.",
+                z,
+                x,
+                y,
+                shardX,
+                shardY,
+                shouldInclude);
+        }
+    }
+
+    public virtual Task UpdateIndexesForShardAsync(int shardX, int shardY, Shard shard, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(shard);
+        return SyncIndexesForShardAsync(shardX, shardY, shard, cancellationToken);
+    }
+
+    public virtual async Task<HighwayTileShardSelection> RebuildIndexAsync(int z, int x, int y, CancellationToken cancellationToken = default)
+    {
+        if (z >= _canonicalZoom)
+            return await GetShardKeysAsync(z, x, y, cancellationToken);
+
+        return await BuildAndPersistIndexAsync(z, x, y, cancellationToken);
+    }
+
+    public virtual async Task<DateTimeOffset?> TryGetIndexLastModifiedAsync(
+        int z,
+        int x,
+        int y,
+        CancellationToken cancellationToken = default)
+    {
+        if (z >= _canonicalZoom)
+            return null;
+
+        return await _indexStore.TryGetLastModifiedAsync(GetIndexPath(z, x, y), cancellationToken);
+    }
+
+    private async Task<HighwayTileShardSelection> BuildAndPersistIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var candidateShards = BlobTileService.GetIntersectingShardKeys(z, x, y, _canonicalZoom);
+        var retained = new List<(int x, int y)>();
+        var isComplete = true;
+
+        foreach (var key in candidateShards)
+        {
+            var shard = await _shardRepository.TryGetShardAsync(_canonicalZoom, key.x, key.y, cancellationToken);
+            if (shard is null)
+            {
+                isComplete = false;
+                continue;
+            }
+
+            if (shard.Owned.Any(feature => HighwayZoomRules.ShouldKeepFeature(feature, z, _profile)))
+                retained.Add(key);
+        }
+
+        var index = new HighwayTileShardIndex(
+            IndexVersion,
+            z,
+            x,
+            y,
+            isComplete,
+            [.. retained.Select(k => new HighwayTileShardRef(k.x, k.y))]);
+
+        // Persist both complete and incomplete selections to avoid re-scanning all candidate
+        // canonical shards on every low-zoom request. Incomplete indexes are safe to cache
+        // because UpdateIndexesForShardAsync amends existing index blobs as shards materialize.
+        var payload = JsonSerializer.SerializeToUtf8Bytes(index, JsonOptions);
+        await _indexStore.WriteAsync(GetIndexPath(z, x, y), payload, cancellationToken);
+
+        _logger.LogInformation(
+            "Built highway shard index for z{Z}/{X}/{Y}. CandidateShards={CandidateShardCount}, ReferencedShards={ShardCount}, IsComplete={IsComplete}, elapsedMs={ElapsedMs}.",
+            z, x, y, candidateShards.Count, retained.Count, isComplete, stopwatch.ElapsedMilliseconds);
+
+        return new HighwayTileShardSelection(isComplete, retained);
+    }
+
+    private async Task<HighwayTileShardSelection?> TryReadIndexAsync(int z, int x, int y, CancellationToken cancellationToken)
+    {
+        var model = await TryReadIndexModelAsync(GetIndexPath(z, x, y), z, x, y, cancellationToken);
+        if (model is null)
+            return null;
+
+        return new HighwayTileShardSelection(
+            model.IsComplete,
+            [.. model.Shards.Select(shard => (shard.X, shard.Y)).Distinct()]);
+    }
+
+    private async Task<HighwayTileShardIndex?> TryReadIndexModelAsync(
+        string path,
+        int z,
+        int x,
+        int y,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var content = await _indexStore.TryReadAsync(path, cancellationToken);
+            if (content is null)
+                return null;
+
+            var model = JsonSerializer.Deserialize<HighwayTileShardIndex>(content, JsonOptions);
+            if (model is null || model.Version != IndexVersion || model.Zoom != z || model.X != x || model.Y != y)
+                return null;
+
+            return model;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Ignoring invalid highway shard index for z{Z}/{X}/{Y}.", z, x, y);
+            return null;
+        }
+    }
+
+    internal static string GetIndexPath(int z, int x, int y) => $"index/{z}/{x}/{y}.json";
+}
+
+public sealed record HighwayTileShardSelection(bool IsComplete, IReadOnlyList<(int x, int y)> Shards);
+public sealed record HighwayTileShardIndex(int Version, int Zoom, int X, int Y, bool IsComplete, List<HighwayTileShardRef> Shards);
+public sealed record HighwayTileShardRef(int X, int Y);

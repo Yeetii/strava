@@ -1,0 +1,545 @@
+using System.Text;
+using Hangfire;
+using Hangfire.Common;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Stigar.Workers.Pmtiles;
+using Stigar.Core.Constants;
+
+namespace Stigar.Workers.Pmtiles.Tests;
+
+public class PmtilesUtilityServiceTests
+{
+    [Fact]
+    public void Parse_ReturnsFilterOutdoorCommand_WhenFilterSubcommandIsProvided()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(
+            ["filter-outdoor", "--input", "/tmp/world.pmtiles", "--output", "/tmp/outdoors.pmtiles"],
+            configuration);
+
+        Assert.Equal(PmtilesCommandKind.FilterOutdoor, command.Command);
+        Assert.Equal("/tmp/world.pmtiles", command.InputPath);
+        Assert.Equal("/tmp/outdoors.pmtiles", command.OutputPath);
+        Assert.Null(command.MaximumZoom);
+        Assert.False(command.ExcludeAllAttributes);
+    }
+
+    [Fact]
+    public void Parse_AllowsFilterOutdoorPerformanceOptions()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(
+            ["filter-outdoor", "--input", "/tmp/world.pmtiles", "--output", "/tmp/outdoors.pmtiles", "--max-zoom", "8", "--exclude-all-attributes"],
+            configuration);
+
+        Assert.Equal(PmtilesCommandKind.FilterOutdoor, command.Command);
+        Assert.Equal(8, command.MaximumZoom);
+        Assert.True(command.ExcludeAllAttributes);
+    }
+
+    [Fact]
+    public void Parse_ReturnsFilterAdminBoundariesCommand_WhenSubcommandIsProvided()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(
+            ["filter-admin-boundaries", "--input", "/tmp/world.pmtiles", "--output", "/tmp/boundaries.pmtiles"],
+            configuration);
+
+        Assert.Equal(PmtilesCommandKind.FilterAdminBoundaries, command.Command);
+        Assert.Equal("/tmp/world.pmtiles", command.InputPath);
+        Assert.Equal("/tmp/boundaries.pmtiles", command.OutputPath);
+    }
+
+    [Fact]
+    public void Parse_ReturnsBuildAdminAreasCommand_WhenSubcommandIsProvided()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(
+            ["build-admin-areas", "--output", "/tmp/regions.pmtiles", "--admin-level", "4"],
+            configuration);
+
+        Assert.Equal(PmtilesCommandKind.BuildAdminAreas, command.Command);
+        Assert.Equal("/tmp/regions.pmtiles", command.OutputPath);
+        Assert.Equal([4], command.AdminLevels);
+    }
+
+    [Fact]
+    public void Parse_DefaultsBuildAdminAreasToCountriesAndRegions()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(
+            ["build-admin-areas", "--output", "/tmp/regions.pmtiles"],
+            configuration);
+
+        Assert.Equal(PmtilesCommandKind.BuildAdminAreas, command.Command);
+        Assert.Equal([2, 4], command.AdminLevels);
+    }
+
+    [Fact]
+    public void Parse_AllowsMultipleAdminLevelsForBuildAdminAreas()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(
+            ["build-admin-areas", "--output", "/tmp/regions.pmtiles", "--admin-levels", "4,2,4"],
+            configuration);
+
+        Assert.Equal(PmtilesCommandKind.BuildAdminAreas, command.Command);
+        Assert.Equal([2, 4], command.AdminLevels);
+    }
+
+    [Fact]
+    public void Parse_ReturnsBuildRaceTilesFromOrganizers_WhenNoSubcommandIsProvided()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse([], configuration);
+
+        Assert.Equal(PmtilesCommandKind.BuildRaceTilesFromOrganizers, command.Command);
+        Assert.False(command.WriteTransparency);
+    }
+
+    [Fact]
+    public void Parse_AllowsDisablingOrEnablingTransparencyWritesForRaceTiles()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var enabled = PmtilesCommandLine.Parse(
+            ["build-race-tiles-from-organizers", "--write-transparency", "true"],
+            configuration);
+        var disabled = PmtilesCommandLine.Parse(
+            ["build-race-tiles-from-organizers", "--write-transparency=false"],
+            configuration);
+
+        Assert.True(enabled.WriteTransparency);
+        Assert.False(disabled.WriteTransparency);
+    }
+
+    [Fact]
+    public void Parse_Throws_WhenFilterOutdoorInputIsMissing()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var ex = Assert.Throws<InvalidOperationException>((Action)(() =>
+            PmtilesCommandLine.Parse(["filter-outdoor", "--output", "/tmp/outdoors.pmtiles"], configuration)));
+
+        Assert.Contains("--input", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ResolveBinaryPath_PrefersExistingFallback_WhenConfiguredPathIsInvalid()
+    {
+        var temporaryBinary = Path.GetTempFileName();
+
+        try
+        {
+            var resolved = PmtilesUtilityService.ResolveBinaryPath("/does/not/exist/tile-join", temporaryBinary);
+
+            Assert.Equal(temporaryBinary, resolved);
+        }
+        finally
+        {
+            File.Delete(temporaryBinary);
+        }
+    }
+
+    [Fact]
+    public void ResolveBinaryPath_PreservesConfiguredPath_WhenNoFallbackExists()
+    {
+        var configuredPath = "/does/not/exist/tile-join";
+
+        var resolved = PmtilesUtilityService.ResolveBinaryPath(configuredPath, "/also/missing/tile-join");
+
+        Assert.Equal(configuredPath, resolved);
+    }
+
+    [Fact]
+    public void GetTileJoinTemporaryMbtilesPath_UsesMbtilesExtension()
+    {
+        var temporaryPath = PmtilesUtilityService.GetTileJoinTemporaryMbtilesPath("/tmp/admin-boundaries.pmtiles");
+
+        Assert.EndsWith(".mbtiles", temporaryPath, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("admin-boundaries.", temporaryPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GetTippecanoeArguments_IncludesConfiguredTippecanoeFlags()
+    {
+        var input = "/tmp/features.geojson";
+        var output = "/tmp/trails.pmtiles";
+
+        var args = PmtilesUtilityService.GetTippecanoeArguments(input, output);
+
+        Assert.Contains("--output", args);
+        Assert.Contains(output, args);
+        Assert.Contains("--layer=trails", args);
+        Assert.Contains("--minimum-zoom=0", args);
+        Assert.Contains("-zg", args);
+        Assert.Contains("-r1", args);
+        Assert.Contains("--no-tile-size-limit", args);
+        Assert.Contains("--no-feature-limit", args);
+        Assert.Contains("--drop-densest-as-needed", args);
+        Assert.Contains("--force", args);
+        Assert.Contains(input, args);
+        Assert.Equal(output, args[1]);
+        Assert.Equal(input, args[^1]);
+    }
+
+    [Fact]
+    public void GetTippecanoeArguments_AllowsMultipleNamedLayers()
+    {
+        var output = "/tmp/admin-areas.pmtiles";
+
+        var args = PmtilesUtilityService.GetTippecanoeArguments(
+            [("countries", "/tmp/countries.geojson"), ("regions", "/tmp/regions.geojson")],
+            output);
+
+        Assert.Contains("--output", args);
+        Assert.Contains(output, args);
+        Assert.Contains("--named-layer=countries:/tmp/countries.geojson", args);
+        Assert.Contains("--named-layer=regions:/tmp/regions.geojson", args);
+        Assert.DoesNotContain(args, static arg => arg.StartsWith("--layer=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GetOutdoorMapFilterArguments_IncludesOnlyOutdoorLayers()
+    {
+        var input = "/tmp/world.pmtiles";
+        var output = "/tmp/outdoors.pmtiles";
+
+        var args = PmtilesUtilityService.GetOutdoorMapFilterArguments(input, output);
+
+        Assert.Equal("-o", args[0]);
+        Assert.Equal(output, args[1]);
+        Assert.Contains("-pg", args);
+        Assert.Contains("-l", args);
+        Assert.Contains("-j", args);
+        foreach (var layer in PmtilesUtilityService.OutdoorMapIncludedLayers)
+        {
+            Assert.Contains(layer, args);
+        }
+
+        var filterJsonIndex = Array.IndexOf(args.ToArray(), "-j");
+        Assert.True(filterJsonIndex >= 0);
+        var filterJson = args[filterJsonIndex + 1];
+        Assert.Contains("\"places\"", filterJson);
+        foreach (var kind in PmtilesUtilityService.OutdoorMapIncludedPlaceKinds)
+        {
+            Assert.Contains($"\"{kind}\"", filterJson);
+        }
+
+        Assert.DoesNotContain("\"neighbourhood\"", filterJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"suburb\"", filterJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"quarter\"", filterJson, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var layer in PmtilesUtilityService.OutdoorMapExcludedLayers)
+        {
+            Assert.DoesNotContain(layer, args);
+        }
+
+        Assert.Equal(input, args[^1]);
+    }
+
+    [Fact]
+    public void GetOutdoorMapFilterArguments_AllowsMaximumZoomAndAttributeStripping()
+    {
+        var args = PmtilesUtilityService.GetOutdoorMapFilterArguments(
+            "/tmp/world.pmtiles",
+            "/tmp/outdoors.pmtiles",
+            maximumZoom: 8,
+            excludeAllAttributes: true);
+
+        Assert.Contains("-z", args);
+        Assert.Contains("8", args);
+        Assert.Contains("-X", args);
+        Assert.DoesNotContain("-y", args);
+    }
+
+    [Fact]
+    public void GetOutdoorMapFilterArguments_KeepsAllowlistedAttributes()
+    {
+        var args = PmtilesUtilityService.GetOutdoorMapFilterArguments("/tmp/world.pmtiles", "/tmp/outdoors.pmtiles");
+
+        Assert.Contains("-y", args);
+        foreach (var attr in PmtilesUtilityService.OutdoorMapKeptAttributes)
+        {
+            Assert.Contains(attr, args);
+        }
+
+        // Localized names not in the keeplist must not appear as -y values
+        var keeplistValues = args
+            .Select((a, i) => (arg: a, prev: i > 0 ? args[i - 1] : null))
+            .Where(x => x.prev == "-y")
+            .Select(x => x.arg)
+            .ToList();
+        Assert.DoesNotContain("name:ar", keeplistValues);
+        Assert.DoesNotContain("name:zh-Hans", keeplistValues);
+        Assert.DoesNotContain("ref:USCG", keeplistValues);
+        Assert.Contains("name:sma", keeplistValues);
+        Assert.Contains("name:sv", keeplistValues);
+    }
+
+    [Fact]
+    public void GetAdminBoundariesFilterArguments_KeepsOnlyBoundaryLayerAndSupportedBoundaryKinds()
+    {
+        var input = "/tmp/world.pmtiles";
+        var output = "/tmp/admin-boundaries.pmtiles";
+
+        var args = PmtilesUtilityService.GetAdminBoundariesFilterArguments(input, output);
+
+        Assert.Equal("-o", args[0]);
+        Assert.Equal(output, args[1]);
+        Assert.Contains("-l", args);
+        Assert.Contains("boundaries", args);
+        Assert.Contains("-j", args);
+        Assert.DoesNotContain("roads", args);
+        Assert.DoesNotContain("places", args);
+        Assert.DoesNotContain("natural", args);
+
+        var filterJsonIndex = Array.IndexOf(args.ToArray(), "-j");
+        Assert.True(filterJsonIndex >= 0);
+        var filterJson = args[filterJsonIndex + 1];
+        Assert.Contains("\"boundaries\"", filterJson);
+        foreach (var kind in PmtilesUtilityService.AdminBoundariesIncludedKinds)
+        {
+            Assert.Contains($"\"{kind}\"", filterJson);
+        }
+
+        Assert.DoesNotContain("\"map_unit\"", filterJson);
+        Assert.DoesNotContain("\"unrecognized_country\"", filterJson);
+        Assert.Equal(input, args[^1]);
+    }
+
+    [Fact]
+    public void GetTileJoinArguments_ThrowsWhenBothIncludeAndExcludeAreSpecified()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            PmtilesUtilityService.GetTileJoinArguments(
+                "/tmp/world.pmtiles",
+                "/tmp/outdoors.pmtiles",
+                includeLayers: ["natural"],
+                excludeLayers: ["buildings"]));
+
+        Assert.Contains("either include layers or exclude layers", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void IsValidPmtilesFile_ReturnsFalseForInvalidMagicHeader()
+    {
+        var temporaryFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(temporaryFile, Encoding.UTF8.GetBytes("NOTPMT").Concat(new byte[1024]).ToArray());
+            Assert.False(PmtilesUtilityService.IsValidPmtilesFile(temporaryFile));
+        }
+        finally
+        {
+            File.Delete(temporaryFile);
+        }
+    }
+
+    [Fact]
+    public void IsValidPmtilesFile_ReturnsTrueForMagicHeader()
+    {
+        var temporaryFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(temporaryFile, Encoding.UTF8.GetBytes("PMTiles")
+                .Concat(new byte[1024]).ToArray());
+
+            Assert.True(PmtilesUtilityService.IsValidPmtilesFile(temporaryFile));
+        }
+        finally
+        {
+            File.Delete(temporaryFile);
+        }
+    }
+
+    [Fact]
+    public void ParseTippecanoeFeatureCount_ReturnsCountFromOutput()
+    {
+        var output = "Wrote 1700 features to /tmp/trails.pmtiles\nSome other info";
+
+        var count = PmtilesUtilityService.ParseTippecanoeFeatureCount(output);
+
+        Assert.Equal(1700, count);
+    }
+
+    [Fact]
+    public void ParseTippecanoeFeatureCount_ReturnsNegativeWhenMissing()
+    {
+        var output = "No feature count present";
+
+        var count = PmtilesUtilityService.ParseTippecanoeFeatureCount(output);
+
+        Assert.Equal(-1, count);
+    }
+
+    [Fact]
+    public void IsValidPmtilesFile_ReturnsFalseForTooSmallFile()
+    {
+        var temporaryFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(temporaryFile, Encoding.UTF8.GetBytes("PMTiles"));
+            Assert.False(PmtilesUtilityService.IsValidPmtilesFile(temporaryFile));
+        }
+        finally
+        {
+            File.Delete(temporaryFile);
+        }
+    }
+
+    [Fact]
+    public void Parse_ReturnsScheduleRaceTiles_WhenSubcommandIsProvided()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse(["schedule-race-tiles"], configuration);
+
+        Assert.Equal(PmtilesCommandKind.ScheduleRaceTiles, command.Command);
+    }
+
+    [Fact]
+    public void Parse_AllowsOutputOverrideForRaceBuild()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var spaced = PmtilesCommandLine.Parse(
+            ["build-race-tiles-from-organizers", "--output", "/custom/trails.pmtiles"],
+            configuration);
+        var equals = PmtilesCommandLine.Parse(
+            ["build-race-tiles-from-organizers", "--output=/custom/trails.pmtiles"],
+            configuration);
+
+        Assert.Equal("/custom/trails.pmtiles", spaced.OutputPath);
+        Assert.Equal("/custom/trails.pmtiles", equals.OutputPath);
+    }
+
+    [Fact]
+    public void Parse_UsesConfiguredRaceTilesOutputPath_WhenNoOverride()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["RaceTiles:OutputPath"] = "/configured/trails.pmtiles",
+            })
+            .Build();
+
+        var command = PmtilesCommandLine.Parse(["build-race-tiles-from-organizers"], configuration);
+
+        Assert.Equal("/configured/trails.pmtiles", command.OutputPath);
+    }
+
+    [Fact]
+    public void Parse_DefaultRaceBuild_HasNoExplicitOutputAndTransparencyOff()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        var command = PmtilesCommandLine.Parse([], configuration);
+
+        Assert.Equal(PmtilesCommandKind.BuildRaceTilesFromOrganizers, command.Command);
+        Assert.Null(command.OutputPath);
+        Assert.False(command.WriteTransparency);
+    }
+
+    [Fact]
+    public void ResolveOutputPath_PrefersCliOverrideThenConfigThenDefault()
+    {
+        var configured = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["RaceTiles:OutputPath"] = "/configured/trails.pmtiles",
+            })
+            .Build();
+        var empty = new ConfigurationBuilder().Build();
+
+        Assert.Equal("/cli/trails.pmtiles", RaceFromOrganizersPmtilesBuildService.ResolveOutputPath(configured, "/cli/trails.pmtiles"));
+        Assert.Equal("/configured/trails.pmtiles", RaceFromOrganizersPmtilesBuildService.ResolveOutputPath(configured, null));
+        Assert.Equal("/data/races/tiles/trails.pmtiles", RaceFromOrganizersPmtilesBuildService.ResolveOutputPath(empty, null));
+    }
+
+    [Fact]
+    public async Task ValidateAndWritePmtilesAsync_WritesExactBytesAndCleansTemp()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pmtiles-write-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var sourcePath = Path.Combine(root, "source.pmtiles");
+            var bytes = Encoding.UTF8.GetBytes("PMTiles").Concat(new byte[1024]).ToArray();
+            bytes[^1] = 42;
+            File.WriteAllBytes(sourcePath, bytes);
+            var outputPath = Path.Combine(root, "nested", "tiles", "trails.pmtiles");
+
+            await RaceFromOrganizersPmtilesBuildService.ValidateAndWritePmtilesAsync(
+                sourcePath, outputPath, NullLogger.Instance, CancellationToken.None);
+
+            Assert.True(File.Exists(outputPath));
+            Assert.Equal(bytes, File.ReadAllBytes(outputPath));
+            Assert.False(File.Exists(outputPath + ".tmp"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateAndWritePmtilesAsync_RejectsInvalidHeaderWithoutWritingOutput()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "pmtiles-write-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var sourcePath = Path.Combine(root, "source.pmtiles");
+            File.WriteAllBytes(sourcePath, Encoding.UTF8.GetBytes("NOTPMT").Concat(new byte[1024]).ToArray());
+            var outputPath = Path.Combine(root, "nested", "trails.pmtiles");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                RaceFromOrganizersPmtilesBuildService.ValidateAndWritePmtilesAsync(
+                    sourcePath, outputPath, NullLogger.Instance, CancellationToken.None));
+
+            Assert.False(File.Exists(outputPath));
+            Assert.False(File.Exists(outputPath + ".tmp"));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RecurringRegistration_UsesConfiguredCron()
+    {
+        var recurringJobs = new Mock<IRecurringJobManager>();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["RaceTiles:WeeklyCron"] = "0 3 * * 2",
+            })
+            .Build();
+        var service = new RaceTilesRecurringJobRegistrationService(
+            recurringJobs.Object,
+            configuration,
+            NullLogger<RaceTilesRecurringJobRegistrationService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+
+        recurringJobs.Verify(jobs => jobs.AddOrUpdate(
+            "race-pmtiles-weekly",
+            It.Is<Job>(job => job.Type == typeof(Stigar.Core.Jobs.IRaceTilesBuildJob)),
+            "0 3 * * 2",
+            It.Is<RecurringJobOptions>(options =>
+                options.QueueName == AppConfig.RaceTilesQueueName)), Times.Once);
+    }
+}
