@@ -16,7 +16,7 @@ public sealed record BackendActivityProjection(
 /// <summary>Selects which activity-link junction table a cleanup operation targets.</summary>
 public enum BackendLinkFeature
 {
-    /// <summary>activity_visited_paths</summary>
+    /// <summary>activity_visited_tiles</summary>
     Paths,
     /// <summary>activity_summits</summary>
     Peaks,

@@ -144,19 +144,18 @@ CREATE INDEX IF NOT EXISTS idx_activity_summits_user ON activity_summits(user_id
 CREATE INDEX IF NOT EXISTS idx_activity_summits_peak ON activity_summits(peak_id);
 
 -- 11. Junction Table: Activity Visited Paths
-CREATE TABLE IF NOT EXISTS activity_visited_paths (
-    activity_id     TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
-    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    osm_highway_id  TEXT NOT NULL,
-    name            TEXT,
-    type            TEXT,
-    tile_x          INTEGER,
-    tile_y          INTEGER,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (activity_id, osm_highway_id)
+-- One row per activity and z12 tile. highway_ids stores OSM ids (e.g. "way/123").
+-- All queries are user-scoped.
+CREATE TABLE IF NOT EXISTS activity_visited_tiles (
+    activity_id  TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tile_x       INTEGER NOT NULL,
+    tile_y       INTEGER NOT NULL,
+    highway_ids  TEXT[] NOT NULL,
+    PRIMARY KEY (activity_id, tile_x, tile_y)
 );
-CREATE INDEX IF NOT EXISTS idx_activity_visited_paths_user ON activity_visited_paths(user_id);
-CREATE INDEX IF NOT EXISTS idx_activity_visited_paths_highway ON activity_visited_paths(osm_highway_id);
+CREATE INDEX IF NOT EXISTS idx_activity_visited_tiles_user_tile
+    ON activity_visited_tiles (user_id, tile_x, tile_y);
 
 -- 12. Junction Table: Activity Visited Areas
 CREATE TABLE IF NOT EXISTS activity_visited_areas (

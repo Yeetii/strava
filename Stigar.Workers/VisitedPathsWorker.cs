@@ -109,8 +109,6 @@ public class VisitedPathsWorker(
                     activity.Id,
                     activity.UserId,
                     pathMatch.OsmHighwayId,
-                    pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
-                    pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
                     featureTileX,
                     featureTileY);
             })
@@ -286,7 +284,7 @@ public class VisitedPathsWorker(
         if (!pathFeature.Properties.TryGetValue("osmId", out var osmId))
             return null;
 
-        var value = osmId?.ToString();
+        var value = osmId?.ToString() as string;
         return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 

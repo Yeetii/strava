@@ -103,7 +103,7 @@ public class BackfillVisitedPathOsmHighwayIds(
         string? continuationToken,
         CancellationToken cancellationToken)
     {
-        // Deterministic keyset paging over activity_visited_paths instead of the old Cosmos
+        // Deterministic keyset paging over activities lacking visited tiles instead of the old Cosmos
         // continuation token. The token is the last (highest) activity_id from the page.
         var activityIds = await queries.GetActivityIdsWithMissingOsmHighwayId(
             continuationToken,

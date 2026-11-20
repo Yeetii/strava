@@ -225,10 +225,8 @@ public class VisitedPathsWorkerTests
                     && paths.First().ActivityId == activityId
                     && paths.First().UserId == userId
                     && paths.First().OsmHighwayId == "way/123"
-                    && paths.First().Name == "Test Road"
-                    && paths.First().Type == "residential"
-                    && paths.First().TileX.HasValue
-                    && paths.First().TileY.HasValue),
+                    && paths.First().TileX >= 0
+                    && paths.First().TileY >= 0),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }

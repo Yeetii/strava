@@ -216,12 +216,10 @@ Paths the current user has visited within the given slippy-map tile. Uses the sa
 **Response** `200 OK` `application/json`
 ```ts
 Array<{
-  pathId: string          // OSM way ID — join against /paths/{x}/{y} features
-  name: string | null     // OSM name tag, if present
-  type: string | null     // OSM highway tag, e.g. "path", "footway", "track"
+  osmId: string           // OSM way id, e.g. "way/123"
   timesVisited: number
-  activityIds: string[]   // sorted ascending
-  dates: string[]         // ISO 8601, sorted ascending by activity start date
+  first: string | null    // ISO 8601 date of the first visit
+  last: string | null     // ISO 8601 date of the last visit
 }>
 ```
 

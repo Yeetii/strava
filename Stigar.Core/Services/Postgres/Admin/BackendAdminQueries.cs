@@ -56,10 +56,11 @@ public sealed class BackendAdminQueries(NpgsqlDataSource dataSource) : IBackendA
         """;
 
     private const string MissingOsmHighwayIdsSql = """
-        SELECT DISTINCT activity_id FROM activity_visited_paths
-        WHERE (osm_highway_id IS NULL OR osm_highway_id = '')
-          AND (@after IS NULL OR activity_id > @after)
-        ORDER BY activity_id
+        SELECT a.id FROM activities a
+        WHERE NOT EXISTS (
+            SELECT 1 FROM activity_visited_tiles t WHERE t.activity_id = a.id)
+          AND (@after IS NULL OR a.id > @after)
+        ORDER BY a.id
         LIMIT @limit
         """;
 
@@ -207,7 +208,7 @@ public sealed class BackendAdminQueries(NpgsqlDataSource dataSource) : IBackendA
         // Table names are selected from a fixed set — PostgreSQL parameters cannot bind identifiers.
         var table = feature switch
         {
-            BackendLinkFeature.Paths => "activity_visited_paths",
+            BackendLinkFeature.Paths => "activity_visited_tiles",
             BackendLinkFeature.Peaks => "activity_summits",
             BackendLinkFeature.Areas => "activity_visited_areas",
             _ => throw new ArgumentOutOfRangeException(nameof(feature), feature, "Unknown link feature."),
