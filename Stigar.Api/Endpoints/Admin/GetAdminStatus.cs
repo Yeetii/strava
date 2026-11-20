@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Stigar.Api.Http;
+using Stigar.Core.Constants;
+using Stigar.Core.Jobs;
 using Stigar.Core.Services;
 using Stigar.Core.Services.Postgres.Admin;
 
@@ -14,9 +16,7 @@ namespace Stigar.Api.Endpoints.Admin;
 
 public record QueueStatus(
     string QueueName,
-    long EnqueuedCount,
-    long ScheduledCount,
-    long FailedCount);
+    long EnqueuedCount);
 
 public record PostgresTableStatus(
     string TableName,
@@ -24,6 +24,8 @@ public record PostgresTableStatus(
 
 public record AdminStatus(
     IReadOnlyList<QueueStatus> Queues,
+    long ScheduledCount,
+    long FailedCount,
     IReadOnlyList<PostgresTableStatus> PostgresTables,
     long? DatabaseSizeBytes,
     int? ActiveConnections,
@@ -51,7 +53,7 @@ public class GetAdminStatus(
         if (!context.IsAdminAuthorized(configuration))
             return TypedResults.Unauthorized();
 
-        var queueStatus = FetchQueueStatus();
+        var (queues, scheduledCount, failedCount) = FetchQueueStatus();
         var tableTasks = statusRepository.TableNames.Select(FetchTableStatusAsync).ToArray();
         var databaseSizeTask = FetchDatabaseSizeBytesAsync();
         var activeConnectionsTask = FetchActiveConnectionsAsync();
@@ -65,7 +67,9 @@ public class GetAdminStatus(
         var raceCounts = await raceCountsTask;
 
         var status = new AdminStatus(
-            [queueStatus],
+            queues,
+            scheduledCount,
+            failedCount,
             tableStatuses,
             databaseSizeBytes,
             activeConnections,
@@ -77,25 +81,47 @@ public class GetAdminStatus(
         return TypedResults.Ok(status);
     }
 
-    private QueueStatus FetchQueueStatus()
+    private (IReadOnlyList<QueueStatus> Queues, long ScheduledCount, long FailedCount) FetchQueueStatus()
     {
+        var configuredQueues = QueueConfig.AllQueues
+            .Select(JobEnqueueExtensions.NormalizeQueue)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
         try
         {
             var monitoring = JobStorage.Current?.GetMonitoringApi();
             if (monitoring is null)
-                return new QueueStatus("hangfire", -1, -1, -1);
-            return new QueueStatus(
-                "hangfire",
-                monitoring.EnqueuedCount("default"),
-                monitoring.ScheduledCount(),
-                monitoring.FailedCount());
+                return (UnavailableQueues(configuredQueues), -1, -1);
+
+            // Include configured queues even when they are empty, plus any queue
+            // Hangfire has seen at runtime that is not in the static list.
+            var enqueuedByQueue = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var queueName in configuredQueues)
+                enqueuedByQueue[queueName] = 0;
+
+            foreach (var queue in monitoring.Queues())
+                enqueuedByQueue[JobEnqueueExtensions.NormalizeQueue(queue.Name)] = queue.Length;
+
+            var queues = enqueuedByQueue
+                .Select(entry => new QueueStatus(entry.Key, entry.Value))
+                .OrderBy(queue => queue.QueueName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            return (queues, monitoring.ScheduledCount(), monitoring.FailedCount());
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to fetch Hangfire queue status");
-            return new QueueStatus("hangfire", -1, -1, -1);
+            return (UnavailableQueues(configuredQueues), -1, -1);
         }
     }
+
+    private static IReadOnlyList<QueueStatus> UnavailableQueues(IEnumerable<string> queueNames) =>
+        queueNames
+            .OrderBy(queueName => queueName, StringComparer.OrdinalIgnoreCase)
+            .Select(queueName => new QueueStatus(queueName, -1))
+            .ToArray();
 
     private async Task<PostgresTableStatus> FetchTableStatusAsync(string tableName)
     {
