@@ -86,8 +86,8 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # Scheduled jobs (the 12 weekly crons) as Hangfire recurring jobs on Redis.
-  # Enable with COMPOSE_PROFILES=schedules.
+  # Scheduled jobs (the 12 weekly crons) plus the sole consumer of the
+  # backend-polling and recurring-jobs queues. Enable with COMPOSE_PROFILES=schedules.
   # ---------------------------------------------------------------------------
   worker-schedule:
     <<: *app-service
@@ -115,8 +115,8 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # Heavy workers: Hangfire queue consumers + PostgreSQL polling jobs.
-  # Enable with COMPOSE_PROFILES=workers.
+  # Heavy workers: the 11 typed Hangfire queue consumers. They never serve
+  # backend-polling or recurring-jobs. Enable with COMPOSE_PROFILES=workers.
   # ---------------------------------------------------------------------------
   worker-heavy:
     <<: *app-service

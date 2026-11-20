@@ -246,9 +246,11 @@ grep IMAGE_TAG /opt/stacks/strava/.env.previous
 
 Workers are off by default so the API can be validated on its own before queue
 consumers and timers start. There are no competing consumers — all queues are
-Hangfire jobs on the local Redis and all data is local.
+Hangfire jobs on the local Redis and all data is local. `backend-polling` and
+`recurring-jobs` are served only by `worker-schedule`, so they need the
+`schedules` profile as well.
 
-### Enable queue/polling workers
+### Enable queue workers
 
 Edit `.env` on the server:
 
@@ -265,7 +267,8 @@ docker compose up -d --wait
 
 ### Enable scheduled jobs (timers)
 
-Add the `schedules` profile when the recurring jobs should start:
+Add the `schedules` profile to start the 12 crons, the backend polling jobs,
+and the sole consumer of the `backend-polling` / `recurring-jobs` queues:
 
 ```
 COMPOSE_PROFILES=workers,schedules

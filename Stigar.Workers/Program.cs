@@ -6,8 +6,8 @@ using Stigar.Core.Constants;
 using Stigar.Core.Jobs;
 
 // Workers host. WORKER_ROLE selects which Hangfire queues this process serves:
-//   schedule -> recurring jobs (weekly crons)
-//   heavy    -> all typed job queues (queues and the two polling jobs)
+//   schedule -> backend-polling and recurring-jobs (the sole consumer of both)
+//   heavy    -> only the typed job queues; it never serves the two shared queues
 // HTTP endpoints live in the API host; this process never serves HTTP.
 
 var role = Environment.GetEnvironmentVariable("WORKER_ROLE")
@@ -37,14 +37,15 @@ var queues = QueueConfig.AllQueues.Select(JobEnqueueExtensions.NormalizeQueue).D
 builder.Services.AddHangfireServer(options =>
 {
     options.WorkerCount = HangfireInfrastructure.GetWorkerCount(builder.Configuration);
-    // Both roles register the native IRecurringJob crons, so both must be able
-    // to serve their queue (a stack running only one profile still works).
-    options.Queues = isHeavy
-        ? [.. queues, AppConfig.BackendPollingQueueName, AppConfig.RecurringJobsQueueName]
-        : [AppConfig.BackendPollingQueueName, AppConfig.RecurringJobsQueueName];
+    // Only the schedule role serves backend-polling and recurring-jobs. The
+    // heavy role never consumes either queue, even though both roles register
+    // the recurring job definitions into the shared Hangfire store.
+    options.Queues = WorkerRoleQueues.ForRole(role, queues);
 });
 
-if (isHeavy)
+// The schedule role owns the backend-polling queue, so it registers the two
+// polling recurring jobs and binds their targets.
+if (!isHeavy)
 {
     builder.Services.AddSingleton<AdminBoundaryMetricsPollingJob>();
     builder.Services.AddSingleton<IAdminBoundaryMetricsPollingJob>(sp =>

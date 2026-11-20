@@ -44,8 +44,9 @@ left in the runtime path.
   │  redis        durable Hangfire storage (AOF, noeviction)                │
   │  postgres     PostgreSQL + PostGIS (domain data, local volume)          │
   │                                                                         │
-  │  worker-schedule  12 Hangfire recurring jobs   — profile "schedules"    │
-  │  worker-heavy     Hangfire queue servers + Postgres polling jobs        │
+  │  worker-schedule  12 crons + backend-polling + recurring-jobs           │
+  │                                                  — profile "schedules"  │
+  │  worker-heavy     11 Hangfire queue consumers                           │
   │                                                  — profile "workers"    │
   │  pmtiles          weekly race-tile build (Hangfire scheduler)           │
   └──────────────────────────────────────────────────────────────────────────┘
@@ -79,8 +80,8 @@ assigned to a role by `WORKER_ROLE`; stores are filesystem/Postgres only.
 | Container | Project | Role | Work |
 | --- | --- | --- | --- |
 | `api` | `API` + `Backend` | `api` | All API endpoints plus Backend HTTP routes (webhook, token refresh, admin, backfill) on Kestrel |
-| `worker-schedule` | `Backend` | `schedule` | 12 Hangfire recurring jobs |
-| `worker-heavy` | `Backend` | `heavy` | 11 Hangfire queue consumers + PostgreSQL polling jobs |
+| `worker-schedule` | `Backend` | `schedule` | 12 Hangfire recurring jobs and the sole consumer of `backend-polling` / `recurring-jobs` |
+| `worker-heavy` | `Backend` | `heavy` | 11 Hangfire queue consumers (never `backend-polling` or `recurring-jobs`) |
 | `redis` | — | — | Durable Hangfire storage |
 | `postgres` | — | — | PostgreSQL + PostGIS |
 | `pmtiles` | `PmtilesJob` | — | Weekly race-tile build (Hangfire scheduler) |

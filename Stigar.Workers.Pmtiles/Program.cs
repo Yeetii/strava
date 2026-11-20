@@ -63,7 +63,10 @@ var builder = Host.CreateDefaultBuilder(args)
             // shared store.
             services.AddHangfireServer(options =>
             {
-                options.WorkerCount = HangfireInfrastructure.GetWorkerCount(context.Configuration);
+                // A tile build is expensive, so serialize the pmtiles queue. This
+                // host must not inherit the shared Hangfire:WorkerCount used by the
+                // backend queue workers.
+                options.WorkerCount = 1;
                 options.Queues = [Stigar.Core.Constants.AppConfig.RaceTilesQueueName];
             });
             services.AddSingleton<IRaceTilesBuildJob, RaceTilesSchedulerJob>();

@@ -31,7 +31,7 @@ public static class AppConfig
     public const string RaceTilesQueueName = "pmtiles";
 
     // Dedicated Hangfire queue for the Backend polling recurring jobs. Only the
-    // heavy worker serves it, so other hosts sharing the store cannot activate
+    // schedule worker serves it, so other hosts sharing the store cannot activate
     // jobs whose implementations are registered only in the Backend assembly.
     public const string BackendPollingQueueName = "backend-polling";
 

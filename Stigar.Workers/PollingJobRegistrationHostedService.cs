@@ -8,9 +8,9 @@ namespace Stigar.Workers;
 
 /// <summary>
 /// Registers the two PostgreSQL polling jobs as Hangfire recurring jobs on the
-/// heavy worker's dedicated queue. The targets are interfaces in Stigar.Core.Hosting
+/// schedule worker's dedicated queue. The targets are interfaces in Stigar.Core.Jobs
 /// so every host sharing the Hangfire store can deserialize them, while the
-/// queue keeps activation on the heavy worker that registered the implementations.
+/// queue keeps activation on the schedule worker that registered the implementations.
 /// </summary>
 public sealed class PollingJobRegistrationHostedService(
     IRecurringJobManager recurringJobs,

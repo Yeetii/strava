@@ -12,8 +12,8 @@ namespace Stigar.Workers.Tests;
 /// <summary>
 /// Pins the deployment invariants behind the failing Hangfire recurring jobs:
 /// the registered target must be loadable by hosts that only reference
-/// Stigar.Core, and the activity polling contract must be registered for every
-/// worker role because both roles consume the backend-polling queue.
+/// Stigar.Core, and the activity polling contract must stay registered in the
+/// shared Backend services because the schedule role consumes backend-polling.
 /// </summary>
 public class RecurringJobHostCompatibilityTests
 {

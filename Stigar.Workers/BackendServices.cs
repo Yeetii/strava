@@ -121,9 +121,9 @@ public static class BackendServices
         // implementations stay here in the executing host.
         services.AddSingleton<IRecurringJobDispatcher, RecurringJobDispatcher>();
 
-        // Both worker roles consume the backend-polling queue, so the activity
-        // polling contract must be resolvable on either one. Hangfire resolves
-        // the target interface from DI before invoking the job.
+        // The schedule worker is the sole consumer of the backend-polling queue,
+        // so the activity polling contract must be resolvable on that role.
+        // Hangfire resolves the target interface from DI before invoking the job.
         services.AddSingleton<QueueActivityJobs>();
         services.AddSingleton<IQueueActivityJobs>(sp =>
             sp.GetRequiredService<QueueActivityJobs>());
