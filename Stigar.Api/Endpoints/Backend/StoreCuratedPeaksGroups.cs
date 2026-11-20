@@ -5,12 +5,14 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Builder;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
+using Stigar.Api.Http;
 using Stigar.Core.Models;
 using Stigar.Core.Services.Postgres;
 
 namespace Stigar.Api.Endpoints.Backend
 {
-    public class StoreCuratedPeaksGroups(ILogger<StoreCuratedPeaksGroups> _logger, IPeaksGroupRepository peaksGroupRepository)
+    public class StoreCuratedPeaksGroups(ILogger<StoreCuratedPeaksGroups> _logger, IPeaksGroupRepository peaksGroupRepository, IConfiguration configuration)
     {
         private sealed record RefinedPeak(
             string name,
@@ -23,6 +25,9 @@ namespace Stigar.Api.Endpoints.Backend
 
         public async Task<IResult> Handle(HttpContext context)
         {
+            if (!context.IsAdminAuthorized(configuration))
+                return TypedResults.Unauthorized();
+
             string filePath = "./peaks.json";
 
             if (!File.Exists(filePath))

@@ -173,10 +173,12 @@ builder.Services.AddCors(options =>
 
     options.AddPolicy(Stigar.Api.Endpoints.Tiles.GetTrailsPmtiles.CorsPolicy, policy =>
     {
+        // This is a public, anonymous tile endpoint with an open origin matcher.
+        // AllowCredentials() must stay off: wildcard origins plus credentials is
+        // rejected by browsers and would let any site read credentialed responses.
         policy.SetIsOriginAllowed(_ => true)
             .AllowAnyHeader()
             .WithMethods("GET", "HEAD", "OPTIONS")
-            .AllowCredentials()
             .WithExposedHeaders("Content-Range", "Content-Length", "ETag", "Accept-Ranges");
     });
 });

@@ -10,13 +10,15 @@ using System.Net;
 using Microsoft.Extensions.Logging;
 using Stigar.Core.Constants;
 using Stigar.Core.Services.Postgres.Admin;
+using Microsoft.Extensions.Configuration;
 
 namespace Stigar.Api.Endpoints.Backend;
 
 public class BackfillVisitedPathOsmHighwayIds(
     IBackendAdminQueries queries,
     IBackgroundJobClient jobs,
-    ILogger<BackfillVisitedPathOsmHighwayIds> logger)
+    ILogger<BackfillVisitedPathOsmHighwayIds> logger,
+    IConfiguration configuration)
 {
     private const int DefaultBatchSize = 200;
     private const int MaxBatchSize = 1000;
@@ -27,6 +29,9 @@ public class BackfillVisitedPathOsmHighwayIds(
 
     public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
         var batchSize = ParseBatchSize(context);
         var continuationToken = context.Request.Query["continuationToken"].ToString();
 
@@ -56,6 +61,9 @@ public class BackfillVisitedPathOsmHighwayIds(
 
     public async Task<IResult> HandleAll(HttpContext context, CancellationToken cancellationToken)
     {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
         var batchSize = ParseBatchSize(context);
         var maxPages = ParseMaxPages(context);
         var pageCount = 0;

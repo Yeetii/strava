@@ -13,6 +13,8 @@ using Stigar.Core.Services;
 using Stigar.Core.Services.Postgres;
 using Stigar.Core.Services.Postgres.Spatial;
 using Stigar.Core.Services.Postgres.Spatial.Ingestion;
+using Microsoft.Extensions.Configuration;
+using Stigar.Api.Http;
 
 namespace Stigar.Api.Endpoints.Backend;
 
@@ -23,7 +25,8 @@ public class RunSummitsForActivity(
     IPeakRepository peaksRepository,
     ISummitsCalculator summitsCalculator,
     UserSyncStatusService userSyncStatusService,
-    IOsmFeatureIngestionService osmFeatureIngestion)
+    IOsmFeatureIngestionService osmFeatureIngestion,
+    IConfiguration configuration)
 {
     // Matches ISummitsCalculator.FindPointsNearRoute's default threshold.
     private const int PeakProximityMeters = 50;
@@ -35,6 +38,9 @@ public class RunSummitsForActivity(
 
     public async Task<IResult> Handle(HttpContext context, string activityId, CancellationToken cancellationToken)
     {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
         var activity = await activitiesRepository.GetById(activityId, cancellationToken);
         if (activity == null)
             return TypedResults.NotFound($"Activity '{Stigar.Core.Logging.LogInput.Sanitize(activityId)}' was not found.");

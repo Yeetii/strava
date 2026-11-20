@@ -10,6 +10,7 @@ using Stigar.Core.Services;
 using Stigar.Core.Jobs;
 using Stigar.Core.Services.Postgres.Admin;
 using Stigar.Core.Services.Postgres.Spatial;
+using Microsoft.Extensions.Configuration;
 
 namespace Stigar.Api.Endpoints.Backend;
 
@@ -18,7 +19,8 @@ public class BackfillAdminBoundaryMetrics(
     IAdminBoundaryRepository adminBoundaries,
     IBackendAdminQueries queries,
     IJobEpochService epochs,
-    ILogger<BackfillAdminBoundaryMetrics> logger)
+    ILogger<BackfillAdminBoundaryMetrics> logger,
+    IConfiguration configuration)
 {
     private const int DefaultBatchSize = 5;
     private const int MaxBatchSize = 25;
@@ -27,6 +29,9 @@ public class BackfillAdminBoundaryMetrics(
 
     public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
         var batchSize = ParseBatchSize(context);
 
         var epoch = await epochs.GetAsync(JobEpochType.AdminBoundaryMetrics, cancellationToken);
