@@ -39,6 +39,15 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # setup-dotnet's own cache input requires packages.lock.json, which this
+      # repo does not have. Cache the global packages folder directly instead.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Build.props') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
       - name: Verify the native API/Workers architecture
         run: ./deploy/scripts/verify-role-coverage.sh
 
@@ -48,8 +57,10 @@ jobs:
       - name: Build solution
         run: dotnet build strava.sln -c Release
 
+      # PostGIS tests run in the db-tests job so their container startup does
+      # not sit on this job's critical path.
       - name: Run unit tests
-        run: dotnet test strava.sln -c Release --no-build
+        run: dotnet test strava.sln -c Release --no-build --filter "FullyQualifiedName!~Stigar.Core.Tests.Postgres"
 
       # The Docker images consume this single publish output instead of each
       # recompiling the same projects in their own SDK build stage.
@@ -122,16 +133,47 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/stigar-${{ matrix.name }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/stigar-${{ matrix.name }}:latest
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # Starts after verify and runs alongside build. The 34 PostGIS tests share
+  # one Testcontainers fixture and a serialized collection, so their ~20s is
+  # kept off the verify job's critical path.
+  db-tests:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Build.props') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      # No test binaries are passed between jobs: a focused rebuild is simpler
+      # than publishing an artifact and still overlaps the image builds.
+      - name: Build Core.Tests
+        run: dotnet build Stigar.Core.Tests/Stigar.Core.Tests.csproj -c Release
+
+      - name: Run PostGIS integration tests
+        run: dotnet test Stigar.Core.Tests/Stigar.Core.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~Stigar.Core.Tests.Postgres"
 
   deploy:
     needs:
       - verify
       - build
+      - db-tests
     if: >-
       always() &&
       needs.verify.result == 'success' &&
+      needs['db-tests'].result == 'success' &&
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-latest
     environment: self-hosted

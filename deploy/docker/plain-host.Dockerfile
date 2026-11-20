@@ -27,12 +27,9 @@ RUN dotnet publish "${PROJECT}/${PROJECT}.csproj" \
     --output /app/publish
 
 # Shared runtime layer for both the source-built (local) and prebuilt (CI) images.
+# The aspnet base already ships procps, so pgrep for the worker healthcheck in
+# docker-compose.yml is available without a separate apt layer.
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime-base
-
-# procps provides pgrep for the worker-role healthcheck in docker-compose.yml.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends procps \
-    && rm -rf /var/lib/apt/lists/*
 
 ENV DOTNET_RUNNING_IN_CONTAINER=true \
     DOTNET_ENVIRONMENT=Production \

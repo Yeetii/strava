@@ -24,6 +24,9 @@ grep -qE '^[[:space:]]+path: image-context$' "${WORKFLOW}" \
     || fail "download must use path: image-context"
 require 'context: image-context/${{ matrix.name }}' "${WORKFLOW}" "image builds must use the per-image prebuilt context"
 require 'target: prebuilt' "${WORKFLOW}" "image builds must target the prebuilt stage"
+require 'FullyQualifiedName!~Stigar.Core.Tests.Postgres' "${WORKFLOW}" "verify must exclude the PostGIS collection"
+require 'FullyQualifiedName~Stigar.Core.Tests.Postgres' "${WORKFLOW}" "db-tests must run the PostGIS collection"
+require "needs['db-tests'].result == 'success'" "${WORKFLOW}" "deploy must wait for the PostGIS tests"
 
 guards="$(grep -cF "github.event_name == 'workflow_dispatch' && inputs.image_tag != ''" "${WORKFLOW}" || true)"
 [[ "${guards}" -eq 3 ]] || fail "expected 3 workflow_dispatch guards (publish, upload, build), found ${guards}"
@@ -47,6 +50,6 @@ require 'publish Stigar.Workers.Pmtiles pmtiles' "${PUBLISH}" "pmtiles must be p
 require 'OUTPUT_DIR}/workers/peaks.json' "${PUBLISH}" "workers publish context must include peaks.json"
 
 if [[ "${status}" -eq 0 ]]; then
-    echo "Build pipeline OK: one publish artifact feeds every prebuilt image target; local source builds remain the default."
+    echo "Build pipeline OK: one publish artifact feeds every prebuilt image target; PostGIS tests gate separately; local source builds remain the default."
 fi
 exit "${status}"

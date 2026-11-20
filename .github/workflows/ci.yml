@@ -1,10 +1,9 @@
 name: CI
 
 on:
+  # PRs are gated here. Pushes to main are already built and tested by the
+  # deploy workflow's verify job, so keeping push here duplicates every merge.
   pull_request:
-  push:
-    branches:
-      - main
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
