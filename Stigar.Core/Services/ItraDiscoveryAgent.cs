@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using Stigar.Core.Services;
 using static Stigar.Core.Services.RaceScrapeDiscovery;
 
@@ -92,7 +93,8 @@ public static partial class ItraDiscoveryAgent
         IReadOnlyCollection<ScrapeJob> jobs,
         HttpClient httpClient,
         CancellationToken cancellationToken,
-        Action<int, int>? onProgress = null)
+        Action<int, int>? onProgress = null,
+        ILogger? logger = null)
     {
         if (jobs.Count == 0)
             return jobs;
@@ -162,6 +164,7 @@ public static partial class ItraDiscoveryAgent
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                logger?.LogWarning(ex, "ITRA enrichment: failed to fetch details for {Url}", job.WebsiteUrl);
                 onProgress?.Invoke(Interlocked.Increment(ref processed), jobs.Count);
             }
         });
@@ -187,7 +190,10 @@ public static partial class ItraDiscoveryAgent
                     if (html.Contains("captcha-container", StringComparison.OrdinalIgnoreCase)) return;
                     enriched.Add(EnrichJobFromEventPageHtml(job, html, pageUrl));
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException) { }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger?.LogWarning(ex, "ITRA enrichment: failed to follow extra link {Url}", pageUrl);
+                }
             });
         }
 

@@ -230,7 +230,8 @@ public class DiscoverItraRaces(
                         logger.LogWarning("ITRA enrichment: bot-blocked (captcha), stopping enrichment");
                     else if (done % 100 == 0)
                         logger.LogInformation("ITRA enrichment: {Done}/{Total}", done, total);
-                });
+                },
+                logger: logger);
             return enrichedJobs;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -47,11 +47,11 @@ public class OrganizerRedirectProbeHelperTests
 
         Assert.Equal(2, confirmed.Count);
 
-        var alpha = Assert.Single(confirmed.Where(item => item.SourceOrganizerKey == "alpha.com"));
+        var alpha = Assert.Single(confirmed, item => item.SourceOrganizerKey == "alpha.com");
         Assert.True(alpha.TargetOrganizerExists);
         Assert.True(alpha.AutoCreated);
 
-        var beta = Assert.Single(confirmed.Where(item => item.SourceOrganizerKey == "beta.com"));
+        var beta = Assert.Single(confirmed, item => item.SourceOrganizerKey == "beta.com");
         Assert.False(beta.TargetOrganizerExists);
         Assert.False(beta.AutoCreated);
     }

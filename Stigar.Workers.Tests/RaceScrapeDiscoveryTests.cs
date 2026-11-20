@@ -380,7 +380,7 @@ public class RaceScrapeDiscoveryTests
         var unsupportedJob = Assert.Single(jobs, j => j.Name == "Fredsloppet Varberg");
         Assert.Null(unsupportedJob.RaceType);
 
-        var externalJob = Assert.Single(jobs, j => j.Name.StartsWith("Triathlon i Parken", StringComparison.Ordinal));
+        var externalJob = Assert.Single(jobs, j => j.Name?.StartsWith("Triathlon i Parken", StringComparison.Ordinal) == true);
         Assert.Null(externalJob.MittloppEventUrl);
         Assert.Equal("https://www.htm.nu/aktivitet/20433629/triathlon-i-parken-try-triathlon", externalJob.WebsiteUrl!.AbsoluteUri);
         Assert.Equal("triathlon", externalJob.RaceType);
@@ -554,7 +554,7 @@ public class RaceScrapeDiscoveryTests
         Assert.Equal(2, expanded.Count);
         Assert.Contains(expanded, job => job.Name == "Fredsloppet Växjö – Mini-Fredsloppet 200 m" && job.Distance == "0.2 km");
         Assert.Contains(expanded, job => job.Name == "Fredsloppet Växjö – Löpning 5 km" && job.Distance == "5 km");
-        Assert.DoesNotContain(expanded, job => job.Name.Contains("Promenad", StringComparison.Ordinal));
+        Assert.DoesNotContain(expanded, job => job.Name?.Contains("Promenad", StringComparison.Ordinal) == true);
         Assert.Contains(expanded, job => job.MittloppEventUrl!.AbsoluteUri == "https://mittlopp.se/anm/fredsloppet-vxo-2026/mini?lang=sv");
         Assert.Contains(expanded, job => job.MittloppEventUrl!.AbsoluteUri == "https://mittlopp.se/anm/fredsloppet-vxo-2026/5km?lang=sv");
     }

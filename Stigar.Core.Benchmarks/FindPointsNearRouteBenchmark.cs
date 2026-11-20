@@ -80,8 +80,6 @@ public class SummitsBenchmarks
         ("Point65", new Coordinate(7.8094693, 63.1178707)),
         ("Point66", new Coordinate(7.7814327, 63.1303217))
     ];
-    // 85km bike ride
-    readonly static string polylineA = "owv`Ksdnp@c@~DmHzLqFrOr@xJmAnL_KhRsP|AuM_YeHzSyBzOuHdMsK|d@iEhGdPpxAvNzbArFrTzNt]rKde@eEzQiEvIfClTnHbOdKtJbGeB`Lv}@HnXfFlPbCf`@jKfj@|J~x@hk@fpAlGndAlWb_ArEpJ|C|XfOj[`Pzx@fEnFpEn@~]yI`FwLpEw`@hCmHdLmKp]aa@vFaMzJ_FrElA`fGzwOD~HzMtpAfC~rApBhYQfW`Fhf@g@lT}Epa@vBz\\e@`]Ljb@dC~n@aE`UhArUw@hVmBb@PeCYtBtAd@nCb_@Qvo@oBxKqHpHf@dMw@vRdA|_@wP]j@dJyBvCEtC}CtAyX`_@wQ|PqGh[oD`]yAzYx@pDM|RgAiBDfEcDpByBiClnCvpRxAiA}Doe@y@wv@yCca@{G{P{BaMgHsLiH]wCrCgSsa@cBGcF_OSiKdAfOh@UnC~K|A?xKzSnCrI|CpBrA_DlHZfH~LxHxV`DnOvEgIy@mUfPiD~JcOfCgy@bHgL|E_PhDyDrEj@xF~JfJlBvBlUzBxEjXnL`Fy@v\\t[fCzNrHhMpUvq@~BNhIoJ|EGvZ|Q~LxAtM|OhLbGvFvHjDzN~FjDpB`KxBiJ`DaC~BfJ|ArYMjQhAzIlLdQvAlGxFl@dE{DnMfXnIoPpHpCtBtFvDhX|JpIdGtO|Lp@pIfOjDrPpFnG~ItZjd@}CnCvHtH~j@pCjGha@oQ|DdHGbDfAM|GxWbEvFvCzKdD~b@iC`c@S`r@eJbe@qOb_BaTxu@sM`XqEv`@i@pRjBxnBvIdp@jMli@rAvOy@jzA`DpsB|c@|vB}Lvb@kM|iAYjpAgK~UkGh[wZngAaBdSdAlLdHtRyBlL~A_L`CpHrHz[jBxb@rFnj@Qzl@~FlYbBp`@rJ`i@lDxh@jHbe@p@bd@jKxb@dIr|@|FrHfN}EzFdCvCnJ~Ftd@vJ{GhDuFbKwVlLse@`a@sd@jVk]lJj@`Nx[xKbDb[eIvKwM|LaYxGcWhC_z@cCyyBzDaw@tB{H`HcIrG}MlGsChLjAn@cExBIxCwL`C_s@rDm^c@sc@jJcdBbMujArFyNxHwGbJaa@zJcV`bAubB|G}PpO}JfLsAxJkKnU{A|N_StW`K`GjHtSbh@p[frAzT|ZvOrJbJzJbZrkAlDrh@Sjl@hAld@rIffA|YjoBnU|gAzi@|lDfQ~l@lPfcBhU~|AnJj\\sBs@iHdS_Gm@UwJ_Dv@yB|DlGkFh@tJ|CK";
 
 
     // The 100 peaks that SummitsWorker will fetch for this activity

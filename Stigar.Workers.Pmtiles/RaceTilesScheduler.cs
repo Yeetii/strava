@@ -50,12 +50,12 @@ public sealed class RaceTilesRecurringJobRegistrationService(
         var cron = configuration[AppConfig.RaceTilesWeeklyCron] ?? AppConfig.DefaultRaceTilesWeeklyCron;
         recurringJobs.AddOrUpdate<IRaceTilesBuildJob>(
             "race-pmtiles-weekly",
+            AppConfig.RaceTilesQueueName,
             job => job.RunAsync(),
             cron,
             new RecurringJobOptions
             {
                 TimeZone = TimeZoneInfo.Utc,
-                QueueName = AppConfig.RaceTilesQueueName,
             });
         logger.LogInformation(
             "Registered weekly race PMTiles build with cron {Cron} on queue {Queue}.",
