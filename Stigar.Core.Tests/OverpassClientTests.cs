@@ -91,6 +91,53 @@ public class OverpassClientTests
     }
 
     [Fact]
+    public async Task GetHighways_UsesNextGisMirrorWhenOthersReject()
+    {
+        using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
+        {
+            ["overpass.openstreetmap.fr"] = [System.Net.HttpStatusCode.Forbidden],
+            ["overpass-api.de"] = [System.Net.HttpStatusCode.Forbidden],
+            ["overpass.nextgis.com"] = [CreateOverpassJson([CreatePath()])]
+        }));
+        var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);
+
+        var features = (await client.GetHighways(new Coordinate(18.0, 59.0), new Coordinate(18.2, 59.2))).ToList();
+
+        Assert.Single(features);
+    }
+
+    [Fact]
+    public async Task GetHighways_RetriesMirrorAfterRequestTimeout()
+    {
+        var timeout = new TaskCanceledException("HttpClient timeout", new TimeoutException());
+        using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
+        {
+            ["overpass.openstreetmap.fr"] = [timeout, CreateOverpassJson([CreatePath()])],
+            ["overpass-api.de"] = [timeout, CreateOverpassJson([CreatePath()])]
+        }));
+        var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);
+
+        var features = (await client.GetHighways(new Coordinate(18.0, 59.0), new Coordinate(18.2, 59.2))).ToList();
+
+        Assert.Single(features);
+    }
+
+    [Fact]
+    public async Task GetHighways_PropagatesCallerCancellationFromRequest()
+    {
+        using var cts = new CancellationTokenSource();
+        using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
+        {
+            ["overpass.openstreetmap.fr"] = [new OperationCanceledException(cts.Token)],
+            ["overpass-api.de"] = [new OperationCanceledException(cts.Token)]
+        }, onRequest: _ => cts.Cancel()));
+        var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.GetHighways(new Coordinate(18.0, 59.0), new Coordinate(18.2, 59.2), cts.Token));
+    }
+
+    [Fact]
     public void BuildGeometryFromRelation_IgnoresNullNodesInMemberGeometry()
     {
         var members = new[]
@@ -134,6 +181,16 @@ public class OverpassClientTests
         return (Geometry?)method!.Invoke(null, [members]);
     }
 
+    private static RawPath CreatePath() => new()
+    {
+        Id = 123,
+        Geometry =
+        [
+            new PathNode { Lat = 59.0, Lon = 18.0 },
+            new PathNode { Lat = 59.1, Lon = 18.1 }
+        ]
+    };
+
     private static string CreateOverpassJson(IEnumerable<RawPath> elements)
     {
         return JsonSerializer.Serialize(new
@@ -176,6 +233,7 @@ public class OverpassClientTests
                 {
                     Content = new StringContent(string.Empty)
                 },
+                Exception exception => throw exception,
                 _ => throw new InvalidOperationException($"Unsupported response type {next.GetType().FullName}.")
             });
         }

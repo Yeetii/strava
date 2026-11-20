@@ -34,7 +34,8 @@ namespace Stigar.Core.Services
 
         private readonly string[] mirrors = [
             "https://overpass.openstreetmap.fr/api/interpreter",
-            "https://overpass-api.de/api/interpreter"
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.nextgis.com/api/interpreter"
         ];
 
 
@@ -85,7 +86,7 @@ namespace Stigar.Core.Services
                         {
                             throw;
                         }
-                        catch (Exception ex) when (IsTransientConnectionError(ex))
+                        catch (Exception ex) when (IsTransientConnectionError(ex) || IsRequestTimeout(ex))
                         {
                             lastException = ex;
                             _logger.LogWarning(ex, "Overpass mirror {Mirror} transient connection error on attempt {Attempt}. {Retry}.",
@@ -188,7 +189,7 @@ namespace Stigar.Core.Services
                         {
                             throw;
                         }
-                        catch (Exception ex) when (IsTransientConnectionError(ex))
+                        catch (Exception ex) when (IsTransientConnectionError(ex) || IsRequestTimeout(ex))
                         {
                             lastException = ex;
                             _logger.LogWarning(ex, "Overpass mirror {Mirror} transient connection error for {Operation} on attempt {Attempt}. {Retry}.",
@@ -253,6 +254,23 @@ namespace Stigar.Core.Services
                 return true;
             if (ex is System.IO.IOException or System.Net.Sockets.SocketException)
                 return true;
+            return false;
+        }
+
+        private static bool IsRequestTimeout(Exception ex)
+        {
+            // HttpClient signals its own Timeout with a TaskCanceledException whose inner
+            // exception is a TimeoutException. Caller cancellation is handled before this
+            // check, so it is never mistaken for a retryable timeout.
+            if (ex is OperationCanceledException)
+                return ex.InnerException is TimeoutException;
+
+            for (Exception? current = ex; current is not null; current = current.InnerException)
+            {
+                if (current is TimeoutException)
+                    return true;
+            }
+
             return false;
         }
 
