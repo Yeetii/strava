@@ -22,7 +22,7 @@ Acceptance criteria (agreed design, see Log):
 
 ## Tasks
 
-T1 (S1-S5): Replace activity_visited_paths with the grouped activity_visited_tiles model across DDL, migration, repository, worker, API endpoints, admin queries, docs and tests | route: inline | status: complete | commit: 61389e8
+T1 (S1-S5): Replace activity_visited_paths with the grouped activity_visited_tiles model across DDL, migration, repository, worker, API endpoints, admin queries, docs and tests | route: inline | status: complete | commit: 61389e8, d21f179
 
 ## Log
 
