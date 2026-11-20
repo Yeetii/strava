@@ -78,8 +78,8 @@ public class VisitedPathsWorker(
         var visitedPaths = FindVisitedPaths(activityGrid, pathGridIndex).ToList();
         var visitedPathsByOsmId = visitedPaths
             .Select(path => (Path: path, OsmHighwayId: GetOsmHighwayId(path)))
-            .Where(match => !string.IsNullOrWhiteSpace(match.OsmHighwayId))
-            .GroupBy(match => match.OsmHighwayId!, StringComparer.Ordinal)
+            .Where(match => match.OsmHighwayId.HasValue)
+            .GroupBy(match => match.OsmHighwayId!.Value)
             .Select(group => (group.First().Path, OsmHighwayId: group.Key))
             .ToList();
 
@@ -108,8 +108,6 @@ public class VisitedPathsWorker(
                     activity.Id,
                     activity.UserId,
                     pathMatch.OsmHighwayId,
-                    pathFeature.Properties.TryGetValue("name", out var name) ? name?.ToString() : null,
-                    pathFeature.Properties.TryGetValue("highway", out var highway) ? highway?.ToString() : null,
                     featureTileX,
                     featureTileY);
             })
@@ -280,13 +278,21 @@ public class VisitedPathsWorker(
         return paths;
     }
 
-    private static string? GetOsmHighwayId(Feature pathFeature)
+    private static long? GetOsmHighwayId(Feature pathFeature)
     {
         if (!pathFeature.Properties.TryGetValue("osmId", out var osmId))
             return null;
 
-        var value = osmId?.ToString();
-        return string.IsNullOrWhiteSpace(value) ? null : value;
+        var value = osmId?.ToString() as string;
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        // Shard features carry ids as "way/123"; only the numeric part is stored.
+        var text = value!;
+        var separator = text.LastIndexOf('/');
+        var numeric = separator >= 0 ? text[(separator + 1)..] : text;
+        return long.TryParse(numeric, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var id) ? id : null;
     }
 
 }

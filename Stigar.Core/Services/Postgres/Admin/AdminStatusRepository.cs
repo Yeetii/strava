@@ -21,7 +21,7 @@ public sealed class AdminStatusRepository(NpgsqlDataSource dataSource) : IAdminS
         "admin_boundaries",
         "osm_tile_queries",
         "activity_summits",
-        "activity_visited_paths",
+        "activity_visited_tiles",
         "activity_visited_areas",
     ];
 

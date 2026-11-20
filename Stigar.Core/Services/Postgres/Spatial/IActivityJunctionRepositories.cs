@@ -6,26 +6,28 @@ public sealed record SummitLink(string ActivityId, string UserId, string PeakId,
 /// <summary>One row of <c>activity_visited_areas</c>.</summary>
 public sealed record VisitedAreaLink(string ActivityId, string UserId, string AreaId, DateTime CreatedAt);
 
-/// <summary>One row of <c>activity_visited_paths</c>.</summary>
-public sealed record VisitedPathLink(
+/// <summary>One row of <c>activity_visited_tiles</c>.</summary>
+public sealed record VisitedTileLink(
     string ActivityId,
     string UserId,
-    string OsmHighwayId,
-    string? Name,
-    string? Type,
-    int? TileX,
-    int? TileY,
-    DateTime CreatedAt);
+    int TileX,
+    int TileY,
+    long[] HighwayIds);
 
-/// <summary>Input for inserting a visited path; extra columns are optional.</summary>
+/// <summary>One visited path; grouped by tile on write.</summary>
 public sealed record VisitedPathInput(
     string ActivityId,
     string UserId,
-    string OsmHighwayId,
-    string? Name = null,
-    string? Type = null,
-    int? TileX = null,
-    int? TileY = null);
+    long OsmHighwayId,
+    int TileX,
+    int TileY);
+
+/// <summary>Aggregated result returned by the visited-paths endpoint.</summary>
+public sealed record VisitedPathSummary(
+    long OsmHighwayId,
+    int TimesVisited,
+    DateTime? FirstDate,
+    DateTime? LastDate);
 
 /// <summary>Idempotent writes and lookups for <c>activity_summits</c>.</summary>
 public interface IActivitySummitRepository
@@ -53,20 +55,19 @@ public interface IActivityVisitedAreaRepository
     Task<int> CountByUser(string userId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Idempotent writes and lookups for <c>activity_visited_paths</c>.</summary>
+/// <summary>Idempotent writes and lookups for <c>activity_visited_tiles</c>.</summary>
 public interface IActivityVisitedPathRepository
 {
-    /// <summary>Inserts a path reference with only the required columns.</summary>
-    Task Add(string activityId, string userId, string osmHighwayId, CancellationToken cancellationToken = default);
-
-    /// <summary>Inserts a path reference including the optional name/type/tile columns.</summary>
+    Task Add(string activityId, string userId, long osmHighwayId, int tileX, int tileY, CancellationToken cancellationToken = default);
     Task AddPath(VisitedPathInput path, CancellationToken cancellationToken = default);
-
     Task AddRange(IEnumerable<VisitedPathInput> paths, CancellationToken cancellationToken = default);
-    Task Remove(string activityId, string osmHighwayId, CancellationToken cancellationToken = default);
     Task RemoveByActivity(string activityId, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<VisitedPathLink>> GetByUser(string userId, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<VisitedPathLink>> GetByActivity(string activityId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<VisitedTileLink>> GetByUser(string userId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<VisitedTileLink>> GetByActivity(string activityId, CancellationToken cancellationToken = default);
     Task<int> CountByActivity(string activityId, CancellationToken cancellationToken = default);
     Task<int> CountByUser(string userId, CancellationToken cancellationToken = default);
+
+    /// <summary>Aggregates highways across the requested tiles for one user.</summary>
+    Task<IReadOnlyList<VisitedPathSummary>> GetSummaryByUserAndTiles(
+        string userId, IReadOnlyList<(int x, int y)> tiles, CancellationToken cancellationToken = default);
 }

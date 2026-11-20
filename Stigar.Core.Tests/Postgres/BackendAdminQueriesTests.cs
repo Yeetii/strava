@@ -39,12 +39,12 @@ public sealed class BackendAdminQueriesTests(PostgisFixture fixture)
     }
 
     [SkippableFact]
-    public async Task GetActivityIdsWithMissingOsmHighwayId_FirstPageWithNullAfterId_ReturnsIds()
+    public async Task GetActivityIdsWithMissingOsmHighwayId_FirstPageWithNullAfterId_ReturnsIdsWithoutPaths()
     {
         await fixture.ResetAsync();
-        await InsertPathAsync("activity:1", "");
-        await InsertPathAsync("activity:2", "way/2");
-        await InsertPathAsync("activity:3", "");
+        await InsertActivityAsync("activity:1");
+        await InsertPathAsync("activity:2", 2);
+        await InsertActivityAsync("activity:3");
 
         var ids = await new BackendAdminQueries(fixture.DataSource)
             .GetActivityIdsWithMissingOsmHighwayId(afterActivityId: null, limit: 100);
@@ -56,9 +56,9 @@ public sealed class BackendAdminQueriesTests(PostgisFixture fixture)
     public async Task GetActivityIdsWithMissingOsmHighwayId_WithAfterId_ContinuesKeysetPaging()
     {
         await fixture.ResetAsync();
-        await InsertPathAsync("activity:1", "");
-        await InsertPathAsync("activity:2", "");
-        await InsertPathAsync("activity:3", "");
+        await InsertActivityAsync("activity:1");
+        await InsertActivityAsync("activity:2");
+        await InsertActivityAsync("activity:3");
 
         var queries = new BackendAdminQueries(fixture.DataSource);
         var firstPage = await queries.GetActivityIdsWithMissingOsmHighwayId(null, limit: 2);
@@ -79,7 +79,7 @@ public sealed class BackendAdminQueriesTests(PostgisFixture fixture)
             """,
             ("id", id), ("geom", Polygon), ("metrics_version", metricsVersion));
 
-    private async Task InsertPathAsync(string activityId, string osmHighwayId)
+    private async Task InsertActivityAsync(string id)
     {
         await fixture.ExecuteAsync("INSERT INTO users (id) VALUES ('user:1') ON CONFLICT DO NOTHING");
         await fixture.ExecuteAsync(
@@ -88,12 +88,17 @@ public sealed class BackendAdminQueriesTests(PostgisFixture fixture)
             VALUES (@id, 'user:1', 'Run', 'Run', NOW(), NOW())
             ON CONFLICT DO NOTHING
             """,
-            ("id", activityId));
+            ("id", id));
+    }
+
+    private async Task InsertPathAsync(string activityId, long osmHighwayId)
+    {
+        await InsertActivityAsync(activityId);
         await fixture.ExecuteAsync(
             """
-            INSERT INTO activity_visited_paths (activity_id, user_id, osm_highway_id)
-            VALUES (@activity_id, 'user:1', @osm_highway_id)
+            INSERT INTO activity_visited_tiles (activity_id, user_id, tile_x, tile_y, highway_ids)
+            VALUES (@activity_id, 'user:1', 0, 0, ARRAY[@highway_id]::bigint[])
             """,
-            ("activity_id", activityId), ("osm_highway_id", osmHighwayId));
+            ("activity_id", activityId), ("highway_id", osmHighwayId));
     }
 }

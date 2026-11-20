@@ -64,7 +64,7 @@ public sealed class PostgisFixture : IAsyncLifetime
         RequireDocker();
         await ExecuteAsync("""
             TRUNCATE TABLE
-                activity_summits, activity_visited_paths, activity_visited_areas,
+                activity_summits, activity_visited_tiles, activity_visited_areas,
                 sessions, user_sync_items, activities, users,
                 peaks, protected_areas, admin_boundaries, peaks_groups, osm_tile_queries
             RESTART IDENTITY CASCADE
