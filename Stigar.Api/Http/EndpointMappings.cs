@@ -62,6 +62,7 @@ public static class EndpointMappings
         Stigar.Api.Endpoints.Admin.RefreshUserStravaToken.Map(app);
         Stigar.Api.Endpoints.Admin.RemoveUser.Map(app);
         Stigar.Api.Endpoints.Admin.WipeEmptyAdminBoundaryMarkers.Map(app);
+        Stigar.Api.Endpoints.Admin.WipeHangfireQueue.Map(app);
         Stigar.Api.Endpoints.Admin.WipeOsmFeaturesByKind.Map(app);
         Stigar.Api.Endpoints.AdminBoundaries.GetAdminBoundariesByGrid.Map(app);
         Stigar.Api.Endpoints.Aggregates.GetSummitsStats.Map(app);
