@@ -20,6 +20,16 @@ public interface IJobConsoleWriter
 /// job, and inherited by the worker's parallel child tasks.</summary>
 public static class JobConsole
 {
+    /// <summary>
+    /// Hangfire.Console stores lines longer than ~220 characters as hash
+    /// references, and the a2n dashboard resolves references written by the
+    /// original package from the wrong key, showing the 32-hex reference id
+    /// instead of the text. Quotes and backslashes are doubled in JSON, so 100
+    /// characters stays below the 256-byte limit even in the worst case; control
+    /// characters are flattened before the split.
+    /// </summary>
+    public const int MaxLineLength = 100;
+
     private static readonly AsyncLocal<IJobConsoleWriter?> Current = new();
 
     public static IJobConsoleWriter? Writer => Current.Value;
@@ -71,7 +81,20 @@ public sealed class HangfireConsoleLoggerProvider : ILoggerProvider
                 LogLevel.Error or LogLevel.Critical => "[error] ",
                 _ => string.Empty,
             };
-            writer.WriteLine(prefix + message);
+
+            var text = (prefix + message)
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Replace('\t', ' ');
+
+            if (text.Length == 0)
+            {
+                writer.WriteLine(text);
+                return;
+            }
+
+            for (var offset = 0; offset < text.Length; offset += JobConsole.MaxLineLength)
+                writer.WriteLine(text[offset..Math.Min(offset + JobConsole.MaxLineLength, text.Length)]);
         }
     }
 }

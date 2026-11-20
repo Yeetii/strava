@@ -90,5 +90,20 @@ public class HangfireConsoleLoggingTests
         Assert.Contains("boom", line);
     }
 
+    [Fact]
+    public void LoggerProvider_ChunksLongMessagesBelowConsoleInlineLimit()
+    {
+        var writer = new RecordingWriter();
+        var message = new string('x', 600);
 
+        using (JobConsole.Begin(writer))
+        {
+            var logger = new HangfireConsoleLoggerProvider().CreateLogger("Test");
+            logger.LogInformation("{Message}", message);
+        }
+
+        Assert.True(writer.Lines.Count > 1);
+        Assert.All(writer.Lines, line => Assert.True(line.Length <= JobConsole.MaxLineLength));
+        Assert.Equal(message, string.Concat(writer.Lines));
+    }
 }
