@@ -98,7 +98,8 @@ public sealed class BackendAdminQueries(NpgsqlDataSource dataSource) : IBackendA
     {
         await using var command = dataSource.CreateCommand(StaleAdminBoundaryIdsSql);
         command.Parameters.AddValue("version", metricsVersion);
-        command.Parameters.AddValue("after", string.IsNullOrWhiteSpace(afterId) ? null : afterId);
+        command.Parameters.AddValue(
+            "after", string.IsNullOrWhiteSpace(afterId) ? null : afterId, NpgsqlDbType.Text);
         command.Parameters.AddValue("limit", limit);
         return await ReadStringsAsync(command, cancellationToken);
     }
@@ -132,7 +133,8 @@ public sealed class BackendAdminQueries(NpgsqlDataSource dataSource) : IBackendA
         CancellationToken cancellationToken = default)
     {
         await using var command = dataSource.CreateCommand(MissingOsmHighwayIdsSql);
-        command.Parameters.AddValue("after", string.IsNullOrWhiteSpace(afterActivityId) ? null : afterActivityId);
+        command.Parameters.AddValue(
+            "after", string.IsNullOrWhiteSpace(afterActivityId) ? null : afterActivityId, NpgsqlDbType.Text);
         command.Parameters.AddValue("limit", limit);
         return await ReadStringsAsync(command, cancellationToken);
     }
