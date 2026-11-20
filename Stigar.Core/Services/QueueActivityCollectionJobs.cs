@@ -2,9 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Hangfire;
 using Stigar.Core.Jobs;
-using Stigar.Core.Models;
 using Stigar.Core.Services.Postgres;
-using Stigar.Core.Services.Postgres.Admin;
 
 namespace Stigar.Core.Services;
 
@@ -45,32 +43,6 @@ public static class QueueActivityCollectionJobs
         await QueueActivityIdsAsync(activityIds, jobs, queueName, cancellationToken);
     }
 
-    public static async Task QueueActivitiesExcludingTypesAsync(
-        IBackendAdminQueries queries,
-        IActivityRepository activities,
-        IBackgroundJobClient jobs,
-        string queueName,
-        IReadOnlySet<string> excludedSportTypes,
-        ActivitySyncStage stage,
-        string? userId = null,
-        CancellationToken cancellationToken = default)
-    {
-        var projections = await queries.GetActivityProjections(userId, cancellationToken);
-
-        var included = new List<string>();
-        var excluded = new List<BackendActivityProjection>();
-        foreach (var p in projections)
-        {
-            if (string.IsNullOrEmpty(p.SportType) || !excludedSportTypes.Contains(p.SportType))
-                included.Add(p.Id);
-            else
-                excluded.Add(p);
-        }
-
-        await QueueActivityIdsAsync(included, jobs, queueName, cancellationToken);
-        await MarkExcludedActivitiesAsync(activities, excluded, stage, cancellationToken);
-    }
-
     private static void EnqueueForQueue(IBackgroundJobClient jobs, string queueName, ActivityIdJob job)
     {
         switch (queueName)
@@ -102,60 +74,4 @@ public static class QueueActivityCollectionJobs
         return $"queue-all:{normalizedQueueName}:{hash}";
     }
 
-    // A sport-type exclusion is permanent, so mark the stage as done for every future epoch.
-    private const long ExcludedEpoch = long.MaxValue;
-
-    private static async Task MarkExcludedActivitiesAsync(
-        IActivityRepository activities,
-        List<BackendActivityProjection> excluded,
-        ActivitySyncStage stage,
-        CancellationToken cancellationToken)
-    {
-        var now = DateTime.UtcNow;
-        foreach (var p in excluded)
-        {
-            var current = p.ProcessingStatus;
-            if (GetStageEpoch(current, stage) == ExcludedEpoch && current?.SportTypeExcluded == true)
-                continue;
-
-            var next = new ActivityProcessingStatus
-            {
-                SummitedPeaksEpoch = current?.SummitedPeaksEpoch ?? 0,
-                VisitedPathsEpoch = current?.VisitedPathsEpoch ?? 0,
-                VisitedAreasEpoch = current?.VisitedAreasEpoch ?? 0,
-                SummitedPeaksDoneAtUtc = current?.SummitedPeaksDoneAtUtc,
-                VisitedPathsDoneAtUtc = current?.VisitedPathsDoneAtUtc,
-                VisitedAreasDoneAtUtc = current?.VisitedAreasDoneAtUtc,
-                LastUpdatedAtUtc = now,
-                LastProcessingError = current?.LastProcessingError,
-                SportTypeExcluded = true,
-                EnqueuedAtUtc = current?.EnqueuedAtUtc,
-            };
-            switch (stage)
-            {
-                case ActivitySyncStage.SummitedPeaks:
-                    next.SummitedPeaksEpoch = ExcludedEpoch;
-                    next.SummitedPeaksDoneAtUtc = now;
-                    break;
-                case ActivitySyncStage.VisitedPaths:
-                    next.VisitedPathsEpoch = ExcludedEpoch;
-                    next.VisitedPathsDoneAtUtc = now;
-                    break;
-                case ActivitySyncStage.VisitedAreas:
-                    next.VisitedAreasEpoch = ExcludedEpoch;
-                    next.VisitedAreasDoneAtUtc = now;
-                    break;
-            }
-            await activities.UpdateProcessingStatus(p.Id, next, cancellationToken);
-        }
-    }
-
-    private static long GetStageEpoch(ActivityProcessingStatus? status, ActivitySyncStage stage)
-        => stage switch
-        {
-            ActivitySyncStage.SummitedPeaks => status?.SummitedPeaksEpoch ?? 0,
-            ActivitySyncStage.VisitedPaths => status?.VisitedPathsEpoch ?? 0,
-            ActivitySyncStage.VisitedAreas => status?.VisitedAreasEpoch ?? 0,
-            _ => 0,
-        };
 }

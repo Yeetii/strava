@@ -39,6 +39,7 @@ public static class EndpointMappings
         Stigar.Api.Endpoints.PostLogout.Map(app);
         Stigar.Api.Endpoints.Admin.FetchCountries.Map(app);
         Stigar.Api.Endpoints.Admin.GetAdminStatus.Map(app);
+        Stigar.Api.Endpoints.Admin.GetJobEpochs.Map(app);
         Stigar.Api.Endpoints.Admin.GetAssembledRaceById.Map(app);
         Stigar.Api.Endpoints.Admin.GetAssembledRaces.Map(app);
         Stigar.Api.Endpoints.Admin.GetCorruptedAdminBoundaries.Map(app);
@@ -70,9 +71,6 @@ public static class EndpointMappings
         Stigar.Api.Endpoints.Backend.CleanupExcludedActivityTypes.Map(app);
         Stigar.Api.Endpoints.Backend.PostScrapeOrganizer.Map(app);
         Stigar.Api.Endpoints.Backend.QueueAllScrapeJobsHttp.Map(app);
-        Stigar.Api.Endpoints.Backend.QueueAllSummitJobs.Map(app);
-        Stigar.Api.Endpoints.Backend.QueueAllVisitedAreasJobs.Map(app);
-        Stigar.Api.Endpoints.Backend.QueueAllVisitedPathsJobs.Map(app);
         Stigar.Api.Endpoints.Backend.RefreshStravaToken.Map(app);
         Stigar.Api.Endpoints.Backend.RunSummitsForActivity.Map(app);
         Stigar.Api.Endpoints.Backend.StoreCuratedPeaksGroups.Map(app);
