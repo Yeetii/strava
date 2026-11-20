@@ -1,3 +1,4 @@
+using a2n.Hangfire.Dashboard;
 using Stigar.Api;
 using Stigar.Api.Http;
 using Stigar.Api.Utils;
@@ -122,6 +123,7 @@ builder.Services.Configure<FormOptions>(options => options.ValueCountLimit = 100
 // All queues run on Hangfire/Redis. Storage is registered once per host;
 // producers enqueue strongly-typed jobs via IBackgroundJobClient.
 HangfireInfrastructure.AddHangfireStorage(builder.Services, configuration);
+builder.Services.AddHangfireDashboardUI();
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(
         configuration[AppConfig.RedisConnectionString]
@@ -218,12 +220,12 @@ app.Use(async (context, next) =>
 
     await next(context);
 });
-// Authorization = [] disables Hangfire's local-only default; the middleware
-// above is the sole gate for this route and must stay in place.
-app.UseHangfireDashboard(HangfireDashboardGuard.DashboardPath, new DashboardOptions
+// The a2n filter applies the same gate to the dashboard pages, its Blazor
+// circuit and its SignalR hub; the middleware above covers every /hangfire
+// request as well, including static assets. Both must stay in place.
+app.UseHangfireDashboardUI(HangfireDashboardGuard.DashboardPath, new DashboardUIOptions
 {
-    Authorization = [],
-    DisplayStorageConnectionString = false,
+    Authorization = [new HangfireDashboardAuthorizationFilter(configuration)],
     DashboardTitle = "Peakshunters Jobs",
 });
 

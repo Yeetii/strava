@@ -1,6 +1,7 @@
 using System.Text;
 using Stigar.Api.Utils;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 
 namespace Stigar.Workers.Tests;
 
@@ -59,6 +60,45 @@ public class HangfireDashboardGuardTests
 
         Assert.False(HangfireDashboardGuard.IsAuthorized(context, null));
     }
+
+    [Fact]
+    public void DashboardFilter_AcceptsValidBasicAuth()
+    {
+        var filter = CreateFilter("secret-key");
+
+        Assert.True(filter.Authorize(CreateContextWithBasicAuth("admin", "secret-key")));
+    }
+
+    [Fact]
+    public void DashboardFilter_RejectsWrongKey()
+    {
+        var filter = CreateFilter("secret-key");
+
+        Assert.False(filter.Authorize(CreateContextWithBasicAuth("admin", "wrong")));
+    }
+
+    [Fact]
+    public void DashboardFilter_RejectsFunnelRequests()
+    {
+        var filter = CreateFilter("secret-key");
+        var context = CreateContextWithBasicAuth("admin", "secret-key");
+        context.Request.Headers[HangfireDashboardGuard.FunnelHeader] = "?1";
+
+        Assert.False(filter.Authorize(context));
+    }
+
+    [Fact]
+    public void DashboardFilter_FailsClosedWhenAdminKeyIsNotConfigured()
+    {
+        var filter = CreateFilter(null);
+
+        Assert.False(filter.Authorize(CreateContextWithBasicAuth("admin", "secret-key")));
+    }
+
+    private static HangfireDashboardAuthorizationFilter CreateFilter(string? adminKey) =>
+        new(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminApiKey"] = adminKey })
+            .Build());
 
     private static DefaultHttpContext CreateContextWithBasicAuth(string user, string password)
     {

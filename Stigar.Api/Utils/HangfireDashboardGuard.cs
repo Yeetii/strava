@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
+using a2n.Hangfire.Dashboard;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 
 namespace Stigar.Api.Utils;
 
@@ -45,4 +47,17 @@ public static class HangfireDashboardGuard
             Encoding.UTF8.GetBytes(decoded[(separator + 1)..]),
             Encoding.UTF8.GetBytes(adminKey));
     }
+}
+
+/// <summary>
+/// Applies the same gate to a2n's dashboard pages, Blazor circuit and SignalR
+/// hub. Those are not all under <see cref="HangfireDashboardGuard.DashboardPath"/>,
+/// so the request middleware alone cannot protect them.
+/// </summary>
+public sealed class HangfireDashboardAuthorizationFilter(IConfiguration configuration)
+    : IDashboardAuthorizationFilter
+{
+    public bool Authorize(HttpContext context) =>
+        !HangfireDashboardGuard.IsFunnelRequest(context) &&
+        HangfireDashboardGuard.IsAuthorized(context, configuration["AdminApiKey"]);
 }
