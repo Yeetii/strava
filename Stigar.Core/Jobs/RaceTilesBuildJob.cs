@@ -11,6 +11,5 @@ namespace Stigar.Core.Jobs;
 /// </summary>
 public interface IRaceTilesBuildJob
 {
-    [JobConsoleServerFilter]
     Task RunAsync();
 }

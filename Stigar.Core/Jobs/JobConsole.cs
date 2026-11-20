@@ -76,10 +76,9 @@ public sealed class HangfireConsoleLoggerProvider : ILoggerProvider
     }
 }
 
-/// <summary>Opens a Hangfire.Console writer for the duration of a job. Applied
-/// as a method-level filter on every Hangfire job target instead of adding a
-/// PerformContext parameter, which would change the stored job signature and
-/// break jobs already queued in Redis at deploy time.</summary>
+/// <summary>Opens a Hangfire.Console writer for the duration of a job. Registered
+/// as a global server filter by <see cref="HangfireInfrastructure.AddHangfireStorage"/>,
+/// so every job gets console output without changing any stored job signature.</summary>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = true)]
 public sealed class JobConsoleServerFilterAttribute : JobFilterAttribute, IServerFilter
 {
@@ -87,13 +86,22 @@ public sealed class JobConsoleServerFilterAttribute : JobFilterAttribute, IServe
 
     public void OnPerforming(PerformingContext filterContext)
     {
+        // A job can carry this filter both globally and as an attribute on older
+        // queued invocations. Only the outermost scope may set the ambient writer,
+        // otherwise the inner scope is lost and the writer leaks past the job.
+        if (filterContext.Items.ContainsKey(ScopeKey))
+            return;
+
         filterContext.Items[ScopeKey] = JobConsole.Begin(new HangfireJobConsoleWriter(filterContext));
     }
 
     public void OnPerformed(PerformedContext filterContext)
     {
         if (filterContext.Items.TryGetValue(ScopeKey, out var scope) && scope is IDisposable disposable)
+        {
             disposable.Dispose();
+            filterContext.Items.Remove(ScopeKey);
+        }
     }
 
     private sealed class HangfireJobConsoleWriter(PerformContext context) : IJobConsoleWriter

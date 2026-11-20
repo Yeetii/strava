@@ -1,4 +1,5 @@
 using Hangfire;
+using Hangfire.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Hangfire.Console;
 using Hangfire.Redis.StackExchange;
@@ -54,10 +55,28 @@ public static class HangfireInfrastructure
                 });
 
             if (Interlocked.Exchange(ref _consoleInitialized, 1) == 0)
+            {
                 config.UseConsole();
+                AddConsoleServerFilter(GlobalJobFilters.Filters);
+            }
         });
 
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<ILoggerProvider, HangfireConsoleLoggerProvider>());
+    }
+
+    /// <summary>
+    /// Registers the console bridge for every job, not only the few targets that
+    /// used to carry <see cref="JobConsoleServerFilterAttribute"/>. Idempotent,
+    /// because global filters are process-wide and hosts may be built twice.
+    /// </summary>
+    public static void AddConsoleServerFilter(JobFilterCollection filters)
+    {
+        ArgumentNullException.ThrowIfNull(filters);
+
+        if (filters.Any(f => f.Instance is JobConsoleServerFilterAttribute))
+            return;
+
+        filters.Add(new JobConsoleServerFilterAttribute());
     }
 }

@@ -11,7 +11,6 @@ namespace Stigar.Core.Jobs;
 /// </summary>
 public interface IAdminBoundaryMetricsPollingJob
 {
-    [JobConsoleServerFilter]
     Task RunAsync(CancellationToken cancellationToken = default);
 }
 
@@ -21,6 +20,5 @@ public interface IAdminBoundaryMetricsPollingJob
 /// </summary>
 public interface IQueueActivityJobs
 {
-    [JobConsoleServerFilter]
     Task PollAndQueueAsync(CancellationToken cancellationToken = default);
 }

@@ -26,7 +26,6 @@ public interface IRecurringJob
 /// </summary>
 public interface IRecurringJobDispatcher
 {
-    [JobConsoleServerFilter]
     Task RunAsync(string jobId);
 }
 
