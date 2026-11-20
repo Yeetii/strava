@@ -34,41 +34,13 @@ var builder = WebApplication.CreateBuilder(args);
 // coordinates are omitted, so a Configure<JsonSerializerOptions> call is not enough.
 builder.Services.ConfigureHttpJsonOptions(options => GeoJsonJsonOptions.Configure(options.SerializerOptions));
 
-var socketsHttpHandler = new SocketsHttpHandler();
-builder.Services.AddSingleton(socketsHttpHandler);
-builder.Services.AddHttpClient();
-
 var configuration = builder.Configuration;
 
-// PostgreSQL + PostGIS data source and repositories. The connection string is
-// supplied by the deploy environment; the localhost default keeps local and
-// test hosts startable before Postgres is configured.
-string apiPostgresConnectionString = configuration.GetValue<string>(DatabaseConfig.PostgresConnectionStringKey)
-    ?? "Host=localhost;Port=5432;Database=strava;Username=strava;Password=strava;GSS Encryption Mode=Disable";
-builder.Services.AddSingleton(NpgsqlDataSource.Create(apiPostgresConnectionString));
-builder.Services.AddPostgresCoreRepositories();
-builder.Services.AddPostgresSpatialRepositories();
-builder.Services.AddPostgresOsmIngestion();
-builder.Services.AddPostgresAdminQueries();
-builder.Services.AddBackendAdminQueries();
+// Shared DI graph: Postgres/repositories, shard services, HTTP clients,
+// authentication and calculators. See StigarSharedServiceCollectionExtensions.
+builder.Services.AddStigarSharedServices(configuration);
 
-builder.Services.AddOrganizerStore(configuration);
-builder.Services.AddShardStore(configuration);
-builder.Services.AddSingleton(serviceProvider =>
-{
-    var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
-    var shardLogger = serviceProvider.GetRequiredService<ILogger<ShardFeatureClient>>();
-    var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-    return new ShardFeatureClient(shardRepository, shardLogger, shardZoom);
-});
-builder.Services.AddSingleton(serviceProvider =>
-{
-    var indexStore = serviceProvider.GetRequiredService<IShardIndexStore>();
-    var shardRepository = serviceProvider.GetRequiredService<IShardRepository>();
-    var indexLogger = serviceProvider.GetRequiredService<ILogger<HighwayZoomIndexService>>();
-    var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
-    return new HighwayZoomIndexService(indexStore, shardRepository, indexLogger, shardZoom);
-});
+// API-host-only registrations.
 builder.Services.AddSingleton(serviceProvider =>
 {
     var featureClient = serviceProvider.GetRequiredService<ShardFeatureClient>();
@@ -76,16 +48,6 @@ builder.Services.AddSingleton(serviceProvider =>
     var tileLogger = serviceProvider.GetRequiredService<ILogger<BlobTileService>>();
     var shardZoom = configuration.GetValue<int?>(AppConfig.BlobShardZoom) ?? 12;
     return new BlobTileService(featureClient, zoomIndexService, tileLogger, shardZoom);
-});
-
-builder.Services.AddScoped(serviceProvider =>
-{
-    var httpClient = serviceProvider.GetRequiredService<HttpClient>();
-    return new AuthenticationApi(httpClient, configuration);
-});
-builder.Services.AddHttpClient("stravaClient", client =>
-{
-    client.BaseAddress = new Uri("https://www.strava.com/api/v3/");
 });
 builder.Services.AddHttpClient("garminProxyClient", client =>
 {
@@ -108,12 +70,6 @@ builder.Services.AddSingleton(serviceProvider =>
     var garminProxyClient = httpClientFactory.CreateClient("garminProxyClient");
     return new GarminCoursesApi(garminProxyClient);
 });
-builder.Services.AddScoped<StravaTokenService>();
-builder.Services.AddHttpClient<OverpassClient>(client =>
-{
-    client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(https://peakshunters.erikmagnusson.com)"));
-    client.Timeout = TimeSpan.FromMinutes(10);
-});
 // Hangfire's dashboard reads every submitted form value in one shot when a
 // batch command (e.g. retry/delete many jobs) is dispatched. ASP.NET Core's
 // default ValueCountLimit of 1024 turns that into an unhandled 500.
@@ -129,22 +85,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
         ?? "redis:6379,abortConnect=false"));
 builder.Services.AddSingleton(serviceProvider =>
     serviceProvider.GetRequiredService<IConnectionMultiplexer>().GetDatabase());
-builder.Services.AddScoped(serviceProvider =>
-    new UserAuthenticationService(
-        serviceProvider.GetRequiredService<IUserRepository>(),
-        serviceProvider.GetRequiredService<ISessionRepository>()));
 builder.Services.AddScoped<UserSyncService>();
-builder.Services.AddScoped<UserSyncStatusService>();
-
-// Services needed only by the Backend HTTP functions now hosted here. Their
-// other dependencies are already registered above.
-builder.Services.AddSingleton<AdminBoundaryMetricsEnricher>();
-builder.Services.AddSingleton<ISummitsCalculator, SummitsCalculatorWithBoundingBoxFilter>();
-builder.Services.AddSingleton<RaceDiscoveryService>();
-builder.Services.AddSingleton(serviceProvider => new RaceScrapePipeline(
-    serviceProvider.GetRequiredService<IHttpClientFactory>(),
-    serviceProvider.GetRequiredService<IOrganizerStore>(),
-    serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("RaceScrapePipeline")));
 
 var defaultOrigins = new[]
 {

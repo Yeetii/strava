@@ -1,5 +1,5 @@
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using BAMCIS.GeoJSON;
 using Microsoft.Extensions.Logging;
 using Stigar.Core.Geo;
@@ -18,6 +18,10 @@ namespace Stigar.Core.Services
         private static readonly TimeSpan TransientErrorRetryDelay = TimeSpan.FromSeconds(2);
         private const int RequiredEmptyConfirmations = 2;
         private const int DefaultMaxConcurrentRequests = 3;
+        private static readonly JsonSerializerOptions OverpassJsonOptions = new()
+        {
+            PropertyNameCaseInsensitive = true,
+        };
         private static readonly TimeSpan BaseThrottleDelay = TimeSpan.FromMilliseconds(750);
         private static readonly int MaxConcurrentRequests = GetMaxConcurrentRequests();
         private static readonly SemaphoreSlim RequestSemaphore = new(MaxConcurrentRequests, MaxConcurrentRequests);
@@ -362,10 +366,10 @@ namespace Stigar.Core.Services
             {
                 // Convert tags to simple dictionary, filtering out nulls
                 var properties = p.Tags
-                    .Where(kvp => kvp.Value.Type == JTokenType.String)
+                    .Where(kvp => kvp.Value.ValueKind == JsonValueKind.String)
                     .ToDictionary(
                         kvp => kvp.Key,
-                        kvp => (dynamic)kvp.Value.ToString()
+                        kvp => (dynamic)(kvp.Value.GetString() ?? string.Empty)
                     );
 
                 var geometry = new Point(new Position(p.Lon, p.Lat));
@@ -414,10 +418,10 @@ namespace Stigar.Core.Services
             {
                 if (p.Geometry == null || p.Geometry.Count == 0) continue;
                 var properties = p.Tags
-                    .Where(kvp => kvp.Value.Type == JTokenType.String)
+                    .Where(kvp => kvp.Value.ValueKind == JsonValueKind.String)
                     .ToDictionary(
                         kvp => kvp.Key,
-                        kvp => (dynamic)kvp.Value.ToString()
+                        kvp => (dynamic)(kvp.Value.GetString() ?? string.Empty)
                     );
                 var coordinates = p.Geometry
                     .Where(node => node != null)
@@ -469,10 +473,10 @@ namespace Stigar.Core.Services
                 }
 
                 var properties = area.Tags
-                    .Where(kvp => kvp.Value.Type == JTokenType.String)
+                    .Where(kvp => kvp.Value.ValueKind == JsonValueKind.String)
                     .ToDictionary(
                         kvp => kvp.Key,
-                        kvp => (dynamic)kvp.Value.ToString()
+                        kvp => (dynamic)(kvp.Value.GetString() ?? string.Empty)
                     );
                 properties["areaType"] = GetProtectedAreaType(properties);
                 properties["osmType"] = area.Type;
@@ -640,8 +644,8 @@ namespace Stigar.Core.Services
                 e.Type,
                 e.Id,
                 e.Tags
-                    .Where(kvp => kvp.Value.Type == JTokenType.String)
-                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToString())
+                    .Where(kvp => kvp.Value.ValueKind == JsonValueKind.String)
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.GetString() ?? string.Empty)
             ));
         }
 
@@ -667,7 +671,7 @@ namespace Stigar.Core.Services
                 throw new Exception($"Overpass API did not return valid JSON for {operation}. Response may be HTML or an error page.");
             }
 
-            var root = JsonConvert.DeserializeObject<T>(rawResponse) ?? throw new Exception($"Could not deserialize {operation}");
+            var root = JsonSerializer.Deserialize<T>(rawResponse, OverpassJsonOptions) ?? throw new Exception($"Could not deserialize {operation}");
             if (!string.IsNullOrWhiteSpace(root.Remark))
             {
                 _logger.LogWarning("Overpass returned a remark for {Operation}: {Remark}", operation, root.Remark);
@@ -690,10 +694,10 @@ namespace Stigar.Core.Services
                 if (geometry == null) continue;
 
                 var properties = area.Tags
-                    .Where(kvp => kvp.Value.Type == JTokenType.String)
+                    .Where(kvp => kvp.Value.ValueKind == JsonValueKind.String)
                     .ToDictionary(
                         kvp => kvp.Key,
-                        kvp => (dynamic)kvp.Value.ToString()
+                        kvp => (dynamic)(kvp.Value.GetString() ?? string.Empty)
                     );
                 properties["osmType"] = area.Type;
 
@@ -728,83 +732,83 @@ namespace Stigar.Core.Services
 
     public abstract class OverpassResponseRoot
     {
-        [JsonProperty("remark")]
+        [JsonPropertyName("remark")]
         public string? Remark { get; set; }
     }
 
     public class RootPeaks : OverpassResponseRoot
     {
-        [JsonProperty("elements")]
+        [JsonPropertyName("elements")]
         public required List<RawPeaks> Elements { get; set; }
     }
     public class RawPeaks
     {
-        [JsonProperty("id")]
+        [JsonPropertyName("id")]
         public long Id { get; set; }
 
-        [JsonProperty("lat")]
+        [JsonPropertyName("lat")]
         public double Lat { get; set; }
 
-        [JsonProperty("lon")]
+        [JsonPropertyName("lon")]
         public double Lon { get; set; }
 
-        [JsonProperty("tags")]
-        public Dictionary<string, JToken> Tags { get; set; } = new();
+        [JsonPropertyName("tags")]
+        public Dictionary<string, JsonElement> Tags { get; set; } = new();
     }
     public class RootPaths : OverpassResponseRoot
     {
-        [JsonProperty("elements")]
+        [JsonPropertyName("elements")]
         public required List<RawPath> Elements { get; set; }
     }
     public class RawPath
     {
-        [JsonProperty("id")]
+        [JsonPropertyName("id")]
         public long Id { get; set; }
 
-        [JsonProperty("geometry")]
+        [JsonPropertyName("geometry")]
         public List<PathNode>? Geometry { get; set; }
 
-        [JsonProperty("tags")]
-        public Dictionary<string, JToken> Tags { get; set; } = new();
+        [JsonPropertyName("tags")]
+        public Dictionary<string, JsonElement> Tags { get; set; } = new();
     }
     public class PathNode
     {
-        [JsonProperty("lat")]
+        [JsonPropertyName("lat")]
         public double Lat { get; set; }
-        [JsonProperty("lon")]
+        [JsonPropertyName("lon")]
         public double Lon { get; set; }
     }
 
     public class RootProtectedAreas : OverpassResponseRoot
     {
-        [JsonProperty("elements")]
+        [JsonPropertyName("elements")]
         public required List<RawProtectedArea> Elements { get; set; }
     }
 
     public class RawProtectedArea
     {
-        [JsonProperty("id")]
+        [JsonPropertyName("id")]
         public long Id { get; set; }
 
-        [JsonProperty("type")]
+        [JsonPropertyName("type")]
         public string Type { get; set; } = string.Empty;
 
-        [JsonProperty("geometry")]
+        [JsonPropertyName("geometry")]
         public List<PathNode>? Geometry { get; set; }
 
-        [JsonProperty("members")]
+        [JsonPropertyName("members")]
         public List<RawProtectedAreaMember>? Members { get; set; }
 
-        [JsonProperty("tags")]
-        public Dictionary<string, JToken> Tags { get; set; } = new();
+        [JsonPropertyName("tags")]
+        public Dictionary<string, JsonElement> Tags { get; set; } = new();
     }
 
     public class RawProtectedAreaMember
     {
-        [JsonProperty("role")]
+        [JsonPropertyName("role")]
         public string Role { get; set; } = string.Empty;
 
-        [JsonProperty("geometry")]
+        [JsonPropertyName("geometry")]
         public List<PathNode>? Geometry { get; set; }
     }
 }

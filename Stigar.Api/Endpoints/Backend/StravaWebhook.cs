@@ -8,8 +8,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 using Stigar.Core.Jobs;
 
 namespace Stigar.Api.Endpoints.Backend;
@@ -55,7 +54,7 @@ public class StravaWebhook(
                 return TypedResults.BadRequest();
             }
 
-            var data = JsonConvert.DeserializeObject<JObject>(requestBody);
+            var data = string.IsNullOrWhiteSpace(requestBody) ? null : JsonNode.Parse(requestBody);
             var outputs = new WebhookJobs();
             if (!TryApplyWebhookEvent(data, outputs))
                 _logger.LogError("Unhandled webhook type");
@@ -83,7 +82,7 @@ public class StravaWebhook(
         return TypedResults.BadRequest();
     }
 
-    internal static bool TryApplyWebhookEvent(JObject? data, WebhookJobs outputs)
+    internal static bool TryApplyWebhookEvent(JsonNode? data, WebhookJobs outputs)
     {
         var objectType = data?["object_type"]?.ToString();
         var aspectType = data?["aspect_type"]?.ToString();
