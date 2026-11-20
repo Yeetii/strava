@@ -33,7 +33,8 @@ public record AdminStatus(
     int NewActivitiesLast24Hours,
     int ProcessedNewActivitiesLast24Hours,
     int TotalRaceOrganizers,
-    int TotalRaces);
+    int TotalRaces,
+    IReadOnlyList<AdminHistoryPoint> History);
 
 internal sealed record ActivityWindowCountsProjection(
     int NewActivitiesLast24Hours,
@@ -41,6 +42,7 @@ internal sealed record ActivityWindowCountsProjection(
 
 public class GetAdminStatus(
     IAdminStatusRepository statusRepository,
+    IAdminStatusHistoryRepository historyRepository,
     IOrganizerStore organizerStore,
     IConfiguration configuration,
     ILogger<GetAdminStatus> logger)
@@ -66,6 +68,7 @@ public class GetAdminStatus(
         var activeConnections = await activeConnectionsTask;
         var activityWindowCounts = await activityWindowCountsTask;
         var raceCounts = await raceCountsTask;
+        var history = await GetHistoryAsync(context.RequestAborted);
 
         var status = new AdminStatus(
             queues,
@@ -77,9 +80,24 @@ public class GetAdminStatus(
             activityWindowCounts.NewActivitiesLast24Hours,
             activityWindowCounts.ProcessedNewActivitiesLast24Hours,
             raceCounts.OrganizerCount,
-            raceCounts.AssembledRaceCount);
+            raceCounts.AssembledRaceCount,
+            history);
 
         return TypedResults.Ok(status);
+    }
+
+    private async Task<IReadOnlyList<AdminHistoryPoint>> GetHistoryAsync(
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await historyRepository.GetRecentAsync(TimeSpan.FromHours(24), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to read admin status history");
+            return [];
+        }
     }
 
     private (IReadOnlyList<QueueStatus> Queues, long ScheduledCount, long FailedCount) FetchQueueStatus()

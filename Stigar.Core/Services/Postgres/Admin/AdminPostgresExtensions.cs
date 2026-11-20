@@ -13,6 +13,7 @@ public static class AdminPostgresServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<IAdminStatusRepository, AdminStatusRepository>();
+        services.AddSingleton<IAdminStatusHistoryRepository, AdminStatusHistoryRepository>();
         services.AddSingleton<IOsmFeatureAdminQueries, OsmFeatureAdminQueries>();
         return services;
     }

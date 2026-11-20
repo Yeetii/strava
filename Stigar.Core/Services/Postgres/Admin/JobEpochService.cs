@@ -41,4 +41,43 @@ public sealed class JobEpochService(NpgsqlDataSource dataSource) : IJobEpochServ
             result.Add((reader.GetString(0), reader.GetInt64(1)));
         return result;
     }
+
+    public async Task<IReadOnlyDictionary<string, long>> GetPendingCountsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var summits = await GetAsync(JobEpochType.ActivitySummits, cancellationToken);
+        var paths = await GetAsync(JobEpochType.ActivityVisitedPaths, cancellationToken);
+        var areas = await GetAsync(JobEpochType.ActivityVisitedAreas, cancellationToken);
+        var boundaries = await GetAsync(JobEpochType.AdminBoundaryMetrics, cancellationToken);
+
+        await using var command = dataSource.CreateCommand("""
+            SELECT
+                COUNT(*) FILTER (WHERE COALESCE((processing_status->>'summitedPeaksEpoch')::bigint, 0) < @summits),
+                COUNT(*) FILTER (WHERE COALESCE((processing_status->>'visitedPathsEpoch')::bigint, 0) < @paths),
+                COUNT(*) FILTER (WHERE COALESCE((processing_status->>'visitedAreasEpoch')::bigint, 0) < @areas)
+            FROM activities
+            """);
+        command.Parameters.AddWithValue("summits", summits);
+        command.Parameters.AddWithValue("paths", paths);
+        command.Parameters.AddWithValue("areas", areas);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+
+        var counts = new Dictionary<string, long>
+        {
+            [JobEpochKeys.ActivitySummits] = reader.GetInt64(0),
+            [JobEpochKeys.ActivityVisitedPaths] = reader.GetInt64(1),
+            [JobEpochKeys.ActivityVisitedAreas] = reader.GetInt64(2),
+        };
+
+        await using var boundaryCommand = dataSource.CreateCommand("""
+            SELECT COUNT(*) FROM admin_boundaries
+            WHERE metrics_generation < @epoch AND name <> ''
+            """);
+        boundaryCommand.Parameters.AddWithValue("epoch", boundaries);
+        counts[JobEpochKeys.AdminBoundaryMetrics] =
+            await boundaryCommand.ExecuteScalarAsync(cancellationToken) is long value ? value : 0L;
+
+        return counts;
+    }
 }

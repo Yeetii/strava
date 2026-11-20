@@ -9,7 +9,7 @@ using Stigar.Core.Jobs;
 
 namespace Stigar.Api.Endpoints.Admin;
 
-public record JobEpochStatus(string JobType, long Epoch);
+public record JobEpochStatus(string JobType, long Epoch, long Pending);
 
 /// <summary>Exposes the current epoch of every rediscoverable job type to the admin UI.</summary>
 public class GetJobEpochs(IJobEpochService epochs, IConfiguration configuration)
@@ -24,8 +24,12 @@ public class GetJobEpochs(IJobEpochService epochs, IConfiguration configuration)
             return TypedResults.Unauthorized();
 
         var values = await epochs.GetAllAsync(context.RequestAborted);
+        var pending = await epochs.GetPendingCountsAsync(context.RequestAborted);
         return TypedResults.Ok(values
-            .Select(value => new JobEpochStatus(value.JobType, value.Epoch))
+            .Select(value => new JobEpochStatus(
+                value.JobType,
+                value.Epoch,
+                pending.TryGetValue(value.JobType, out var count) ? count : 0L))
             .ToArray());
     }
 }

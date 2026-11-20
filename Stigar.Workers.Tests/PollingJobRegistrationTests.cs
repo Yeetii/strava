@@ -7,7 +7,7 @@ using Stigar.Core.Jobs;
 namespace Stigar.Workers.Tests;
 
 /// <summary>
-/// Pins the Hangfire-facing contract of the two Backend polling jobs. Their
+/// Pins the Hangfire-facing contract of the Backend polling and snapshot jobs. Their
 /// targets must be resolvable by every host sharing the Hangfire store (the API
 /// dashboard and the pmtiles scheduler do not load Stigar.Workers.dll). Only the
 /// schedule worker consumes the backend-polling queue, so it activates them.
@@ -34,7 +34,7 @@ public class PollingJobRegistrationTests
 
         await registration.StartAsync(CancellationToken.None);
 
-        Assert.Equal(2, registrations.Count);
+        Assert.Equal(3, registrations.Count);
 
         foreach (var (_, job, _, _) in registrations)
         {
@@ -52,5 +52,11 @@ public class PollingJobRegistrationTests
             r.Job.Type == typeof(IQueueActivityJobs) &&
             r.Id == PollingJobRegistrationHostedService.ActivityPollingRecurringJobId &&
             r.Job.Method.Name == nameof(IQueueActivityJobs.PollAndQueueAsync));
+
+        Assert.Contains(registrations, r =>
+            r.Job.Type == typeof(IAdminStatusSnapshotJob) &&
+            r.Id == AdminStatusSnapshotJob.RecurringJobId &&
+            r.Cron == AdminStatusSnapshotJob.CronExpression &&
+            r.Job.Method.Name == nameof(IAdminStatusSnapshotJob.RunAsync));
     }
 }

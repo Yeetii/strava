@@ -35,8 +35,15 @@ public sealed class PollingJobRegistrationHostedService(
             () => ActivityPollingCron,
             PollingOptions());
 
+        recurringJobs.AddOrUpdate<IAdminStatusSnapshotJob>(
+            AdminStatusSnapshotJob.RecurringJobId,
+            AppConfig.BackendPollingQueueName,
+            job => job.RunAsync(CancellationToken.None),
+            () => AdminStatusSnapshotJob.CronExpression,
+            PollingOptions());
+
         logger.LogInformation(
-            "Registered admin-boundary and activity polling jobs on Hangfire queue {Queue}",
+            "Registered admin-boundary, activity polling and status snapshot jobs on Hangfire queue {Queue}",
             AppConfig.BackendPollingQueueName);
         return Task.CompletedTask;
     }

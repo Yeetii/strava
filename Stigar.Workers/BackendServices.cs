@@ -61,6 +61,7 @@ public static class BackendServices
         services.AddSingleton<QueueActivityJobs>();
         services.AddSingleton<IQueueActivityJobs>(sp =>
             sp.GetRequiredService<QueueActivityJobs>());
+        services.AddSingleton<IAdminStatusSnapshotJob, AdminStatusSnapshotJob>();
 
         // Hangfire storage is registered by each host entry point, not here.
     }

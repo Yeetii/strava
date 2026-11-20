@@ -56,4 +56,7 @@ public interface IJobEpochService
     Task<long> GetAsync(JobEpochType type, CancellationToken cancellationToken = default);
     Task<long> BumpAsync(JobEpochType type, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<(string JobType, long Epoch)>> GetAllAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Rows still behind the current epoch, keyed by stable job type.</summary>
+    Task<IReadOnlyDictionary<string, long>> GetPendingCountsAsync(CancellationToken cancellationToken = default);
 }
