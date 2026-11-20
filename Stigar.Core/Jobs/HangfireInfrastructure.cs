@@ -63,6 +63,22 @@ public static class HangfireInfrastructure
 
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<ILoggerProvider, HangfireConsoleLoggerProvider>());
+        AddConsoleLoggingFilter(services);
+    }
+
+    /// <summary>
+    /// Forces Information+ through the console provider even when the host's
+    /// default minimum level is higher, so job console output keeps the same
+    /// detail regardless of how noisy the process-wide console is.
+    /// </summary>
+    public static void AddConsoleLoggingFilter(IServiceCollection services)
+    {
+        services.Configure<LoggerFilterOptions>(options =>
+            options.Rules.Insert(0, new LoggerFilterRule(
+                typeof(HangfireConsoleLoggerProvider).FullName,
+                categoryName: null,
+                LogLevel.Information,
+                filter: null)));
     }
 
     /// <summary>
