@@ -170,18 +170,6 @@ public sealed class BackendAdminQueriesTests(PostgisFixture fixture)
             """,
             ("id", id), ("geom", Polygon), ("generation", generation));
 
-    private async Task InsertActivityAsync(string id)
-    {
-        await fixture.ExecuteAsync("INSERT INTO users (id) VALUES ('user:1') ON CONFLICT DO NOTHING");
-        await fixture.ExecuteAsync(
-            """
-            INSERT INTO activities (id, user_id, name, sport_type, start_date, start_date_local)
-            VALUES (@id, 'user:1', 'Run', 'Run', NOW(), NOW())
-            ON CONFLICT DO NOTHING
-            """,
-            ("id", id));
-    }
-
     private async Task InsertPathAsync(string activityId, string osmHighwayId)
     {
         await InsertActivityAsync(activityId);
