@@ -537,9 +537,10 @@ public class PmtilesUtilityServiceTests
 
         recurringJobs.Verify(jobs => jobs.AddOrUpdate(
             "race-pmtiles-weekly",
-            It.Is<Job>(job => job.Type == typeof(Stigar.Core.Jobs.IRaceTilesBuildJob)),
+            It.Is<Job>(job => job.Type == typeof(Stigar.Core.Jobs.IRaceTilesBuildJob)
+                           && job.Queue == AppConfig.RaceTilesQueueName),
             "0 3 * * 2",
             It.Is<RecurringJobOptions>(options =>
-                options.QueueName == AppConfig.RaceTilesQueueName)), Times.Once);
+                options.TimeZone == TimeZoneInfo.Utc)), Times.Once);
     }
 }

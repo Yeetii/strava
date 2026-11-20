@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
+using Stigar.Api.Http;
 using Stigar.Core.Services;
 
 namespace Stigar.Api.Endpoints.Backend;
@@ -11,7 +13,8 @@ namespace Stigar.Api.Endpoints.Backend;
 public class QueueAllScrapeJobsHttp(
     IOrganizerStore raceOrganizerClient,
     RaceDiscoveryService discoveryService,
-    ILogger<QueueAllScrapeJobsHttp> logger)
+    ILogger<QueueAllScrapeJobsHttp> logger,
+    IConfiguration configuration)
 {
     public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
         app.MapPost("/api/manage/queue-all-scrape-jobs",
@@ -19,6 +22,9 @@ public class QueueAllScrapeJobsHttp(
 
     public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
         var allIds = await raceOrganizerClient.GetIdsDueForAutomaticScrapeAsync(DateTime.MaxValue, cancellationToken);
         logger.LogInformation("Manual HTTP trigger: queuing {Count} urgent scrape jobs for all organizers", allIds.Count);
         await discoveryService.EnqueueScrapeMessagesAsync(allIds.ToHashSet(StringComparer.OrdinalIgnoreCase), cancellationToken, isUrgent: true);

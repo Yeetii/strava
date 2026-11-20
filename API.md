@@ -2,8 +2,6 @@
 
 Base URL: `https://peakshunters.erikmagnusson.com/api`
 
-Repository note: Cosmos container partition keys are not uniform across this codebase. For write-path and patch/delete conventions, see [COSMOS_CONTAINERS.md](/Users/erik/Code/Erik/strava/COSMOS_CONTAINERS.md).
-
 ## OpenAPI Source of Truth
 
 Canonical OpenAPI is stored at `API/openapi/openapi.source.json`.
@@ -98,8 +96,6 @@ Accepts local sync changes and returns the merged authoritative snapshot.
 
 **Response** `200 OK` `application/json`
 Same shape as `GET /userSync`.
-
-For architecture, implementation notes, and local-dev gotchas, see `USER_SYNC.md` in the repo root.
 
 ---
 
@@ -638,7 +634,7 @@ Delete a Strava route by ID.
 
 🔒 Admin only
 
-Queue assemble jobs for all stored race organizers. Each organizer key is enqueued on the `assembleRace` Service Bus queue so the backend can produce final race documents.
+Queue assemble jobs for all stored race organizers. Each organizer key is enqueued on the `assembleRace` Hangfire queue so the backend can produce final race documents.
 
 **Response** `200 OK` `application/json`
 ```ts

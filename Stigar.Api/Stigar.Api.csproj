@@ -8,6 +8,8 @@
   <ItemGroup>
     <PackageReference Include="a2n.Hangfire.Dashboard" Version="2.6.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <!-- Pin the transitive OpenAPI document model above the GHSA-v5pm-xwqc-g5wc advisory range. -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.3" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
     <PackageReference Include="Polly" Version="8.7.0" />

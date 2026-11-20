@@ -10,18 +10,23 @@ using Microsoft.Extensions.Logging;
 using Stigar.Core.Logging;
 using Stigar.Core.Models;
 using Stigar.Core.Services.Postgres.Admin;
+using Microsoft.Extensions.Configuration;
 
 namespace Stigar.Api.Endpoints.Backend;
 
 public class CleanupExcludedActivityTypes(
     IBackendAdminQueries queries,
-    ILogger<CleanupExcludedActivityTypes> logger)
+    ILogger<CleanupExcludedActivityTypes> logger,
+    IConfiguration configuration)
 {
     public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
         app.MapPost("/api/manage/cleanup-excluded-activity-types", (HttpContext context, [FromServices] CleanupExcludedActivityTypes endpoint) => endpoint.Handle(context, context.RequestAborted));
 
     public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
         string? userId = context.Request.Query["userId"].ToString(); // optional — omit to process all users
         var featureParam = context.Request.Query["feature"].ToString() ?? "all";
         var dryRun = string.Equals(context.Request.Query["dryRun"], "true", StringComparison.OrdinalIgnoreCase);

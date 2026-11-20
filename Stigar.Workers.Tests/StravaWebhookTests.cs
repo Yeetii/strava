@@ -1,6 +1,6 @@
 using Stigar.Core.Jobs;
 using Stigar.Api.Endpoints.Backend;
-using Newtonsoft.Json.Linq;
+using System.Text.Json.Nodes;
 
 namespace Stigar.Workers.Tests;
 
@@ -12,7 +12,7 @@ public class StravaWebhookTests
     public void TryApplyWebhookEvent_ActivityCreateOrUpdate_QueuesFetch(string aspectType)
     {
         var outputs = CreateOutputs();
-        var handled = StravaWebhook.TryApplyWebhookEvent(JObject.Parse($$"""
+        var handled = StravaWebhook.TryApplyWebhookEvent(JsonNode.Parse($$"""
         {
           "aspect_type": "{{aspectType}}",
           "object_id": 123,
@@ -32,7 +32,7 @@ public class StravaWebhookTests
     public void TryApplyWebhookEvent_ActivityDelete_QueuesDelete()
     {
         var outputs = CreateOutputs();
-        var handled = StravaWebhook.TryApplyWebhookEvent(JObject.Parse("""
+        var handled = StravaWebhook.TryApplyWebhookEvent(JsonNode.Parse("""
         {
           "aspect_type": "delete",
           "object_id": 123,
@@ -52,7 +52,7 @@ public class StravaWebhookTests
     public void TryApplyWebhookEvent_AthleteDeauthorization_QueuesAccountDelete()
     {
         var outputs = CreateOutputs();
-        var handled = StravaWebhook.TryApplyWebhookEvent(JObject.Parse("""
+        var handled = StravaWebhook.TryApplyWebhookEvent(JsonNode.Parse("""
         {
           "aspect_type": "update",
           "object_id": 456,

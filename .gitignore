@@ -271,3 +271,10 @@ __*
 
 .DS_Store
 .atl/
+
+# Generated geodata tiles and temporary dumps (not source)
+*.pmtiles
+*.pmtiles-journal
+urllib.*
+tmp-*.txt
+skyrunning-html-snippets.txt

@@ -224,7 +224,7 @@ public class PutGarminCourse(
         if (gpxBytes.Length == 0)
             return GetGarminCourses.CreateBadRequest(context, "Request body must contain GPX data");
 
-        var fileName = context.Request.Query["filename"];
+        var fileName = context.Request.Query["filename"].ToString();
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 
@@ -290,7 +290,7 @@ public class PostGarminCourse(
         if (gpxBytes.Length == 0)
             return GetGarminCourses.CreateBadRequest(context, "Request body must contain GPX data");
 
-        var fileName = context.Request.Query["filename"];
+        var fileName = context.Request.Query["filename"].ToString();
         if (string.IsNullOrWhiteSpace(fileName))
             fileName = "course.gpx";
 

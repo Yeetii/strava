@@ -9,18 +9,24 @@ using System.Net;
 using System.Text.Json;
 using Stigar.Core.Services.Scrapers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
+using Stigar.Api.Http;
 
 namespace Stigar.Api.Endpoints.Backend;
 
 public class TestScrapeUrl(
     IHttpClientFactory httpClientFactory,
-    ILogger<TestScrapeUrl> logger)
+    ILogger<TestScrapeUrl> logger,
+    IConfiguration configuration)
 {
     public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
         app.MapGet("/api/scrape/test", (HttpContext context, [FromServices] TestScrapeUrl endpoint) => endpoint.Handle(context, context.RequestAborted));
 
     public async Task<IResult> Handle(HttpContext context, CancellationToken cancellationToken)
     {
+        if (!context.IsAdminAuthorized(configuration))
+            return TypedResults.Unauthorized();
+
         var url = context.Request.Query["url"].ToString();
         if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {

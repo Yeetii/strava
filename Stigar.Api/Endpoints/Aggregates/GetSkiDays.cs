@@ -51,7 +51,7 @@ namespace Stigar.Api
                 .Select(activity => activity.StartDate.Date).Distinct();
 
             var backcountrySkiElevationGain = activities.Where(activity => activity.SportType == SportTypes.BACKCOUNTRY_SKIING)
-                .Sum(activity => (double)activity.TotalElevationGain);
+                .Sum(activity => (double)(activity.TotalElevationGain ?? 0));
 
             return new SkiDays
             {

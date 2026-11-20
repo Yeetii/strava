@@ -637,8 +637,11 @@ public static partial class RaceAssembler
             if (string.IsNullOrWhiteSpace(name)) continue;
 
             if (!byName.TryGetValue(name, out List<StoredFeature>? list))
-                byName[name] = list = [];
-            list.Add(r);
+            {
+                list = [];
+                byName[name] = list;
+            }
+            list!.Add(r);
         }
 
         foreach (var (_, group) in byName)
