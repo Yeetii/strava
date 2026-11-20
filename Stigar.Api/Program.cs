@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using StackExchange.Redis;
 using Stigar.Core.Constants;
 using Stigar.Core.Models;
 using Stigar.Core.Services;
@@ -121,6 +122,13 @@ builder.Services.Configure<FormOptions>(options => options.ValueCountLimit = 100
 // All queues run on Hangfire/Redis. Storage is registered once per host;
 // producers enqueue strongly-typed jobs via IBackgroundJobClient.
 HangfireInfrastructure.AddHangfireStorage(builder.Services, configuration);
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+    ConnectionMultiplexer.Connect(
+        configuration[AppConfig.RedisConnectionString]
+        ?? configuration.GetConnectionString(AppConfig.RedisConnectionString)
+        ?? "redis:6379,abortConnect=false"));
+builder.Services.AddSingleton(serviceProvider =>
+    serviceProvider.GetRequiredService<IConnectionMultiplexer>().GetDatabase());
 builder.Services.AddScoped(serviceProvider =>
     new UserAuthenticationService(
         serviceProvider.GetRequiredService<IUserRepository>(),

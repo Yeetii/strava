@@ -17,6 +17,11 @@ public static class HangfireInfrastructure
     /// </summary>
     public const string WorkerCountKey = "Hangfire:WorkerCount";
 
+    public const string DefaultRedisKeyPrefix = "{hangfire}:";
+
+    public static string GetRedisKeyPrefix(IConfiguration configuration) =>
+        configuration["Hangfire:RedisPrefix"] ?? DefaultRedisKeyPrefix;
+
     /// <summary>Fallback concurrency when no valid value is configured.</summary>
     public const int DefaultWorkerCount = 8;
 
@@ -43,7 +48,10 @@ public static class HangfireInfrastructure
             config.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
                 .UseSimpleAssemblyNameTypeSerializer()
                 .UseRecommendedSerializerSettings()
-                .UseRedisStorage(redis);
+                .UseRedisStorage(redis, new RedisStorageOptions
+                {
+                    Prefix = GetRedisKeyPrefix(configuration)
+                });
 
             if (Interlocked.Exchange(ref _consoleInitialized, 1) == 0)
                 config.UseConsole();
