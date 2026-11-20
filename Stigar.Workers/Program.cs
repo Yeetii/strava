@@ -36,7 +36,8 @@ var queues = QueueConfig.AllQueues.Select(JobEnqueueExtensions.NormalizeQueue).D
 
 builder.Services.AddHangfireServer(options =>
 {
-    options.WorkerCount = HangfireInfrastructure.GetWorkerCount(builder.Configuration);
+    options.WorkerCount = WorkerRoleQueues.WorkerCountForRole(
+        role, HangfireInfrastructure.GetWorkerCount(builder.Configuration));
     // Only the schedule role serves backend-polling and recurring-jobs. The
     // heavy role never consumes either queue, even though both roles register
     // the recurring job definitions into the shared Hangfire store.

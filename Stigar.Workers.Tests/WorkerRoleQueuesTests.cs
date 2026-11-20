@@ -38,4 +38,21 @@ public class WorkerRoleQueuesTests
         Assert.DoesNotContain(AppConfig.BackendPollingQueueName, queues);
         Assert.DoesNotContain(AppConfig.RecurringJobsQueueName, queues);
     }
+
+    [Theory]
+    [InlineData("schedule")]
+    [InlineData("SCHEDULE")]
+    [InlineData("")]
+    public void ScheduleRoleUsesOneWorkerForPollingAndRecurringQueues(string role)
+    {
+        Assert.Equal(1, WorkerRoleQueues.WorkerCountForRole(role, 8));
+    }
+
+    [Theory]
+    [InlineData("heavy")]
+    [InlineData("HEAVY")]
+    public void HeavyRoleKeepsConfiguredWorkerCount(string role)
+    {
+        Assert.Equal(12, WorkerRoleQueues.WorkerCountForRole(role, 12));
+    }
 }
