@@ -18,7 +18,7 @@ namespace Stigar.Workers
         IActivityRepository activities,
         IBackendAdminQueries queries) : IQueueActivityJobs
     {
-        private const int PollBatchSize = 500;
+        private const int PollBatchSize = 1000;
 
         public async Task Run(
             IReadOnlyList<Activity> updatedActivities,
