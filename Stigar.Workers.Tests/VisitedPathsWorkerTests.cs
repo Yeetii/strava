@@ -224,7 +224,7 @@ public class VisitedPathsWorkerTests
                 It.Is<IEnumerable<VisitedPathInput>>(paths => paths.Count() == 1
                     && paths.First().ActivityId == activityId
                     && paths.First().UserId == userId
-                    && paths.First().OsmHighwayId == 123L
+                    && paths.First().OsmHighwayId == "way/123"
                     && paths.First().TileX >= 0
                     && paths.First().TileY >= 0),
                 It.IsAny<CancellationToken>()),

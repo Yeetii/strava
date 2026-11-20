@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS activity_visited_tiles (
     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tile_x       INTEGER NOT NULL,
     tile_y       INTEGER NOT NULL,
-    highway_ids  BIGINT[] NOT NULL,
+    highway_ids  TEXT[] NOT NULL,
     PRIMARY KEY (activity_id, tile_x, tile_y)
 );
 

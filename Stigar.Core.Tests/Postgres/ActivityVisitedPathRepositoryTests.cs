@@ -14,19 +14,19 @@ public sealed class ActivityVisitedPathRepositoryTests(PostgisFixture fixture)
         var last = new DateTime(2026, 1, 2, 10, 0, 0, DateTimeKind.Utc);
         await InsertActivityAsync("activity:1", first);
         await InsertActivityAsync("activity:2", last);
-        await InsertTileAsync("activity:1", 1, 2, [10L, 20L]);
-        await InsertTileAsync("activity:2", 1, 2, [10L, 30L]);
-        await InsertTileAsync("activity:2", 5, 6, [40L]);
+        await InsertTileAsync("activity:1", 1, 2, ["way/10", "way/20"]);
+        await InsertTileAsync("activity:2", 1, 2, ["way/10", "way/30"]);
+        await InsertTileAsync("activity:2", 5, 6, ["way/40"]);
 
         var repository = new ActivityVisitedPathRepository(fixture.DataSource);
         var summaries = await repository.GetSummaryByUserAndTiles("user:1", [(1, 2)]);
 
         Assert.Equal(3, summaries.Count);
-        Assert.Equal(10L, summaries[0].OsmHighwayId);
+        Assert.Equal("way/10", summaries[0].OsmHighwayId);
         Assert.Equal(2, summaries[0].TimesVisited);
         Assert.Equal(first, summaries[0].FirstDate);
         Assert.Equal(last, summaries[0].LastDate);
-        Assert.DoesNotContain(summaries, s => s.OsmHighwayId == 40L);
+        Assert.DoesNotContain(summaries, s => s.OsmHighwayId == "way/40");
         Assert.Equal(5, await repository.CountByUser("user:1"));
     }
 
@@ -38,14 +38,14 @@ public sealed class ActivityVisitedPathRepositoryTests(PostgisFixture fixture)
 
         var repository = new ActivityVisitedPathRepository(fixture.DataSource);
         await repository.AddRange([
-            new VisitedPathInput("activity:1", "user:1", 20L, 1, 2),
-            new VisitedPathInput("activity:1", "user:1", 10L, 1, 2),
-            new VisitedPathInput("activity:1", "user:1", 30L, 3, 4),
+            new VisitedPathInput("activity:1", "user:1", "way/20", 1, 2),
+            new VisitedPathInput("activity:1", "user:1", "way/10", 1, 2),
+            new VisitedPathInput("activity:1", "user:1", "way/30", 3, 4),
         ]);
 
         var links = await repository.GetByActivity("activity:1");
         Assert.Equal(2, links.Count);
-        Assert.Equal([10L, 20L], links.Single(l => l.TileX == 1 && l.TileY == 2).HighwayIds);
+        Assert.Equal(["way/10", "way/20"], links.Single(l => l.TileX == 1 && l.TileY == 2).HighwayIds);
         Assert.Equal(3, await repository.CountByUser("user:1"));
     }
 
@@ -60,7 +60,7 @@ public sealed class ActivityVisitedPathRepositoryTests(PostgisFixture fixture)
             ("id", id), ("date", startDateLocal));
     }
 
-    private async Task InsertTileAsync(string activityId, int tileX, int tileY, long[] highwayIds)
+    private async Task InsertTileAsync(string activityId, int tileX, int tileY, string[] highwayIds)
         => await fixture.ExecuteAsync(
             """
             INSERT INTO activity_visited_tiles (activity_id, user_id, tile_x, tile_y, highway_ids)

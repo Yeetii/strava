@@ -42,7 +42,7 @@ public class GetVisitedPaths(
 
         var result = summaries
             .Select(s => new VisitedPathDto(
-                $"way/{s.OsmHighwayId}",
+                s.OsmHighwayId,
                 s.TimesVisited,
                 s.FirstDate?.ToString("O"),
                 s.LastDate?.ToString("O")))

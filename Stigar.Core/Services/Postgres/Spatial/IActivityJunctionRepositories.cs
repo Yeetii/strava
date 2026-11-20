@@ -12,19 +12,19 @@ public sealed record VisitedTileLink(
     string UserId,
     int TileX,
     int TileY,
-    long[] HighwayIds);
+    string[] HighwayIds);
 
 /// <summary>One visited path; grouped by tile on write.</summary>
 public sealed record VisitedPathInput(
     string ActivityId,
     string UserId,
-    long OsmHighwayId,
+    string OsmHighwayId,
     int TileX,
     int TileY);
 
 /// <summary>Aggregated result returned by the visited-paths endpoint.</summary>
 public sealed record VisitedPathSummary(
-    long OsmHighwayId,
+    string OsmHighwayId,
     int TimesVisited,
     DateTime? FirstDate,
     DateTime? LastDate);
@@ -58,7 +58,7 @@ public interface IActivityVisitedAreaRepository
 /// <summary>Idempotent writes and lookups for <c>activity_visited_tiles</c>.</summary>
 public interface IActivityVisitedPathRepository
 {
-    Task Add(string activityId, string userId, long osmHighwayId, int tileX, int tileY, CancellationToken cancellationToken = default);
+    Task Add(string activityId, string userId, string osmHighwayId, int tileX, int tileY, CancellationToken cancellationToken = default);
     Task AddPath(VisitedPathInput path, CancellationToken cancellationToken = default);
     Task AddRange(IEnumerable<VisitedPathInput> paths, CancellationToken cancellationToken = default);
     Task RemoveByActivity(string activityId, CancellationToken cancellationToken = default);

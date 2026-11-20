@@ -43,7 +43,7 @@ public sealed class BackendAdminQueriesTests(PostgisFixture fixture)
     {
         await fixture.ResetAsync();
         await InsertActivityAsync("activity:1");
-        await InsertPathAsync("activity:2", 2);
+        await InsertPathAsync("activity:2", "way/2");
         await InsertActivityAsync("activity:3");
 
         var ids = await new BackendAdminQueries(fixture.DataSource)
@@ -91,13 +91,13 @@ public sealed class BackendAdminQueriesTests(PostgisFixture fixture)
             ("id", id));
     }
 
-    private async Task InsertPathAsync(string activityId, long osmHighwayId)
+    private async Task InsertPathAsync(string activityId, string osmHighwayId)
     {
         await InsertActivityAsync(activityId);
         await fixture.ExecuteAsync(
             """
             INSERT INTO activity_visited_tiles (activity_id, user_id, tile_x, tile_y, highway_ids)
-            VALUES (@activity_id, 'user:1', 0, 0, ARRAY[@highway_id]::bigint[])
+            VALUES (@activity_id, 'user:1', 0, 0, ARRAY[@highway_id]::text[])
             """,
             ("activity_id", activityId), ("highway_id", osmHighwayId));
     }

@@ -240,7 +240,7 @@ public sealed class ActivityVisitedPathRepository(NpgsqlDataSource dataSource) :
         ORDER BY times_visited DESC
         """;
 
-    public Task Add(string activityId, string userId, long osmHighwayId, int tileX, int tileY, CancellationToken cancellationToken = default)
+    public Task Add(string activityId, string userId, string osmHighwayId, int tileX, int tileY, CancellationToken cancellationToken = default)
         => AddCore(new VisitedPathInput(activityId, userId, osmHighwayId, tileX, tileY), cancellationToken);
 
     public Task AddPath(VisitedPathInput path, CancellationToken cancellationToken = default)
@@ -321,7 +321,7 @@ public sealed class ActivityVisitedPathRepository(NpgsqlDataSource dataSource) :
         while (await reader.ReadAsync(cancellationToken))
         {
             result.Add(new VisitedPathSummary(
-                reader.GetInt64(0),
+                reader.GetString(0),
                 reader.GetInt32(1),
                 reader.IsDBNull(2) ? null : reader.GetDateTime(2),
                 reader.IsDBNull(3) ? null : reader.GetDateTime(3)));
@@ -338,13 +338,13 @@ public sealed class ActivityVisitedPathRepository(NpgsqlDataSource dataSource) :
 
     private static void AddValues(
         NpgsqlParameterCollection parameters,
-        string activityId, string userId, int tileX, int tileY, long[] highwayIds)
+        string activityId, string userId, int tileX, int tileY, string[] highwayIds)
     {
         parameters.AddValue("activity_id", activityId);
         parameters.AddValue("user_id", userId);
         parameters.AddValue("tile_x", tileX);
         parameters.AddValue("tile_y", tileY);
-        parameters.Add(new NpgsqlParameter("highway_ids", NpgsqlDbType.Array | NpgsqlDbType.Bigint)
+        parameters.Add(new NpgsqlParameter("highway_ids", NpgsqlDbType.Array | NpgsqlDbType.Text)
         {
             Value = highwayIds,
         });
@@ -361,7 +361,7 @@ public sealed class ActivityVisitedPathRepository(NpgsqlDataSource dataSource) :
                 reader.GetString(1),
                 reader.GetInt32(2),
                 reader.GetInt32(3),
-                reader.GetFieldValue<long[]>(4)));
+                reader.GetFieldValue<string[]>(4)));
         }
         return result;
     }
