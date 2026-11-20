@@ -9,6 +9,13 @@ namespace Stigar.Core.Tests;
 
 public class OverpassClientTests
 {
+    public OverpassClientTests()
+    {
+        var field = typeof(OverpassClient).GetField("MirrorHealthByUrl", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(field);
+        ((System.Collections.IDictionary)field!.GetValue(null)!).Clear();
+    }
+
     [Fact]
     public async Task GetHighways_IgnoresSingleEmptyMirrorWhenLaterMirrorHasData()
     {
@@ -107,6 +114,79 @@ public class OverpassClientTests
     }
 
     [Fact]
+    public async Task GetHighways_SkipsMirrorAfterRepeatedHttpFailures()
+    {
+        const string blockedMirror = "https://blocked.example/api/interpreter";
+        using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
+        {
+            ["blocked.example"] = Enumerable.Repeat<object>(System.Net.HttpStatusCode.Forbidden, 10).ToArray()
+        }));
+        var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);
+        SetMirrors(client, blockedMirror);
+
+        for (var i = 0; i < 3; i++)
+            await Assert.ThrowsAsync<HttpRequestException>(() =>
+                client.GetHighways(new Coordinate(18.0, 59.0), new Coordinate(18.2, 59.2)));
+
+        SetMirrors(client, blockedMirror, "https://healthy.example/api/interpreter");
+
+        Assert.DoesNotContain(blockedMirror, GetMirrorOrder(client));
+    }
+
+    [Fact]
+    public async Task GetPeaks_SkipsMirrorAfterRepeatedHttpFailures()
+    {
+        const string blockedMirror = "https://blocked-peaks.example/api/interpreter";
+        using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
+        {
+            ["blocked-peaks.example"] = Enumerable.Repeat<object>(System.Net.HttpStatusCode.Forbidden, 10).ToArray()
+        }));
+        var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);
+        SetMirrors(client, blockedMirror);
+
+        for (var i = 0; i < 3; i++)
+            await Assert.ThrowsAsync<HttpRequestException>(() =>
+                client.GetPeaks(new Coordinate(18.0, 59.0), new Coordinate(18.2, 59.2)));
+
+        SetMirrors(client, blockedMirror, "https://healthy-peaks.example/api/interpreter");
+
+        Assert.DoesNotContain(blockedMirror, GetMirrorOrder(client));
+    }
+
+    [Fact]
+    public async Task GetHighways_SkipsMirrorAfterRepeatedConnectionFailures()
+    {
+        var failure = new HttpRequestException("Network is unreachable", new System.Net.Sockets.SocketException(101));
+        var deadRequests = 0;
+        using var httpClient = new HttpClient(new MirrorHttpMessageHandler(new Dictionary<string, object[]>
+        {
+            ["dead.example"] = Enumerable.Repeat<object>(failure, 10).ToArray(),
+            ["healthy.example"] = [CreateOverpassJson([CreatePath()])]
+        }, onRequest: uri =>
+        {
+            if (uri.Host == "dead.example")
+                deadRequests++;
+        }));
+        var client = new OverpassClient(httpClient, NullLogger<OverpassClient>.Instance);
+        SetMirrors(client, "https://dead.example/api/interpreter");
+
+        // Two failures in the first call, the third opens the circuit, then a probe of all
+        // mirrors when every one is cooling down.
+        for (var i = 0; i < 3; i++)
+            await Assert.ThrowsAsync<HttpRequestException>(() =>
+                client.GetHighways(new Coordinate(18.0, 59.0), new Coordinate(18.2, 59.2)));
+
+        Assert.Equal(5, deadRequests);
+
+        SetMirrors(client, "https://dead.example/api/interpreter", "https://healthy.example/api/interpreter");
+
+        var features = (await client.GetHighways(new Coordinate(18.0, 59.0), new Coordinate(18.2, 59.2))).ToList();
+
+        Assert.Single(features);
+        Assert.Equal(5, deadRequests);
+    }
+
+    [Fact]
     public async Task GetHighways_RetriesMirrorAfterRequestTimeout()
     {
         var timeout = new TaskCanceledException("HttpClient timeout", new TimeoutException());
@@ -179,6 +259,20 @@ public class OverpassClientTests
 
         Assert.NotNull(method);
         return (Geometry?)method!.Invoke(null, [members]);
+    }
+
+    private static void SetMirrors(OverpassClient client, params string[] urls)
+    {
+        var field = typeof(OverpassClient).GetField("mirrors", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(field);
+        field!.SetValue(client, urls);
+    }
+
+    private static string[] GetMirrorOrder(OverpassClient client)
+    {
+        var method = typeof(OverpassClient).GetMethod("GetMirrorsInAttemptOrder", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        return (string[])method!.Invoke(client, null)!;
     }
 
     private static RawPath CreatePath() => new()

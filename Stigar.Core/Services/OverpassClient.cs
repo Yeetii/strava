@@ -6,6 +6,7 @@ using Stigar.Core.Geo;
 using Stigar.Core.Models;
 using System.Globalization;
 using System.Net;
+using System.Collections.Concurrent;
 
 
 namespace Stigar.Core.Services
@@ -32,6 +33,10 @@ namespace Stigar.Core.Services
             HttpStatusCode.GatewayTimeout
         ];
 
+        private const int MirrorFailureThreshold = 3;
+        private static readonly TimeSpan MirrorCooldown = TimeSpan.FromMinutes(5);
+        private static readonly ConcurrentDictionary<string, MirrorHealth> MirrorHealthByUrl = new(StringComparer.Ordinal);
+
         private readonly string[] mirrors = [
             "https://overpass.openstreetmap.fr/api/interpreter",
             "https://overpass-api.de/api/interpreter",
@@ -45,8 +50,7 @@ namespace Stigar.Core.Services
 
             Exception? lastException = null;
             HttpStatusCode? lastStatusCode = null;
-            var mirrorsInAttemptOrder = (string[])mirrors.Clone();
-            Random.Shared.Shuffle(mirrorsInAttemptOrder);
+            var mirrorsInAttemptOrder = GetMirrorsInAttemptOrder();
 
             try
             {
@@ -59,27 +63,33 @@ namespace Stigar.Core.Services
                             var response = await _client.GetAsync($"{mirror}?data={query}", cancellationToken);
                             if (response.IsSuccessStatusCode)
                             {
+                                RecordMirrorSuccess(mirror);
                                 return response;
                             }
 
                             lastStatusCode = response.StatusCode;
+                            var statusReason = $"HTTP {(int)response.StatusCode}";
 
                             if (!IsThrottledStatusCode(response.StatusCode))
                             {
+                                RecordMirrorFailure(mirror, statusReason, attempt);
                                 response.Dispose();
                                 break;
                             }
 
                             if (attempt >= MaxAttemptsPerMirror)
                             {
-                                _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on final attempt {Attempt}. Moving to next mirror.", mirror, (int)response.StatusCode, attempt);
+                                RecordMirrorFailure(mirror, $"{statusReason} on final attempt", attempt);
                                 response.Dispose();
                                 break;
                             }
 
                             var delay = GetRetryDelay(response, attempt);
-                            _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on attempt {Attempt}. Retrying after {DelayMs}ms.", mirror, (int)response.StatusCode, attempt, delay.TotalMilliseconds);
+                            var circuitOpened = RecordMirrorFailure(
+                                mirror, $"{statusReason}, retry in {delay.TotalMilliseconds:0}ms", attempt);
                             response.Dispose();
+                            if (circuitOpened)
+                                break;
                             await Task.Delay(delay, cancellationToken);
                         }
                         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -89,8 +99,9 @@ namespace Stigar.Core.Services
                         catch (Exception ex) when (IsTransientConnectionError(ex) || IsRequestTimeout(ex))
                         {
                             lastException = ex;
-                            _logger.LogWarning(ex, "Overpass mirror {Mirror} transient connection error on attempt {Attempt}. {Retry}.",
-                                mirror, attempt, attempt < MaxAttemptsPerMirror ? "Retrying" : "Moving to next mirror");
+                            if (RecordMirrorFailure(mirror, ex.Message, attempt))
+                                break;
+
                             if (attempt < MaxAttemptsPerMirror)
                                 await Task.Delay(TransientErrorRetryDelay, cancellationToken);
                             else
@@ -99,7 +110,7 @@ namespace Stigar.Core.Services
                         catch (Exception ex)
                         {
                             lastException = ex;
-                            _logger.LogWarning(ex, "Overpass mirror {Mirror} failed on attempt {Attempt}.", mirror, attempt);
+                            RecordMirrorFailure(mirror, ex.Message, attempt);
                             break;
                         }
                     }
@@ -128,8 +139,7 @@ namespace Stigar.Core.Services
             HttpStatusCode? lastStatusCode = null;
             T? emptyCandidate = null;
             var emptyMirrors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var mirrorsInAttemptOrder = (string[])mirrors.Clone();
-            Random.Shared.Shuffle(mirrorsInAttemptOrder);
+            var mirrorsInAttemptOrder = GetMirrorsInAttemptOrder();
 
             try
             {
@@ -143,22 +153,30 @@ namespace Stigar.Core.Services
                             if (!response.IsSuccessStatusCode)
                             {
                                 lastStatusCode = response.StatusCode;
+                                var statusReason = $"HTTP {(int)response.StatusCode}";
 
                                 if (!IsThrottledStatusCode(response.StatusCode))
+                                {
+                                    RecordMirrorFailure(mirror, statusReason, attempt);
                                     break;
+                                }
 
                                 if (attempt >= MaxAttemptsPerMirror)
                                 {
-                                    _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on final attempt {Attempt}. Moving to next mirror.", mirror, (int)response.StatusCode, attempt);
+                                    RecordMirrorFailure(mirror, $"{statusReason} on final attempt", attempt);
                                     break;
                                 }
 
                                 var delay = GetRetryDelay(response, attempt);
-                                _logger.LogWarning("Overpass mirror {Mirror} throttled with status {StatusCode} on attempt {Attempt}. Retrying after {DelayMs}ms.", mirror, (int)response.StatusCode, attempt, delay.TotalMilliseconds);
+                                var circuitOpened = RecordMirrorFailure(
+                                    mirror, $"{statusReason}, retry in {delay.TotalMilliseconds:0}ms", attempt);
+                                if (circuitOpened)
+                                    break;
                                 await Task.Delay(delay, cancellationToken);
                                 continue;
                             }
 
+                            RecordMirrorSuccess(mirror);
                             var rawResponse = await response.Content.ReadAsStringAsync(cancellationToken);
 
                             T root;
@@ -169,7 +187,7 @@ namespace Stigar.Core.Services
                             catch (Exception ex)
                             {
                                 lastException = ex;
-                                _logger.LogWarning(ex, "Overpass mirror {Mirror} returned an unusable response for {Operation} on attempt {Attempt}.", mirror, operation, attempt);
+                                RecordMirrorFailure(mirror, $"unusable {operation} response: {ex.Message}", attempt);
                                 break;
                             }
 
@@ -192,8 +210,9 @@ namespace Stigar.Core.Services
                         catch (Exception ex) when (IsTransientConnectionError(ex) || IsRequestTimeout(ex))
                         {
                             lastException = ex;
-                            _logger.LogWarning(ex, "Overpass mirror {Mirror} transient connection error for {Operation} on attempt {Attempt}. {Retry}.",
-                                mirror, operation, attempt, attempt < MaxAttemptsPerMirror ? "Retrying" : "Moving to next mirror");
+                            if (RecordMirrorFailure(mirror, ex.Message, attempt))
+                                break;
+
                             if (attempt < MaxAttemptsPerMirror)
                                 await Task.Delay(TransientErrorRetryDelay, cancellationToken);
                             else
@@ -202,7 +221,7 @@ namespace Stigar.Core.Services
                         catch (Exception ex)
                         {
                             lastException = ex;
-                            _logger.LogWarning(ex, "Overpass mirror {Mirror} failed for {Operation} on attempt {Attempt}.", mirror, operation, attempt);
+                            RecordMirrorFailure(mirror, $"{operation}: {ex.Message}", attempt);
                             break;
                         }
                     }
@@ -274,6 +293,82 @@ namespace Stigar.Core.Services
             return false;
         }
 
+        private string[] GetMirrorsInAttemptOrder()
+        {
+            var now = DateTimeOffset.UtcNow;
+            var available = mirrors
+                .Where(mirror => !MirrorHealthByUrl.GetOrAdd(mirror, _ => new MirrorHealth()).IsSkipped(now))
+                .ToArray();
+
+            // If every mirror is cooling down, probe them all so the service can recover.
+            var candidates = available.Length > 0 ? available : mirrors;
+            var ordered = (string[])candidates.Clone();
+            Random.Shared.Shuffle(ordered);
+            return ordered;
+        }
+
+        private static void RecordMirrorSuccess(string mirror)
+        {
+            MirrorHealthByUrl.GetOrAdd(mirror, _ => new MirrorHealth()).RecordSuccess();
+        }
+
+        private bool RecordMirrorFailure(string mirror, string reason, int attempt)
+        {
+            var circuitOpened = MirrorHealthByUrl.GetOrAdd(mirror, _ => new MirrorHealth())
+                .RecordFailure(DateTimeOffset.UtcNow);
+
+            if (circuitOpened)
+            {
+                _logger.LogWarning(
+                    "Overpass mirror {Mirror} marked unavailable for {Cooldown}s after {Threshold} consecutive failures: {Reason}",
+                    mirror, MirrorCooldown.TotalSeconds, MirrorFailureThreshold, reason);
+                return true;
+            }
+
+            _logger.LogWarning("Overpass mirror {Mirror} failed on attempt {Attempt}: {Reason}",
+                mirror, attempt, reason);
+            return false;
+        }
+
+        private sealed class MirrorHealth
+        {
+            private readonly object _gate = new();
+            private int _consecutiveFailures;
+            private DateTimeOffset _skipUntil;
+
+            public bool IsSkipped(DateTimeOffset now)
+            {
+                lock (_gate)
+                    return _skipUntil > now;
+            }
+
+            public bool RecordFailure(DateTimeOffset now)
+            {
+                lock (_gate)
+                {
+                    if (_skipUntil > now)
+                        return false;
+
+                    _consecutiveFailures++;
+                    if (_consecutiveFailures < MirrorFailureThreshold)
+                        return false;
+
+                    _consecutiveFailures = 0;
+                    _skipUntil = now.Add(MirrorCooldown);
+                    return true;
+                }
+            }
+
+            public void RecordSuccess()
+            {
+                lock (_gate)
+                {
+                    _consecutiveFailures = 0;
+                    _skipUntil = default;
+                }
+            }
+        }
+
         private static TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)
         {
             var retryAfter = response.Headers.RetryAfter;
@@ -339,7 +434,7 @@ namespace Stigar.Core.Services
                 string encodedQuery = Uri.EscapeDataString(query);
 
                 List<RawPeaks>? rawPeaksBatch = null;
-                foreach (var mirror in mirrors)
+                foreach (var mirror in GetMirrorsInAttemptOrder())
                 {
                     using var response = await _client.GetAsync($"{mirror}?data={encodedQuery}", cancellationToken);
                     if (!response.IsSuccessStatusCode)
