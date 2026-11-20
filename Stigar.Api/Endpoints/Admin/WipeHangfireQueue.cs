@@ -9,20 +9,26 @@ using Microsoft.Extensions.Logging;
 using Stigar.Api.Http;
 using Stigar.Core.Constants;
 using Stigar.Core.Jobs;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Stigar.Api.Endpoints.Admin;
 
-public record WipeQueueResponse(string Queue, int Deleted);
+public record WipeQueueResponse(string Queue, int Deleted, long Remaining);
 
 /// <summary>
-/// Deletes every enqueued job in a single Hangfire queue. Scheduled and failed jobs are
-/// global in Hangfire and are deliberately not touched by this endpoint.
+/// Deletes a bounded batch of enqueued jobs in a single Hangfire queue. The caller repeats
+/// the request until Remaining is zero; this keeps each HTTP request short enough to finish
+/// even on queues with hundreds of thousands of jobs. Scheduled and failed jobs are global
+/// in Hangfire and are deliberately not touched.
 /// </summary>
 public class WipeHangfireQueue(
     IConfiguration configuration,
     ILogger<WipeHangfireQueue> logger)
 {
-    private const int BatchSize = 500;
+    private const int DefaultBatchSize = 2000;
+    private const int MaxBatchSize = 5000;
+    private const int DeleteConcurrency = 16;
 
     public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
         app.MapDelete("/api/manage/queues/{queueName}",
@@ -35,6 +41,10 @@ public class WipeHangfireQueue(
             return TypedResults.Unauthorized();
 
         var queue = JobEnqueueExtensions.NormalizeQueue(queueName);
+        var rawLimit = context.Request.Query["limit"].ToString();
+        var limit = int.TryParse(rawLimit, out var parsedLimit) && parsedLimit > 0
+            ? Math.Min(parsedLimit, MaxBatchSize)
+            : DefaultBatchSize;
 
         try
         {
@@ -49,32 +59,30 @@ public class WipeHangfireQueue(
             if (!knownQueues.Contains(queue))
                 return TypedResults.NotFound();
 
-            var deleted = 0;
-            while (true)
-            {
-                var jobs = monitoring.EnqueuedJobs(queue, 0, BatchSize);
-                if (jobs.Count == 0)
-                    break;
+            var jobs = monitoring.EnqueuedJobs(queue, 0, limit);
+            if (jobs.Count == 0)
+                return TypedResults.Ok(
+                    new WipeQueueResponse(queue, 0, monitoring.EnqueuedCount(queue)));
 
-                var deletedThisPass = 0;
-                foreach (var job in jobs)
+            var deleted = 0;
+            Parallel.ForEach(
+                jobs,
+                new ParallelOptions { MaxDegreeOfParallelism = DeleteConcurrency },
+                job =>
                 {
                     if (BackgroundJob.Delete(job.Key))
-                        deletedThisPass++;
-                }
+                        Interlocked.Increment(ref deleted);
+                });
 
-                if (deletedThisPass == 0)
-                    break;
-
-                deleted += deletedThisPass;
-            }
-
-            logger.LogInformation("Wiped {Deleted} enqueued jobs from queue {Queue}", deleted, queue);
-            return TypedResults.Ok(new WipeQueueResponse(queue, deleted));
+            var remaining = monitoring.EnqueuedCount(queue);
+            logger.LogInformation(
+                "Wiped {Deleted} enqueued jobs from queue {Queue}, {Remaining} left",
+                deleted, queue, remaining);
+            return TypedResults.Ok(new WipeQueueResponse(queue, deleted, remaining));
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to wipe Hangfire queue {Queue}", queue);
+            logger.LogWarning(ex, "Failed to wipe enqueued jobs from queue {Queue}", queue);
             return TypedResults.StatusCode(StatusCodes.Status500InternalServerError);
         }
     }
