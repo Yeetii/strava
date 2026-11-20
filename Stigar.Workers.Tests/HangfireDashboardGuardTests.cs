@@ -95,6 +95,32 @@ public class HangfireDashboardGuardTests
         Assert.False(filter.Authorize(CreateContextWithBasicAuth("admin", "secret-key")));
     }
 
+    [Fact]
+    public void DashboardFilter_RejectsMissingAuthorizationHeader()
+    {
+        var filter = CreateFilter("secret-key");
+
+        Assert.False(filter.Authorize(new DefaultHttpContext()));
+    }
+
+    [Fact]
+    public void DashboardFilter_RejectsMalformedBasicAuth()
+    {
+        var filter = CreateFilter("secret-key");
+        var context = new DefaultHttpContext();
+        context.Request.Headers.Authorization = "Basic not-base64!!";
+
+        Assert.False(filter.Authorize(context));
+    }
+
+    [Fact]
+    public void DashboardFilter_IgnoresUsernameAndUsesPasswordAsKey()
+    {
+        var filter = CreateFilter("secret-key");
+
+        Assert.True(filter.Authorize(CreateContextWithBasicAuth("anyone", "secret-key")));
+    }
+
     private static HangfireDashboardAuthorizationFilter CreateFilter(string? adminKey) =>
         new(new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminApiKey"] = adminKey })

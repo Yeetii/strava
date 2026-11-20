@@ -163,9 +163,9 @@ app.Use(async (context, next) =>
 
     await next(context);
 });
-// The a2n filter applies the same gate to the dashboard pages, its Blazor
-// circuit and its SignalR hub; the middleware above covers every /hangfire
-// request as well, including static assets. Both must stay in place.
+// The a2n filter applies the same gate to pages, the Blazor circuit and the
+// SignalR hub at /hangfire/hubs/dashboard. The middleware above also covers
+// every /hangfire request, including static assets. Both stay in place.
 app.UseHangfireDashboardUI(HangfireDashboardGuard.DashboardPath, new DashboardUIOptions
 {
     Authorization = [new HangfireDashboardAuthorizationFilter(configuration)],

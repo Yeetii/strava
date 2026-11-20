@@ -51,8 +51,8 @@ public static class HangfireDashboardGuard
 
 /// <summary>
 /// Applies the same gate to a2n's dashboard pages, Blazor circuit and SignalR
-/// hub. Those are not all under <see cref="HangfireDashboardGuard.DashboardPath"/>,
-/// so the request middleware alone cannot protect them.
+/// hub. The hub is mapped under <see cref="HangfireDashboardGuard.DashboardPath"/>,
+/// but a2n enforces its own filters on hub connections and invocations too.
 /// </summary>
 public sealed class HangfireDashboardAuthorizationFilter(IConfiguration configuration)
     : IDashboardAuthorizationFilter
