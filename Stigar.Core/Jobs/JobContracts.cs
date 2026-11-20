@@ -55,7 +55,12 @@ public sealed class ActivityIdJob
     [JsonPropertyName("activityId")]
     public required string ActivityId { get; set; }
 
-    public static ActivityIdJob From(string activityId) => new() { ActivityId = activityId };
+    /// <summary>Epoch this job was enqueued under. The worker stamps it on completion.</summary>
+    [JsonPropertyName("epoch")]
+    public long Epoch { get; set; }
+
+    public static ActivityIdJob From(string activityId, long epoch = 0)
+        => new() { ActivityId = activityId, Epoch = epoch };
 }
 
 /// <summary>A single admin-boundary id for the enrichment worker.</summary>
@@ -64,7 +69,11 @@ public sealed class AdminBoundaryIdJob
     [JsonPropertyName("boundaryId")]
     public required string BoundaryId { get; set; }
 
-    public static AdminBoundaryIdJob From(string boundaryId) => new() { BoundaryId = boundaryId };
+    [JsonPropertyName("epoch")]
+    public long Epoch { get; set; }
+
+    public static AdminBoundaryIdJob From(string boundaryId, long epoch = 0)
+        => new() { BoundaryId = boundaryId, Epoch = epoch };
 }
 
 /// <summary>One race scrape request, keyed by the canonical organizer key.</summary>

@@ -201,19 +201,20 @@ public sealed class AdminBoundaryRepository(NpgsqlDataSource dataSource) : IAdmi
     public async Task UpdateMetrics(
         string id,
         IReadOnlyDictionary<string, object?> metrics,
-        int metricsVersion,
+        long epoch,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(metrics);
         await using var command = dataSource.CreateCommand("""
             UPDATE admin_boundaries
             SET properties = properties || @metrics::jsonb,
-                metrics_version = @metrics_version
+                metrics_generation = @epoch,
+                metrics_queued_at = NULL
             WHERE id = @id
             """);
         command.Parameters.AddValue("id", id);
         command.Parameters.AddJsonb("metrics", SpatialRowMapping.ObjectToJson(metrics));
-        command.Parameters.AddValue("metrics_version", metricsVersion);
+        command.Parameters.AddValue("epoch", epoch);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

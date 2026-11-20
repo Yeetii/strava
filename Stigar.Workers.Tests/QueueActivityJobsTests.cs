@@ -4,6 +4,8 @@ namespace Stigar.Workers.Tests;
 
 public class QueueActivityJobsTests
 {
+    private const long Epoch = 1;
+
     [Fact]
     public void ShouldQueueAnyStage_ReturnsTrue_WhenProcessingStatusIsMissing()
     {
@@ -25,7 +27,7 @@ public class QueueActivityJobsTests
     public void ShouldQueueAnyStage_ReturnsTrue_WhenAnyStageHasAlreadyRunButOthersRemain()
     {
         var activity = CreateActivity();
-        activity.ProcessingStatus = new ActivityProcessingStatus { VisitedAreas = true };
+        activity.ProcessingStatus = new ActivityProcessingStatus { VisitedAreasEpoch = Epoch };
 
         Assert.True(ShouldQueueAnyStage(activity));
     }
@@ -36,45 +38,59 @@ public class QueueActivityJobsTests
         var activity = CreateActivity();
         activity.ProcessingStatus = new ActivityProcessingStatus
         {
-            SummitedPeaks = true,
-            VisitedPaths = true,
-            VisitedAreas = true
+            SummitedPeaksEpoch = Epoch,
+            VisitedPathsEpoch = Epoch,
+            VisitedAreasEpoch = Epoch,
         };
 
         Assert.False(ShouldQueueAnyStage(activity));
     }
 
     [Fact]
+    public void ShouldQueueAnyStage_ReturnsTrue_WhenCurrentEpochHasBeenBumped()
+    {
+        var activity = CreateActivity();
+        activity.ProcessingStatus = new ActivityProcessingStatus
+        {
+            SummitedPeaksEpoch = Epoch,
+            VisitedPathsEpoch = Epoch,
+            VisitedAreasEpoch = Epoch,
+        };
+
+        Assert.True(ShouldQueueAnyStage(activity, Epoch + 1));
+    }
+
+    [Fact]
     public void ShouldQueueSummits_ReturnsFalse_WhenSummitsAlreadyProcessed()
     {
         var activity = CreateActivity();
-        activity.ProcessingStatus = new ActivityProcessingStatus { SummitedPeaks = true };
+        activity.ProcessingStatus = new ActivityProcessingStatus { SummitedPeaksEpoch = Epoch };
 
-        Assert.False(QueueActivityJobs.ShouldQueueSummits(activity));
-        Assert.True(QueueActivityJobs.ShouldQueueVisitedPaths(activity));
-        Assert.True(QueueActivityJobs.ShouldQueueVisitedAreas(activity));
+        Assert.False(QueueActivityJobs.ShouldQueueSummits(activity, Epoch));
+        Assert.True(QueueActivityJobs.ShouldQueueVisitedPaths(activity, Epoch));
+        Assert.True(QueueActivityJobs.ShouldQueueVisitedAreas(activity, Epoch));
     }
 
     [Fact]
     public void ShouldQueueVisitedPaths_ReturnsFalse_WhenVisitedPathsAlreadyProcessed()
     {
         var activity = CreateActivity();
-        activity.ProcessingStatus = new ActivityProcessingStatus { VisitedPaths = true };
+        activity.ProcessingStatus = new ActivityProcessingStatus { VisitedPathsEpoch = Epoch };
 
-        Assert.True(QueueActivityJobs.ShouldQueueSummits(activity));
-        Assert.False(QueueActivityJobs.ShouldQueueVisitedPaths(activity));
-        Assert.True(QueueActivityJobs.ShouldQueueVisitedAreas(activity));
+        Assert.True(QueueActivityJobs.ShouldQueueSummits(activity, Epoch));
+        Assert.False(QueueActivityJobs.ShouldQueueVisitedPaths(activity, Epoch));
+        Assert.True(QueueActivityJobs.ShouldQueueVisitedAreas(activity, Epoch));
     }
 
     [Fact]
     public void ShouldQueueVisitedAreas_ReturnsFalse_WhenVisitedAreasAlreadyProcessed()
     {
         var activity = CreateActivity();
-        activity.ProcessingStatus = new ActivityProcessingStatus { VisitedAreas = true };
+        activity.ProcessingStatus = new ActivityProcessingStatus { VisitedAreasEpoch = Epoch };
 
-        Assert.True(QueueActivityJobs.ShouldQueueSummits(activity));
-        Assert.True(QueueActivityJobs.ShouldQueueVisitedPaths(activity));
-        Assert.False(QueueActivityJobs.ShouldQueueVisitedAreas(activity));
+        Assert.True(QueueActivityJobs.ShouldQueueSummits(activity, Epoch));
+        Assert.True(QueueActivityJobs.ShouldQueueVisitedPaths(activity, Epoch));
+        Assert.False(QueueActivityJobs.ShouldQueueVisitedAreas(activity, Epoch));
     }
 
     private static Activity CreateActivity() => new()
@@ -87,8 +103,8 @@ public class QueueActivityJobsTests
         StartDateLocal = DateTime.UtcNow,
     };
 
-    private static bool ShouldQueueAnyStage(Activity activity)
-        => QueueActivityJobs.ShouldQueueSummits(activity)
-            || QueueActivityJobs.ShouldQueueVisitedPaths(activity)
-            || QueueActivityJobs.ShouldQueueVisitedAreas(activity);
+    private static bool ShouldQueueAnyStage(Activity activity, long epoch = Epoch)
+        => QueueActivityJobs.ShouldQueueSummits(activity, epoch)
+            || QueueActivityJobs.ShouldQueueVisitedPaths(activity, epoch)
+            || QueueActivityJobs.ShouldQueueVisitedAreas(activity, epoch);
 }

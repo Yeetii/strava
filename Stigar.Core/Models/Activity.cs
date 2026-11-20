@@ -71,15 +71,23 @@ public class Activity : IDocument
 
 public class ActivityProcessingStatus
 {
-    public bool SummitedPeaks { get; set; }
-    public bool VisitedPaths { get; set; }
-    public bool VisitedAreas { get; set; }
+    /// <summary>Epoch at which each stage last completed. Null/0 means never run.</summary>
+    public long? SummitedPeaksEpoch { get; set; }
+    public long? VisitedPathsEpoch { get; set; }
+    public long? VisitedAreasEpoch { get; set; }
+
     public bool SportTypeExcluded { get; set; }
     public DateTime? SummitedPeaksDoneAtUtc { get; set; }
     public DateTime? VisitedPathsDoneAtUtc { get; set; }
     public DateTime? VisitedAreasDoneAtUtc { get; set; }
     public DateTime? LastUpdatedAtUtc { get; set; }
     public string? LastProcessingError { get; set; }
+
+    /// <summary>
+    /// Set when the polling job enqueues work and cleared by the worker on completion. The poll
+    /// skips recently marked rows so a slow worker cannot have the same stages enqueued again.
+    /// </summary>
+    public DateTime? EnqueuedAtUtc { get; set; }
 }
 
 public static class SportTypes

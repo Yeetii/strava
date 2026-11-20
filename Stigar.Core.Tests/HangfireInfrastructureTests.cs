@@ -10,11 +10,11 @@ namespace Stigar.Core.Tests;
 public sealed class HangfireInfrastructureTests
 {
     [Fact]
-    public void GetWorkerCount_WhenNotConfigured_ReturnsDefaultOfFour()
+    public void GetWorkerCount_WhenNotConfigured_ReturnsDefaultOfEight()
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        Assert.Equal(4, HangfireInfrastructure.GetWorkerCount(configuration));
+        Assert.Equal(8, HangfireInfrastructure.GetWorkerCount(configuration));
     }
 
     [Fact]
@@ -23,11 +23,11 @@ public sealed class HangfireInfrastructureTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                [HangfireInfrastructure.WorkerCountKey] = "8"
+                [HangfireInfrastructure.WorkerCountKey] = "12"
             })
             .Build();
 
-        Assert.Equal(8, HangfireInfrastructure.GetWorkerCount(configuration));
+        Assert.Equal(12, HangfireInfrastructure.GetWorkerCount(configuration));
     }
 
     [Theory]
@@ -43,6 +43,6 @@ public sealed class HangfireInfrastructureTests
             })
             .Build();
 
-        Assert.Equal(4, HangfireInfrastructure.GetWorkerCount(configuration));
+        Assert.Equal(8, HangfireInfrastructure.GetWorkerCount(configuration));
     }
 }

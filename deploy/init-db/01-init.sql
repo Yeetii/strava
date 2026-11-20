@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS admin_boundaries (
     geom_simplified    GEOMETRY(Geometry, 4326),
     properties         JSONB NOT NULL DEFAULT '{}',
     metrics_version    INTEGER NOT NULL DEFAULT 0,
+    metrics_queued_at  TIMESTAMPTZ,
+    metrics_generation BIGINT NOT NULL DEFAULT 0,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_admin_boundaries_geom ON admin_boundaries USING GIST (geom);
@@ -166,3 +168,16 @@ CREATE TABLE IF NOT EXISTS activity_visited_areas (
 );
 CREATE INDEX IF NOT EXISTS idx_activity_visited_areas_user ON activity_visited_areas(user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_visited_areas_area ON activity_visited_areas(area_id);
+
+-- 13. Job epoch registry. Bumping a row marks that job type for rediscovery.
+CREATE TABLE IF NOT EXISTS job_epochs (
+    job_type   TEXT PRIMARY KEY,
+    epoch      BIGINT NOT NULL DEFAULT 1,
+    bumped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO job_epochs (job_type, epoch) VALUES
+    ('activity.summits', 1),
+    ('activity.visitedPaths', 1),
+    ('activity.visitedAreas', 1),
+    ('adminBoundary.metrics', 1)
+ON CONFLICT (job_type) DO NOTHING;

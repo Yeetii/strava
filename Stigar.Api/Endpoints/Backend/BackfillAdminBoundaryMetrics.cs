@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using System.Net;
 using Microsoft.Extensions.Logging;
 using Stigar.Core.Services;
+using Stigar.Core.Jobs;
 using Stigar.Core.Services.Postgres.Admin;
 using Stigar.Core.Services.Postgres.Spatial;
 
@@ -16,6 +17,7 @@ public class BackfillAdminBoundaryMetrics(
     AdminBoundaryMetricsEnricher enricher,
     IAdminBoundaryRepository adminBoundaries,
     IBackendAdminQueries queries,
+    IJobEpochService epochs,
     ILogger<BackfillAdminBoundaryMetrics> logger)
 {
     private const int DefaultBatchSize = 5;
@@ -27,10 +29,9 @@ public class BackfillAdminBoundaryMetrics(
     {
         var batchSize = ParseBatchSize(context);
 
-        // Same selection as the old Cosmos query: non-empty admin boundaries whose metrics
-        // version is behind the current one, ordered by id for deterministic paging.
+        var epoch = await epochs.GetAsync(JobEpochType.AdminBoundaryMetrics, cancellationToken);
         var boundaryIds = await queries.GetStaleAdminBoundaryIds(
-            AdminBoundaryMetricsEnricher.MetricsVersion,
+            epoch,
             afterId: null,
             batchSize,
             cancellationToken);
@@ -39,14 +40,13 @@ public class BackfillAdminBoundaryMetrics(
         var processed = 0;
         var failed = new List<string>();
 
-        foreach (var boundary in boundaries.Where(AdminBoundaryEnrichmentRules.ShouldEnrich))
+        foreach (var boundary in boundaries)
         {
             try
             {
                 logger.LogInformation("Backfilling admin boundary {BoundaryId}", boundary.Id);
                 var metrics = await enricher.CalculateMetricsAsync(boundary, cancellationToken);
-                await adminBoundaries.UpdateMetrics(
-                    boundary.Id, metrics, AdminBoundaryMetricsEnricher.MetricsVersion, cancellationToken);
+                await adminBoundaries.UpdateMetrics(boundary.Id, metrics, epoch, cancellationToken);
                 processed++;
             }
             catch (Exception ex)

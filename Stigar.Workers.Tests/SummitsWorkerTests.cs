@@ -244,6 +244,6 @@ public class SummitsWorkerTests
         StartDateLocal = DateTime.UtcNow,
         StartLatLng = hasGeodata ? new float[] { 38.5f, -120.2f } : null,
         SummaryPolyline = hasGeodata ? "_p~iF~ps|U_ulLnnqC_mqNvxq`@`" : null,
-        ProcessingStatus = new ActivityProcessingStatus { SummitedPeaks = true }
+        ProcessingStatus = new ActivityProcessingStatus { SummitedPeaksEpoch = 1 }
     };
 }

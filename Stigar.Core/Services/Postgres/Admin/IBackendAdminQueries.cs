@@ -35,22 +35,38 @@ public interface IBackendAdminQueries
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Activity ids whose processing status still has at least one pending stage. Replaces the
-    /// activities Cosmos change feed; ordered by id so polling is deterministic.
+    /// Activity ids whose processing status still has at least one pending stage and has not been
+    /// enqueued inside the dedup window. Replaces the activities Cosmos change feed; ordered by id
+    /// so polling is deterministic.
     /// </summary>
     Task<IReadOnlyList<string>> GetActivityIdsNeedingProcessing(
+        long summitsEpoch,
+        long pathsEpoch,
+        long areasEpoch,
         int limit,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Marks activities as claimed by the polling job so later polls skip them.</summary>
+    Task MarkActivitiesEnqueued(
+        IReadOnlyCollection<string> activityIds,
+        DateTime queuedAtUtc,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
-    /// Ids of non-empty admin boundaries whose stored metrics version is behind
-    /// <paramref name="metricsVersion"/>. Keyset paging via <paramref name="afterId"/>. Replaces
-    /// the OSM-features Cosmos change feed.
+    /// Ids of non-empty admin boundaries whose metrics epoch is behind <paramref name="epoch"/>
+    /// and which have not been queued inside the dedup window. Keyset paging via
+    /// <paramref name="afterId"/>. Replaces the OSM-features Cosmos change feed.
     /// </summary>
     Task<IReadOnlyList<string>> GetStaleAdminBoundaryIds(
-        int metricsVersion,
+        long epoch,
         string? afterId,
         int limit,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Marks admin boundaries as claimed by the polling job so later polls skip them.</summary>
+    Task MarkAdminBoundariesQueued(
+        IReadOnlyCollection<string> boundaryIds,
+        DateTime queuedAtUtc,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -15,16 +15,6 @@ namespace Stigar.Workers;
 /// </summary>
 public static class OsmFeaturesChangeTrigger
 {
-    /// <summary>
-    /// Service Bus message application property set when enrichment was triggered by new feature
-    /// data rather than a schema version change. Kept for the worker's force-enrich handling;
-    /// the new polling job only enqueues plain version-stale messages.
-    /// </summary>
-    internal const string ForceEnrichProperty = AdminBoundaryEnrichmentRules.ForceEnrichProperty;
-
-    internal static bool ShouldEnrich(StoredFeature document)
-        => AdminBoundaryEnrichmentRules.ShouldEnrich(document);
-
     internal static bool ShouldTriggerEnrichment(StoredFeature document)
     {
         if (document.Kind is not (FeatureKinds.Peak or FeatureKinds.ProtectedArea))
@@ -43,27 +33,29 @@ public static class OsmFeaturesChangeTrigger
 /// <summary>
 /// Hangfire recurring polling job that replaces the OSM-features Cosmos change feed. Polls
 /// <c>admin_boundaries</c> for rows whose <c>metrics_version</c> is behind the current version
-/// and enqueues <c>EnrichAdminBoundaryJobs</c> messages in batches of 100.
+/// and enqueues <c>EnrichAdminBoundaryJobs</c> messages in batches of 4000.
 /// </summary>
 public sealed class AdminBoundaryMetricsPollingJob(
     IBackendAdminQueries queries,
     IBackgroundJobClient jobs,
+    IJobEpochService epochs,
     ILogger<AdminBoundaryMetricsPollingJob> logger) : IAdminBoundaryMetricsPollingJob
 {
     public const string RecurringJobId = "poll-admin-boundary-enrichment";
     public const string CronExpression = "*/5 * * * *";
-    private const int BatchSize = 100;
+    private const int BatchSize = 4000;
 
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
+        var epoch = await epochs.GetAsync(JobEpochType.AdminBoundaryMetrics, cancellationToken);
         string? afterId = null;
         var totalQueued = 0;
 
         while (true)
         {
             var ids = await queries.GetStaleAdminBoundaryIds(
-                AdminBoundaryMetricsEnricher.MetricsVersion,
+                epoch,
                 afterId,
                 BatchSize,
                 cancellationToken);
@@ -72,7 +64,8 @@ public sealed class AdminBoundaryMetricsPollingJob(
                 break;
 
             foreach (var id in ids)
-                jobs.EnqueueAdminBoundaryEnrichment(AdminBoundaryIdJob.From(id));
+                jobs.EnqueueAdminBoundaryEnrichment(AdminBoundaryIdJob.From(id, epoch));
+            await queries.MarkAdminBoundariesQueued(ids, DateTime.UtcNow, cancellationToken);
             totalQueued += ids.Count;
 
             logger.LogInformation(

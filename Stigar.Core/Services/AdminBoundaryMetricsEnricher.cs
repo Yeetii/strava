@@ -21,7 +21,6 @@ public sealed class AdminBoundaryMetricsEnricher(
 {
     public const int AnalysisTileZoom = 8;
     public const int BorderSamplingStep = 10;
-    public const int MetricsVersion = 2;
     /// <summary>Storage zoom for the peaks collection.</summary>
     public const int PeakStorageZoom = 11;
     /// <summary>
@@ -45,7 +44,7 @@ public sealed class AdminBoundaryMetricsEnricher(
         if (IsAdminLevel(boundary, 2))
         {
             logger.LogInformation("[AdminBoundaryMetricsEnricher] Skip {BoundaryId}: country-level boundary", boundary.Id);
-            return new Dictionary<string, object?> { ["adminBoundaryMetricsVersion"] = MetricsVersion };
+            return new Dictionary<string, object?>();
         }
 
         var centroid = boundary.ResolvedCentroid;
@@ -283,7 +282,6 @@ public sealed class AdminBoundaryMetricsEnricher(
 
         return new Dictionary<string, object?>
         {
-            ["adminBoundaryMetricsVersion"] = MetricsVersion,
             ["totalPeaksWithin"] = peaksWithin.Count,
             ["tallestPeakWithin"] = tallestPeak == null ? null : CreatePeakSummary(tallestPeak),
             ["protectedAreaCounts"] = new Dictionary<string, int>

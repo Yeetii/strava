@@ -66,8 +66,16 @@ public sealed class PostgisFixture : IAsyncLifetime
             TRUNCATE TABLE
                 activity_summits, activity_visited_paths, activity_visited_areas,
                 sessions, user_sync_items, activities, users,
-                peaks, protected_areas, admin_boundaries, peaks_groups, osm_tile_queries
+                peaks, protected_areas, admin_boundaries, peaks_groups, osm_tile_queries, job_epochs
             RESTART IDENTITY CASCADE
+            """);
+        await ExecuteAsync("""
+            INSERT INTO job_epochs (job_type, epoch) VALUES
+                ('activity.summits', 1),
+                ('activity.visitedPaths', 1),
+                ('activity.visitedAreas', 1),
+                ('adminBoundary.metrics', 1)
+            ON CONFLICT (job_type) DO NOTHING
             """);
     }
 

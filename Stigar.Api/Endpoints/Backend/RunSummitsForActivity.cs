@@ -44,7 +44,7 @@ public class RunSummitsForActivity(
         if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
         {
             logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
-            await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
+            await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, 0, cancellationToken);
 
             return TypedResults.Ok(new
             {
@@ -59,7 +59,7 @@ public class RunSummitsForActivity(
         var summits = CalculateSummitedPeaks(activity, peaks, summitsCalculator).ToList();
         if (summits.Count == 0)
         {
-            await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
+            await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, 0, cancellationToken);
 
             return TypedResults.Ok(new
             {
@@ -80,7 +80,7 @@ public class RunSummitsForActivity(
             .ToList();
         await activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
         await activitySummitRepository.AddRange(links, cancellationToken);
-        await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
+        await userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, 0, cancellationToken);
 
         return TypedResults.Ok(new
         {

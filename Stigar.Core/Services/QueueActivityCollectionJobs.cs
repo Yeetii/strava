@@ -102,6 +102,9 @@ public static class QueueActivityCollectionJobs
         return $"queue-all:{normalizedQueueName}:{hash}";
     }
 
+    // A sport-type exclusion is permanent, so mark the stage as done for every future epoch.
+    private const long ExcludedEpoch = long.MaxValue;
+
     private static async Task MarkExcludedActivitiesAsync(
         IActivityRepository activities,
         List<BackendActivityProjection> excluded,
@@ -112,44 +115,47 @@ public static class QueueActivityCollectionJobs
         foreach (var p in excluded)
         {
             var current = p.ProcessingStatus;
-            var stageAlreadyDone = stage switch
-            {
-                ActivitySyncStage.SummitedPeaks => current?.SummitedPeaks == true,
-                ActivitySyncStage.VisitedPaths => current?.VisitedPaths == true,
-                ActivitySyncStage.VisitedAreas => current?.VisitedAreas == true,
-                _ => false,
-            };
-            if (stageAlreadyDone && current?.SportTypeExcluded == true)
+            if (GetStageEpoch(current, stage) == ExcludedEpoch && current?.SportTypeExcluded == true)
                 continue;
 
             var next = new ActivityProcessingStatus
             {
-                SummitedPeaks = current?.SummitedPeaks ?? false,
-                VisitedPaths = current?.VisitedPaths ?? false,
-                VisitedAreas = current?.VisitedAreas ?? false,
+                SummitedPeaksEpoch = current?.SummitedPeaksEpoch ?? 0,
+                VisitedPathsEpoch = current?.VisitedPathsEpoch ?? 0,
+                VisitedAreasEpoch = current?.VisitedAreasEpoch ?? 0,
                 SummitedPeaksDoneAtUtc = current?.SummitedPeaksDoneAtUtc,
                 VisitedPathsDoneAtUtc = current?.VisitedPathsDoneAtUtc,
                 VisitedAreasDoneAtUtc = current?.VisitedAreasDoneAtUtc,
                 LastUpdatedAtUtc = now,
                 LastProcessingError = current?.LastProcessingError,
                 SportTypeExcluded = true,
+                EnqueuedAtUtc = current?.EnqueuedAtUtc,
             };
             switch (stage)
             {
                 case ActivitySyncStage.SummitedPeaks:
-                    next.SummitedPeaks = true;
+                    next.SummitedPeaksEpoch = ExcludedEpoch;
                     next.SummitedPeaksDoneAtUtc = now;
                     break;
                 case ActivitySyncStage.VisitedPaths:
-                    next.VisitedPaths = true;
+                    next.VisitedPathsEpoch = ExcludedEpoch;
                     next.VisitedPathsDoneAtUtc = now;
                     break;
                 case ActivitySyncStage.VisitedAreas:
-                    next.VisitedAreas = true;
+                    next.VisitedAreasEpoch = ExcludedEpoch;
                     next.VisitedAreasDoneAtUtc = now;
                     break;
             }
             await activities.UpdateProcessingStatus(p.Id, next, cancellationToken);
         }
     }
+
+    private static long GetStageEpoch(ActivityProcessingStatus? status, ActivitySyncStage stage)
+        => stage switch
+        {
+            ActivitySyncStage.SummitedPeaks => status?.SummitedPeaksEpoch ?? 0,
+            ActivitySyncStage.VisitedPaths => status?.VisitedPathsEpoch ?? 0,
+            ActivitySyncStage.VisitedAreas => status?.VisitedAreasEpoch ?? 0,
+            _ => 0,
+        };
 }

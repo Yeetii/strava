@@ -33,18 +33,12 @@ public class AdminBoundaryEnrichmentWorker(
             return;
         }
 
-        if (!OsmFeaturesChangeTrigger.ShouldEnrich(document))
-        {
-            logger.LogInformation("[AdminBoundaryEnrichmentWorker] Skipping already-enriched admin boundary {BoundaryId}", boundaryId);
-            return;
-        }
-
         try
         {
             logger.LogInformation("[AdminBoundaryEnrichmentWorker] Enriching admin boundary {BoundaryId}", document.Id);
             var metrics = await enricher.CalculateMetricsAsync(document, cancellationToken);
             await adminBoundaries.UpdateMetrics(
-                document.Id, metrics, AdminBoundaryMetricsEnricher.MetricsVersion, cancellationToken);
+                document.Id, metrics, job.Epoch, cancellationToken);
         }
         catch (Exception ex)
         {

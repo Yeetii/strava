@@ -93,9 +93,9 @@ public class GetUserStats(
         var summary = new AdminUserActivityProcessingSummary(
             TotalActivities: activities.Length,
             WithProcessingStatus: processingStatuses.Length,
-            ProcessedSummitedPeaks: processingStatuses.Count(status => status.SummitedPeaks),
-            ProcessedVisitedPaths: processingStatuses.Count(status => status.VisitedPaths),
-            ProcessedVisitedAreas: processingStatuses.Count(status => status.VisitedAreas),
+            ProcessedSummitedPeaks: processingStatuses.Count(status => (status.SummitedPeaksEpoch ?? 0) > 0),
+            ProcessedVisitedPaths: processingStatuses.Count(status => (status.VisitedPathsEpoch ?? 0) > 0),
+            ProcessedVisitedAreas: processingStatuses.Count(status => (status.VisitedAreasEpoch ?? 0) > 0),
             WithErrors: processingStatuses.Count(status => !string.IsNullOrWhiteSpace(status.LastProcessingError)),
             LastUpdatedAtUtc: processingStatuses
                 .Select(status => status.LastUpdatedAtUtc)

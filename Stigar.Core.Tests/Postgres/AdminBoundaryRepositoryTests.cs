@@ -45,19 +45,25 @@ public sealed class AdminBoundaryRepositoryTests(PostgisFixture fixture)
     }
 
     [SkippableFact]
-    public async Task UpdateMetrics_Then_GetById_ReadsNewMetricsVersion()
+    public async Task UpdateMetrics_StoresEpochAndClearsQueuedMarker()
     {
         await fixture.ResetAsync();
         await InsertBoundaryAsync("admin:1", 1L, "relation", 4, "Canton", null, 0);
+        await fixture.ExecuteAsync("UPDATE admin_boundaries SET metrics_queued_at = NOW() WHERE id = 'admin:1'");
 
         var repository = new AdminBoundaryRepository(fixture.DataSource);
         await repository.UpdateMetrics("admin:1", new Dictionary<string, object?> { ["population"] = 1000 }, 7);
 
         var boundary = await repository.GetById("admin:1");
         Assert.NotNull(boundary);
-        Assert.Equal("7", boundary.Properties["metricsVersion"]!.ToString());
         Assert.Equal("1000", boundary.Properties["population"]!.ToString());
         Assert.IsType<Polygon>(boundary.Geometry);
+        await using var command = fixture.DataSource.CreateCommand(
+            "SELECT metrics_generation, metrics_queued_at FROM admin_boundaries WHERE id = 'admin:1'");
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(7, reader.GetInt64(0));
+        Assert.True(await reader.IsDBNullAsync(1));
     }
 
     [SkippableFact]

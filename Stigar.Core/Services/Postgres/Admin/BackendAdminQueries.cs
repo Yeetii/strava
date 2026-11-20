@@ -12,26 +12,35 @@ namespace Stigar.Core.Services.Postgres.Admin;
 /// </summary>
 public sealed class BackendAdminQueries(NpgsqlDataSource dataSource) : IBackendAdminQueries
 {
+    // Rows claimed by a poll are invisible to subsequent polls for this long. Long enough to
+    // cover a slow backfill, short enough that a genuinely lost job is eventually retried.
+    private const int QueueWindowHours = 24;
+
     private const string ActivityProjectionsSql = """
         SELECT id, user_id, sport_type, processing_status
         FROM activities
         """;
 
-    private const string ActivityIdsNeedingProcessingSql = """
+    private static readonly string ActivityIdsNeedingProcessingSql = $$"""
         SELECT id FROM activities
-        WHERE processing_status IS NULL
-           OR COALESCE((processing_status->>'summitedPeaks')::boolean, false) = false
-           OR COALESCE((processing_status->>'visitedPaths')::boolean, false) = false
-           OR COALESCE((processing_status->>'visitedAreas')::boolean, false) = false
+        WHERE (
+                  COALESCE((processing_status->>'summitedPeaksEpoch')::bigint, 0) < @summits_epoch
+               OR COALESCE((processing_status->>'visitedPathsEpoch')::bigint, 0) < @paths_epoch
+               OR COALESCE((processing_status->>'visitedAreasEpoch')::bigint, 0) < @areas_epoch
+              )
+          AND COALESCE((processing_status->>'enqueuedAtUtc')::timestamptz, 'epoch')
+              < NOW() - INTERVAL '{{QueueWindowHours}} hours'
         ORDER BY id
         LIMIT @limit
         """;
 
-    private const string StaleAdminBoundaryIdsSql = """
+    private static readonly string StaleAdminBoundaryIdsSql = $$"""
         SELECT id FROM admin_boundaries
-        WHERE metrics_version < @version
+        WHERE metrics_generation < @epoch
           AND name <> ''
           AND (@after IS NULL OR id > @after)
+          AND (metrics_queued_at IS NULL
+               OR metrics_queued_at < NOW() - INTERVAL '{{QueueWindowHours}} hours')
         ORDER BY id
         LIMIT @limit
         """;
@@ -82,26 +91,69 @@ public sealed class BackendAdminQueries(NpgsqlDataSource dataSource) : IBackendA
     }
 
     public async Task<IReadOnlyList<string>> GetActivityIdsNeedingProcessing(
+        long summitsEpoch,
+        long pathsEpoch,
+        long areasEpoch,
         int limit,
         CancellationToken cancellationToken = default)
     {
         await using var command = dataSource.CreateCommand(ActivityIdsNeedingProcessingSql);
+        command.Parameters.AddValue("summits_epoch", summitsEpoch);
+        command.Parameters.AddValue("paths_epoch", pathsEpoch);
+        command.Parameters.AddValue("areas_epoch", areasEpoch);
         command.Parameters.AddValue("limit", limit);
         return await ReadStringsAsync(command, cancellationToken);
     }
 
+    public async Task MarkActivitiesEnqueued(
+        IReadOnlyCollection<string> activityIds,
+        DateTime queuedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (activityIds.Count == 0)
+            return;
+
+        await using var command = dataSource.CreateCommand("""
+            UPDATE activities
+            SET processing_status = jsonb_set(
+                COALESCE(processing_status, '{}'::jsonb),
+                '{enqueuedAtUtc}',
+                to_jsonb(@queued_at::timestamptz))
+            WHERE id = ANY(@ids)
+            """);
+        AddIds(command, activityIds);
+        command.Parameters.AddValue("queued_at", queuedAtUtc);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<string>> GetStaleAdminBoundaryIds(
-        int metricsVersion,
+        long epoch,
         string? afterId,
         int limit,
         CancellationToken cancellationToken = default)
     {
         await using var command = dataSource.CreateCommand(StaleAdminBoundaryIdsSql);
-        command.Parameters.AddValue("version", metricsVersion);
+        command.Parameters.AddValue("epoch", epoch);
         command.Parameters.AddValue(
             "after", string.IsNullOrWhiteSpace(afterId) ? null : afterId, NpgsqlDbType.Text);
         command.Parameters.AddValue("limit", limit);
         return await ReadStringsAsync(command, cancellationToken);
+    }
+
+    public async Task MarkAdminBoundariesQueued(
+        IReadOnlyCollection<string> boundaryIds,
+        DateTime queuedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (boundaryIds.Count == 0)
+            return;
+
+        await using var command = dataSource.CreateCommand("""
+            UPDATE admin_boundaries SET metrics_queued_at = @queued_at WHERE id = ANY(@ids)
+            """);
+        AddIds(command, boundaryIds);
+        command.Parameters.AddValue("queued_at", queuedAtUtc);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<StoredFeatureSummary>> FindProtectedAreaSummariesWithinBoundary(
@@ -179,6 +231,12 @@ public sealed class BackendAdminQueries(NpgsqlDataSource dataSource) : IBackendA
 
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static void AddIds(NpgsqlCommand command, IReadOnlyCollection<string> ids)
+        => command.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Text)
+        {
+            Value = ids.Distinct(StringComparer.Ordinal).ToArray(),
+        });
 
     private static async Task<IReadOnlyList<string>> ReadStringsAsync(
         NpgsqlCommand command,

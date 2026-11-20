@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Stigar.Core.Jobs;
 
 namespace Stigar.Core.Services.Postgres.Admin;
 
@@ -17,6 +18,7 @@ public static class BackendPostgresExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<IBackendAdminQueries, BackendAdminQueries>();
+        services.AddSingleton<IJobEpochService, JobEpochService>();
         return services;
     }
 }

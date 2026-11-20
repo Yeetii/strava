@@ -52,7 +52,7 @@ public class VisitedPathsWorker(
         var nearbyPaths = (await FetchNearbyPaths(decodedActivities)).ToList();
         var pathGridIndex = BuildPathGridIndex(nearbyPaths);
 
-        await ProcessJob(activityId, activitiesById, decodedActivities, pathGridIndex, cancellationToken);
+        await ProcessJob(activityId, activitiesById, decodedActivities, pathGridIndex, job.Epoch, cancellationToken);
     }
 
     private async Task ProcessJob(
@@ -60,6 +60,7 @@ public class VisitedPathsWorker(
         Dictionary<string, ActivitySlim> activitiesById,
         Dictionary<string, List<Coordinate>> decodedActivities,
         PathGridIndex pathGridIndex,
+        long epoch,
         CancellationToken cancellationToken)
     {
         activitiesById.TryGetValue(activityId, out var activity);
@@ -69,7 +70,7 @@ public class VisitedPathsWorker(
             _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
             if (activity != null)
             {
-                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
+                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, epoch, cancellationToken);
             }
             return;
         }
@@ -93,7 +94,7 @@ public class VisitedPathsWorker(
         {
             // The junction table is the sole record of which paths an activity visited.
             await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
-            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, epoch, cancellationToken);
             return;
         }
 
@@ -120,7 +121,7 @@ public class VisitedPathsWorker(
         // cascade removes rows when the activity itself is deleted.
         await _visitedPathRepository.RemoveByActivity(activity.Id, cancellationToken);
         await _visitedPathRepository.AddRange(paths, cancellationToken);
-        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, cancellationToken);
+        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedPaths, epoch, cancellationToken);
     }
 
     internal static HashSet<(int, int)> BuildSpatialGrid(List<Coordinate> points)

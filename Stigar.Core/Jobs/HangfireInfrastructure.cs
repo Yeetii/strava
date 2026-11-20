@@ -18,7 +18,7 @@ public static class HangfireInfrastructure
     public const string WorkerCountKey = "Hangfire:WorkerCount";
 
     /// <summary>Fallback concurrency when no valid value is configured.</summary>
-    public const int DefaultWorkerCount = 4;
+    public const int DefaultWorkerCount = 8;
 
     // UseConsole() mutates global Hangfire state and throws when called twice.
     private static int _consoleInitialized;

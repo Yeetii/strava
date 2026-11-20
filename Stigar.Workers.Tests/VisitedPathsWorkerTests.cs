@@ -168,7 +168,7 @@ public class VisitedPathsWorkerTests
             StartDate = DateTime.UtcNow,
             StartDateLocal = DateTime.UtcNow,
             Polyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@`",
-            ProcessingStatus = new ActivityProcessingStatus { VisitedPaths = true }
+            ProcessingStatus = new ActivityProcessingStatus { VisitedPathsEpoch = 1 }
         };
 
         var path = new Feature(

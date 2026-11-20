@@ -55,9 +55,7 @@ public static class EndpointMappings
         Stigar.Api.Endpoints.Admin.PostOrganizerRedirect.Map(app);
         Stigar.Api.Endpoints.Admin.PostRaceDiscovery.Map(app);
         Stigar.Api.Endpoints.Admin.PostRaceEvent.Map(app);
-        Stigar.Api.Endpoints.Admin.QueueActivityJobs.Map(app);
-        Stigar.Api.Endpoints.Admin.QueueUnprocessedActivityJobs.Map(app);
-        Stigar.Api.Endpoints.Admin.ReEnrichAdminBoundaries.Map(app);
+        Stigar.Api.Endpoints.Admin.BumpJobEpoch.Map(app);
         Stigar.Api.Endpoints.Admin.RefetchUserActivities.Map(app);
         Stigar.Api.Endpoints.Admin.RefreshUserStravaToken.Map(app);
         Stigar.Api.Endpoints.Admin.RemoveUser.Map(app);

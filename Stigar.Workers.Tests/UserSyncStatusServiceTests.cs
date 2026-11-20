@@ -18,7 +18,11 @@ public class UserSyncStatusServiceTests
             Name = "Morning Run",
             SportType = SportTypes.RUN,
             StartDate = DateTime.UtcNow,
-            StartDateLocal = DateTime.UtcNow
+            StartDateLocal = DateTime.UtcNow,
+            ProcessingStatus = new ActivityProcessingStatus
+            {
+                EnqueuedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+            },
         };
         var user = new Stigar.Core.Models.User
         {
@@ -38,14 +42,15 @@ public class UserSyncStatusServiceTests
 
         var service = new UserSyncStatusService(usersRepository.Object, activitiesRepository.Object);
 
-        var changed = await service.TryMarkActivityStageProcessed(userId, activity.Id, ActivitySyncStage.SummitedPeaks);
+        var changed = await service.TryMarkActivityStageProcessed(userId, activity.Id, ActivitySyncStage.SummitedPeaks, 1);
 
         Assert.True(changed);
         activitiesRepository.Verify(r => r.UpdateProcessingStatus(
             activity.Id,
             It.Is<ActivityProcessingStatus?>(status =>
                 status != null
-                && status.SummitedPeaks
+                && status.SummitedPeaksEpoch == 1
+                && status.EnqueuedAtUtc == null
                 && status.SummitedPeaksDoneAtUtc.HasValue
                 && status.LastUpdatedAtUtc.HasValue
                 && status.SummitedPeaksDoneAtUtc == status.LastUpdatedAtUtc),
@@ -69,7 +74,7 @@ public class UserSyncStatusServiceTests
             StartDateLocal = DateTime.UtcNow,
             ProcessingStatus = new ActivityProcessingStatus
             {
-                SummitedPeaks = true,
+                SummitedPeaksEpoch = 1,
                 SummitedPeaksDoneAtUtc = DateTime.UtcNow
             }
         };
@@ -83,7 +88,7 @@ public class UserSyncStatusServiceTests
             new Mock<IUserRepository>().Object,
             activitiesRepository.Object);
 
-        var changed = await service.TryMarkActivityStageProcessed(userId, activity.Id, ActivitySyncStage.SummitedPeaks);
+        var changed = await service.TryMarkActivityStageProcessed(userId, activity.Id, ActivitySyncStage.SummitedPeaks, 1);
 
         Assert.False(changed);
         activitiesRepository.Verify(r => r.UpdateProcessingStatus(

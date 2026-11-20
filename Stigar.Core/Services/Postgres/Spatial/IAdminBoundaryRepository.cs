@@ -19,11 +19,11 @@ public interface IAdminBoundaryRepository
     /// <summary>Sets the optional simplified geometry column.</summary>
     Task SetSimplifiedGeometry(string id, Geometry simplified, CancellationToken cancellationToken = default);
 
-    /// <summary>Merges metric keys into the JSONB properties and records the metrics version.</summary>
+    /// <summary>Merges metric keys into the JSONB properties and stamps the completed epoch.</summary>
     Task UpdateMetrics(
         string id,
         IReadOnlyDictionary<string, object?> metrics,
-        int metricsVersion,
+        long epoch,
         CancellationToken cancellationToken = default);
 
     /// <summary>Lightweight summaries of boundaries containing any of the supplied points.</summary>

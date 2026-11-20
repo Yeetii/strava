@@ -85,7 +85,7 @@ public class VisitedAreasWorkerTests
             StartDate = DateTime.UtcNow,
             StartDateLocal = DateTime.UtcNow,
             Polyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@`",
-            ProcessingStatus = new ActivityProcessingStatus { VisitedAreas = true }
+            ProcessingStatus = new ActivityProcessingStatus { VisitedAreasEpoch = 1 }
         };
 
         var area = new StoredFeature
@@ -168,7 +168,7 @@ public class VisitedAreasWorkerTests
             StartDate = DateTime.UtcNow,
             StartDateLocal = DateTime.UtcNow,
             Polyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@`",
-            ProcessingStatus = new ActivityProcessingStatus { VisitedAreas = true }
+            ProcessingStatus = new ActivityProcessingStatus { VisitedAreasEpoch = 1 }
         };
 
         var area = new StoredFeature

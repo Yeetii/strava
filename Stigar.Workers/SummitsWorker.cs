@@ -42,15 +42,15 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         }
 
         var peaks = (await FetchNearbyPeaks([activity], cancellationToken)).ToList();
-        await ProcessSummitJob(peaks, activity, cancellationToken);
+        await ProcessSummitJob(peaks, activity, job.Epoch, cancellationToken);
     }
 
-    private async Task ProcessSummitJob(List<Feature> peaks, Activity activity, CancellationToken cancellationToken)
+    private async Task ProcessSummitJob(List<Feature> peaks, Activity activity, long epoch, CancellationToken cancellationToken)
     {
         if (activity.StartLatLng == null || activity.StartLatLng.Count < 2 || string.IsNullOrEmpty(activity.SummaryPolyline))
         {
             _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activity.Id);
-            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, epoch, cancellationToken);
             return;
         }
         var summits = CalculateSummitedPeaks(activity, peaks).ToList();
@@ -58,7 +58,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         {
             // No summits means this activity should have no rows in activity_summits.
             await _activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
-            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, epoch, cancellationToken);
             return;
         }
         _logger.LogInformation("Activity {ActivityId} has {SummitCount} summits", activity.Id, summits.Count);
@@ -76,7 +76,7 @@ public class SummitsWorker(ILogger<SummitsWorker> _logger,
         // activity itself is deleted, so no manual domain-document cleanup is needed.
         await _activitySummitRepository.RemoveByActivity(activity.Id, cancellationToken);
         await _activitySummitRepository.AddRange(links, cancellationToken);
-        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, cancellationToken);
+        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.SummitedPeaks, epoch, cancellationToken);
     }
 
     private IEnumerable<Feature> CalculateSummitedPeaks(Activity activity, IEnumerable<Feature> nearbyPeaks)

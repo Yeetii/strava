@@ -39,13 +39,14 @@ public class VisitedAreasWorker(
             .ToList();
 
         var nearbyAreas = (await FetchNearbyAreas(activitiesList, cancellationToken)).ToList();
-        await ProcessJob(activityId, activitiesList, nearbyAreas, cancellationToken);
+        await ProcessJob(activityId, activitiesList, nearbyAreas, job.Epoch, cancellationToken);
     }
 
     private async Task ProcessJob(
         string activityId,
         List<Activity> activitiesList,
         List<StoredFeature> nearbyAreas,
+        long epoch,
         CancellationToken cancellationToken)
     {
         var activity = activitiesList.FirstOrDefault(a => a.Id == activityId);
@@ -57,7 +58,7 @@ public class VisitedAreasWorker(
             _logger.LogInformation("Skipping activity {ActivityId} since it has no geodata", activityId);
             if (activity != null)
             {
-                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
+                await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, epoch, cancellationToken);
             }
             return;
         }
@@ -112,7 +113,7 @@ public class VisitedAreasWorker(
         {
             // No visited areas means this activity should have no rows in activity_visited_areas.
             await _visitedAreaRepository.RemoveByActivity(activity.Id, cancellationToken);
-            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
+            await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, epoch, cancellationToken);
             return;
         }
 
@@ -132,7 +133,7 @@ public class VisitedAreasWorker(
         await _visitedAreaRepository.RemoveByActivity(activity.Id, cancellationToken);
         await _visitedAreaRepository.AddRange(links, cancellationToken);
         _logger.LogInformation("Batch write complete for activity {ActivityId}", activityId);
-        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, cancellationToken);
+        await _userSyncStatusService.TryMarkActivityStageProcessed(activity.UserId, activity.Id, ActivitySyncStage.VisitedAreas, epoch, cancellationToken);
     }
 
     private static IEnumerable<VisitedAreaCandidate> FindVisitedProtectedAreas(

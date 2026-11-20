@@ -59,16 +59,17 @@ public class UserSyncStatusService(IUserRepository users, IActivityRepository ac
         }, cancellationToken);
     }
 
-    public async Task<bool> TryMarkActivityStageProcessed(string userId, string activityId, ActivitySyncStage stage, CancellationToken cancellationToken = default)
+    public async Task<bool> TryMarkActivityStageProcessed(string userId, string activityId, ActivitySyncStage stage, long epoch, CancellationToken cancellationToken = default)
     {
         var activity = await activities.GetById(activityId, cancellationToken)
             ?? throw new InvalidOperationException($"Activity {activityId} for user {userId} was not found.");
 
-        if (IsStageProcessed(activity.ProcessingStatus, stage))
+        if (IsStageProcessed(activity.ProcessingStatus, stage, epoch))
             return false;
 
         var nextStatus = CloneActivityProcessingStatus(activity.ProcessingStatus);
-        SetStageProcessed(nextStatus, stage, DateTime.UtcNow);
+        SetStageProcessed(nextStatus, stage, epoch, DateTime.UtcNow);
+        nextStatus.EnqueuedAtUtc = null;
 
         await activities.UpdateProcessingStatus(activity.Id, nextStatus, cancellationToken);
         await IncrementProcessedActivities(userId, stage, cancellationToken);
@@ -133,43 +134,51 @@ public class UserSyncStatusService(IUserRepository users, IActivityRepository ac
     {
         return new ActivityProcessingStatus
         {
-            SummitedPeaks = current?.SummitedPeaks ?? false,
-            VisitedPaths = current?.VisitedPaths ?? false,
-            VisitedAreas = current?.VisitedAreas ?? false,
+            SummitedPeaksEpoch = current?.SummitedPeaksEpoch ?? 0,
+            VisitedPathsEpoch = current?.VisitedPathsEpoch ?? 0,
+            VisitedAreasEpoch = current?.VisitedAreasEpoch ?? 0,
             SportTypeExcluded = current?.SportTypeExcluded ?? false,
             SummitedPeaksDoneAtUtc = current?.SummitedPeaksDoneAtUtc,
             VisitedPathsDoneAtUtc = current?.VisitedPathsDoneAtUtc,
             VisitedAreasDoneAtUtc = current?.VisitedAreasDoneAtUtc,
             LastUpdatedAtUtc = current?.LastUpdatedAtUtc,
             LastProcessingError = current?.LastProcessingError,
+            EnqueuedAtUtc = current?.EnqueuedAtUtc,
         };
     }
 
-    private static bool IsStageProcessed(ActivityProcessingStatus? status, ActivitySyncStage stage)
+    private static bool IsStageProcessed(ActivityProcessingStatus? status, ActivitySyncStage stage, long epoch)
     {
-        return stage switch
+        // Unversioned (manual) jobs still treat an already-completed stage as done.
+        if (epoch <= 0)
+            return GetStageEpoch(status, stage) > 0;
+
+        return GetStageEpoch(status, stage) >= epoch;
+    }
+
+    private static long GetStageEpoch(ActivityProcessingStatus? status, ActivitySyncStage stage)
+        => stage switch
         {
-            ActivitySyncStage.SummitedPeaks => status?.SummitedPeaks == true,
-            ActivitySyncStage.VisitedPaths => status?.VisitedPaths == true,
-            ActivitySyncStage.VisitedAreas => status?.VisitedAreas == true,
+            ActivitySyncStage.SummitedPeaks => status?.SummitedPeaksEpoch ?? 0,
+            ActivitySyncStage.VisitedPaths => status?.VisitedPathsEpoch ?? 0,
+            ActivitySyncStage.VisitedAreas => status?.VisitedAreasEpoch ?? 0,
             _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null),
         };
-    }
 
-    private static void SetStageProcessed(ActivityProcessingStatus status, ActivitySyncStage stage, DateTime processedAtUtc)
+    private static void SetStageProcessed(ActivityProcessingStatus status, ActivitySyncStage stage, long epoch, DateTime processedAtUtc)
     {
         switch (stage)
         {
             case ActivitySyncStage.SummitedPeaks:
-                status.SummitedPeaks = true;
+                status.SummitedPeaksEpoch = epoch;
                 status.SummitedPeaksDoneAtUtc = processedAtUtc;
                 break;
             case ActivitySyncStage.VisitedPaths:
-                status.VisitedPaths = true;
+                status.VisitedPathsEpoch = epoch;
                 status.VisitedPathsDoneAtUtc = processedAtUtc;
                 break;
             case ActivitySyncStage.VisitedAreas:
-                status.VisitedAreas = true;
+                status.VisitedAreasEpoch = epoch;
                 status.VisitedAreasDoneAtUtc = processedAtUtc;
                 break;
             default:
