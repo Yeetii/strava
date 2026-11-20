@@ -22,7 +22,7 @@ public record AdminUserStatus(
 public class GetUsersStatus(
     IUserRepository usersRepository,
     IActivityRepository activitiesRepository,
-    ISessionRepository sessionsRepository,
+    IUserSyncItemRepository syncItemsRepository,
     IConfiguration configuration)
 {
     public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
@@ -36,13 +36,13 @@ public class GetUsersStatus(
 
         var usersTask = usersRepository.GetAll();
         var countsTask = activitiesRepository.GetActivityCountsByUser();
-        var loginsTask = sessionsRepository.GetLastLoginByUsers();
+        var syncTask = syncItemsRepository.GetLatestUpdatedAtByUsers();
 
-        await Task.WhenAll(usersTask, countsTask, loginsTask);
+        await Task.WhenAll(usersTask, countsTask, syncTask);
 
         var users = await usersTask;
         var activityCounts = await countsTask;
-        var lastLogins = await loginsTask;
+        var lastSyncs = await syncTask;
 
         var result = users
             .Select(user => new AdminUserStatus(
@@ -51,7 +51,8 @@ public class GetUsersStatus(
                 FirstName: user.FirstName,
                 LastName: user.LastName,
                 ActivityCount: activityCounts.GetValueOrDefault(user.Id, 0),
-                LastLoggedInAtUtc: lastLogins.TryGetValue(user.Id, out var lastLogin) ? lastLogin : null))
+                LastLoggedInAtUtc: UserSyncItem.ToUtcDateTime(
+                    lastSyncs.TryGetValue(user.Id, out var updatedAt) ? updatedAt : null)))
             .OrderByDescending(user => user.LastLoggedInAtUtc ?? DateTime.MinValue)
             .ThenByDescending(user => user.ActivityCount)
             .ThenBy(user => user.Username ?? user.UserId)

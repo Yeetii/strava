@@ -20,7 +20,8 @@ public record QueueStatus(
 
 public record PostgresTableStatus(
     string TableName,
-    long RowCount);
+    long RowCount,
+    long SizeBytes);
 
 public record AdminStatus(
     IReadOnlyList<QueueStatus> Queues,
@@ -127,13 +128,13 @@ public class GetAdminStatus(
     {
         try
         {
-            var rowCount = await statusRepository.GetTableRowCountAsync(tableName);
-            return new PostgresTableStatus(tableName, rowCount);
+            var (rowCount, sizeBytes) = await statusRepository.GetTableStatsAsync(tableName);
+            return new PostgresTableStatus(tableName, rowCount, sizeBytes);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to fetch row count for PostgreSQL table {TableName}", tableName);
-            return new PostgresTableStatus(tableName, -1);
+            logger.LogWarning(ex, "Failed to fetch stats for PostgreSQL table {TableName}", tableName);
+            return new PostgresTableStatus(tableName, -1, -1);
         }
     }
 

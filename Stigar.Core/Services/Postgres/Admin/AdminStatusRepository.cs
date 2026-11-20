@@ -25,7 +25,9 @@ public sealed class AdminStatusRepository(NpgsqlDataSource dataSource) : IAdminS
         "activity_visited_areas",
     ];
 
-    public async Task<long> GetTableRowCountAsync(string tableName, CancellationToken cancellationToken = default)
+    public async Task<(long RowCount, long SizeBytes)> GetTableStatsAsync(
+        string tableName,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(tableName)
             || !TableNames.Contains(tableName, StringComparer.Ordinal))
@@ -34,8 +36,18 @@ public sealed class AdminStatusRepository(NpgsqlDataSource dataSource) : IAdminS
         }
 
         var quoted = $"\"{tableName.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
-        await using var command = dataSource.CreateCommand($"SELECT COUNT(*) FROM {quoted}");
-        return await command.ExecuteScalarAsync(cancellationToken) is long count ? count : 0L;
+        // COUNT(*) is the expensive part; the size comes from relation metadata in the
+        // same round trip, so reporting both does not add another query per table.
+        await using var command = dataSource.CreateCommand(
+            $"SELECT COUNT(*), pg_total_relation_size(to_regclass(@table_name)) FROM {quoted}");
+        command.Parameters.AddValue("table_name", tableName);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return (0L, -1L);
+
+        return (
+            reader.GetInt64(0),
+            reader.IsDBNull(1) ? -1L : reader.GetInt64(1));
     }
 
     public async Task<long> GetDatabaseSizeBytesAsync(CancellationToken cancellationToken = default)

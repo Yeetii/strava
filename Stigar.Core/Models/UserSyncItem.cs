@@ -19,4 +19,23 @@ public class UserSyncItem : IDocument
     [JsonPropertyName("value")]
     [JsonConverter(typeof(RawJsonStringConverter))]
     public string? ValueJson { get; set; }
+
+    /// <summary>
+    /// <see cref="UpdatedAt"/> is a Unix millisecond timestamp written by the client.
+    /// Invalid values are treated as "never synced" rather than surfaced as 1970.
+    /// </summary>
+    public static DateTime? ToUtcDateTime(long? updatedAt)
+    {
+        if (!updatedAt.HasValue || updatedAt.Value <= 0)
+            return null;
+
+        try
+        {
+            return DateTimeOffset.FromUnixTimeMilliseconds(updatedAt.Value).UtcDateTime;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
 }

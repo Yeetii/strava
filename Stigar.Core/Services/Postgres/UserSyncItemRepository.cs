@@ -60,6 +60,28 @@ public sealed class UserSyncItemRepository(NpgsqlDataSource dataSource) : IUserS
         return items;
     }
 
+    public async Task<IReadOnlyDictionary<string, long>> GetLatestUpdatedAtByUsers(CancellationToken cancellationToken = default)
+    {
+        await using var command = dataSource.CreateCommand(
+            "SELECT user_id, MAX(updated_at) FROM user_sync_items GROUP BY user_id");
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var latest = new Dictionary<string, long>(StringComparer.Ordinal);
+        while (await reader.ReadAsync(cancellationToken))
+            latest[reader.GetString(0)] = reader.GetInt64(1);
+        return latest;
+    }
+
+    public async Task<long?> GetLatestUpdatedAt(string userId, CancellationToken cancellationToken = default)
+    {
+        await using var command = dataSource.CreateCommand(
+            "SELECT MAX(updated_at) FROM user_sync_items WHERE user_id = @user_id");
+        command.Parameters.AddValue("user_id", userId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || await reader.IsDBNullAsync(0, cancellationToken))
+            return null;
+        return reader.GetInt64(0);
+    }
+
     public async Task Upsert(UserSyncItem item, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(item);

@@ -9,7 +9,8 @@ public interface IAdminStatusRepository
     /// <summary>The twelve tables created by <c>deploy/init-db/01-init.sql</c>.</summary>
     IReadOnlyList<string> TableNames { get; }
 
-    Task<long> GetTableRowCountAsync(string tableName, CancellationToken cancellationToken = default);
+    /// <summary>Exact row count plus total on-disk size (heap, indexes and TOAST) in bytes.</summary>
+    Task<(long RowCount, long SizeBytes)> GetTableStatsAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary><c>pg_database_size(current_database())</c> in bytes.</summary>
     Task<long> GetDatabaseSizeBytesAsync(CancellationToken cancellationToken = default);

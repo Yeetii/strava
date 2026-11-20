@@ -55,7 +55,7 @@ public record AdminUserStats(
 public class GetUserStats(
     IUserRepository usersRepository,
     IActivityRepository activitiesRepository,
-    ISessionRepository sessionsRepository,
+    IUserSyncItemRepository syncItemsRepository,
     IConfiguration configuration)
 {
     public static RouteHandlerBuilder Map(IEndpointRouteBuilder app) =>
@@ -75,12 +75,14 @@ public class GetUserStats(
             return TypedResults.NotFound();
         }
 
-        var activities = (await activitiesRepository.GetAllByUser(userId))
+        var activitiesTask = activitiesRepository.GetAllByUser(userId);
+        var lastSyncTask = syncItemsRepository.GetLatestUpdatedAt(userId);
+        await Task.WhenAll(activitiesTask, lastSyncTask);
+
+        var activities = (await activitiesTask)
             .OrderByDescending(activity => activity.StartDateLocal)
             .ToArray();
-        var lastLoggedInAtUtc = (await sessionsRepository.GetByUserId(userId))
-            .Select(session => (DateTime?)session.CreatedAtUtc)
-            .Max();
+        var lastLoggedInAtUtc = UserSyncItem.ToUtcDateTime(await lastSyncTask);
 
         var processingStatuses = activities
             .Select(activity => activity.ProcessingStatus)
