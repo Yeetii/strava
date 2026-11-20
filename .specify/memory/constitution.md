@@ -35,8 +35,8 @@ Every geospatial operation MUST use the cheapest filter first:
 - Polygon/line intersection checks run only on candidates
   that survive the bounding-box pass
 
-Rationale: The dataset is large (global OSM), Cosmos RU
-budget is tight, and users expect sub-second map responses.
+Rationale: The dataset is large (global OSM) and users
+expect sub-second map responses.
 
 ### II. Event-Driven & Async
 
@@ -52,12 +52,10 @@ transient failures, and keep the API layer fast.
 
 ### III. Frugal Infrastructure
 
-The system runs on Azure free / low-cost tiers:
+The system runs on low-cost self-hosted infrastructure:
 
-- All Cosmos writes MUST pass through the shared write gate
-  (`CosmosWriteThrottle`) to stay within RU limits
-- Bulk upserts MUST be preferred over individual writes when
-  handling batches
+- Batch writes MUST be preferred over individual writes when
+  handling large datasets
 - Overpass queries MUST use multi-mirror rotation with retry
   and back-off to avoid bans
 - New Azure resources MUST justify their cost before adoption
@@ -79,7 +77,7 @@ OSM data MUST be cached by slippy-tile key with a 30-day TTL:
   tiles
 
 Rationale: Overpass mirrors are external and rate-limited;
-the tiled cache turns repeated queries into cheap Cosmos
+the tiled cache turns repeated queries into cheap PostgreSQL
 reads.
 
 ### V. Simplicity
@@ -98,8 +96,8 @@ Rationale: A small codebase is easier to evolve than a
 
 - **.NET 8 / C# 12** — nullable reference types enabled
 - **Azure Functions v4** (isolated worker) for all compute
-- **Cosmos DB** (SQL API, direct mode) for all persistence
-- **Azure Service Bus** for async job queues
+- **PostgreSQL + PostGIS** for all persistence
+- **Hangfire + Redis** for background job queues
 - **BAMCIS.GeoJSON** for Feature/FeatureCollection types
 - **Polly** for resilience policies
 - **xUnit + Moq** for testing; BenchmarkDotNet for perf
