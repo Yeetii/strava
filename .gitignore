@@ -141,6 +141,9 @@ DocProject/Help/html
 # Click-Once directory
 publish/
 
+# Prebuilt publish output for the deploy images (deploy/scripts/publish-images.sh)
+image-context/
+
 # Publish Web Output
 *.[Pp]ublish.xml
 *.azurePubxml

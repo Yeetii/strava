@@ -42,11 +42,29 @@ jobs:
       - name: Verify the native API/Workers architecture
         run: ./deploy/scripts/verify-role-coverage.sh
 
+      - name: Verify the shared-build pipeline contract
+        run: ./deploy/scripts/verify-build-pipeline.sh
+
       - name: Build solution
         run: dotnet build strava.sln -c Release
 
       - name: Run unit tests
         run: dotnet test strava.sln -c Release --no-build
+
+      # The Docker images consume this single publish output instead of each
+      # recompiling the same projects in their own SDK build stage.
+      - name: Publish image inputs
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_tag != '') }}
+        run: ./deploy/scripts/publish-images.sh
+
+      - name: Upload prebuilt image inputs
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_tag != '') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stigar-image-context
+          path: image-context/
+          retention-days: 1
+          if-no-files-found: error
 
   build:
     needs: verify
@@ -60,17 +78,23 @@ jobs:
       matrix:
         include:
           - name: api
-            project: Stigar.Api
+            app_dll: Stigar.Api.dll
             dockerfile: deploy/docker/plain-host.Dockerfile
           - name: workers
-            project: Stigar.Workers
+            app_dll: Stigar.Workers.dll
             dockerfile: deploy/docker/plain-host.Dockerfile
           - name: pmtiles
-            project: Stigar.Workers.Pmtiles
+            app_dll: Stigar.Workers.Pmtiles.dll
             dockerfile: Stigar.Workers.Pmtiles/Dockerfile
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download prebuilt image inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: stigar-image-context
+          path: image-context
 
       - name: Normalise image namespace
         run: echo "IMAGE_NAMESPACE=${GITHUB_REPOSITORY_OWNER,,}" >>"${GITHUB_ENV}"
@@ -88,10 +112,11 @@ jobs:
       - name: Build and push ${{ matrix.name }} image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: image-context/${{ matrix.name }}
           file: ${{ matrix.dockerfile }}
+          target: prebuilt
           build-args: |
-            PROJECT=${{ matrix.project }}
+            APP_DLL=${{ matrix.app_dll }}
           platforms: linux/amd64
           push: true
           tags: |

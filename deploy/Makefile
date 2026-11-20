@@ -27,6 +27,7 @@ deploy:
 
 verify:
 	./scripts/verify-role-coverage.sh
+	./scripts/verify-build-pipeline.sh
 
 smoke:
 	./scripts/smoke-test.sh

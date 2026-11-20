@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #    small shared-library dependencies are installed here (not its build deps).
 #    `procps` provides pgrep for the Compose worker healthcheck.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime-base
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libsqlite3-0 \
         zlib1g \
@@ -54,6 +54,14 @@ COPY --from=tippecanoe /usr/local/bin/tippecanoe /usr/local/bin/tippecanoe
 COPY --from=tippecanoe /usr/local/bin/tile-join /usr/local/bin/tile-join
 
 WORKDIR /app
-COPY --from=build /app/publish .
 ENV DOTNET_RUNNING_IN_CONTAINER=true
 ENTRYPOINT ["dotnet", "Stigar.Workers.Pmtiles.dll"]
+
+# CI target: the build context is the prebuilt publish output from
+# deploy/scripts/publish-images.sh. tippecanoe is still compiled above.
+FROM runtime-base AS prebuilt
+COPY . .
+
+# Default target (local builds): compile the app from source.
+FROM runtime-base AS final
+COPY --from=build /app/publish .

@@ -26,9 +26,9 @@ RUN dotnet publish "${PROJECT}/${PROJECT}.csproj" \
     --no-restore \
     --output /app/publish
 
-FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS final
+# Shared runtime layer for both the source-built (local) and prebuilt (CI) images.
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime-base
 
-ARG PROJECT=Stigar.Api
 # procps provides pgrep for the worker-role healthcheck in docker-compose.yml.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends procps \
@@ -36,14 +36,26 @@ RUN apt-get update \
 
 ENV DOTNET_RUNNING_IN_CONTAINER=true \
     DOTNET_ENVIRONMENT=Production \
-    ASPNETCORE_HTTP_PORTS=80 \
-    APP_DLL=${PROJECT}.dll
+    ASPNETCORE_HTTP_PORTS=80
+
+WORKDIR /app
+EXPOSE 80
+ENTRYPOINT ["sh", "-c", "exec dotnet \"${APP_DLL}\""]
+
+# CI target: the build context is one output directory from
+# deploy/scripts/publish-images.sh, which already contains the published app.
+FROM runtime-base AS prebuilt
+ARG APP_DLL
+ENV APP_DLL=${APP_DLL}
+COPY . /app
+
+# Default target (local `docker compose ... --build`): compile from source.
+FROM runtime-base AS final
+
+ARG PROJECT=Stigar.Api
+ENV APP_DLL=${PROJECT}.dll
 
 COPY --from=build /app/publish /app
 
 # StoreCuratedPeaksGroups reads ./peaks.json.
 COPY Stigar.Api/peaks.json /app/peaks.json
-
-WORKDIR /app
-EXPOSE 80
-ENTRYPOINT ["sh", "-c", "exec dotnet \"$APP_DLL\""]
