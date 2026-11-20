@@ -34,8 +34,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
       - name: Verify the native API/Workers architecture
         run: ./deploy/scripts/verify-role-coverage.sh
+
+      - name: Build solution
+        run: dotnet build strava.sln -c Release
+
+      - name: Run unit tests
+        run: dotnet test strava.sln -c Release --no-build
 
   build:
     needs: verify
