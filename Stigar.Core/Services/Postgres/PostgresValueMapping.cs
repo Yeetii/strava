@@ -47,6 +47,17 @@ internal static class PostgresValueMapping
     internal static void AddValue(this NpgsqlParameterCollection parameters, string name, object? value)
         => parameters.Add(new NpgsqlParameter(name, Value(value)));
 
+    /// <summary>
+    /// Use when a nullable value is compared in SQL: an untyped DBNull is sent as PostgreSQL
+    /// "unknown", which fails with 42P08 in contexts such as <c>(@after IS NULL OR id &gt; @after)</c>.
+    /// </summary>
+    internal static void AddValue(
+        this NpgsqlParameterCollection parameters,
+        string name,
+        object? value,
+        NpgsqlDbType npgsqlDbType)
+        => parameters.Add(new NpgsqlParameter(name, npgsqlDbType) { Value = Value(value) });
+
     internal static void AddJsonb(this NpgsqlParameterCollection parameters, string name, string? json)
         => parameters.Add(new NpgsqlParameter(name, NpgsqlDbType.Jsonb) { Value = Value(json) });
 
